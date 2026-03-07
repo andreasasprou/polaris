@@ -1,0 +1,18 @@
+import { NextRequest, NextResponse } from "next/server";
+import { runs } from "@trigger.dev/sdk/v3";
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ runId: string }> },
+) {
+  const { runId } = await params;
+  const run = await runs.retrieve(runId);
+
+  return NextResponse.json({
+    id: run.id,
+    status: run.status,
+    metadata: run.metadata,
+    output: run.output,
+    tags: run.tags,
+  });
+}

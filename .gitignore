@@ -21,6 +21,7 @@
 # misc
 .DS_Store
 *.pem
+/tmp/
 
 # debug
 npm-debug.log*
@@ -29,8 +30,12 @@ yarn-error.log*
 pnpm-debug.log*
 
 # env files
+.env
 .env*.local
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# trigger.dev
+.trigger/
