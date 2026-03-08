@@ -1,4 +1,4 @@
-import { task, wait, logger } from "@trigger.dev/sdk/v3";
+import { task, wait, logger, metadata } from "@trigger.dev/sdk/v3";
 import type {
   CodingTaskPayload,
   LegacyCodingTaskPayload,
@@ -333,9 +333,11 @@ export const codingTask = task({
         success: agentResult.success,
         changesDetected: agentResult.changesDetected,
         error: agentResult.error,
-        stdout: agentResult.output?.slice(0, 3000),
-        stderr: agentResult.errorOutput?.slice(0, 3000),
       });
+
+      // Store agent output in metadata for debugging (visible via MCP)
+      metadata.set("agentOutput", agentResult.output?.slice(0, 2000));
+      metadata.set("agentError", agentResult.errorOutput?.slice(0, 2000));
 
       // ── Collect results ──
       patchTaskStatus({ stage: "collecting_results", progress: 0.7 });
