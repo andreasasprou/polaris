@@ -1,20 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { tasks } from "@trigger.dev/sdk/v3";
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
-import {
-  getInteractiveSession,
-  updateInteractiveSession,
-} from "@/lib/sessions/actions";
+import { getInteractiveSession } from "@/lib/sessions/actions";
+import { interactiveSessions } from "@/lib/sessions/schema";
+import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { sessionMessages } from "@/lib/trigger/streams";
 import type { interactiveSessionTask } from "@/trigger/interactive-session";
 import type { AgentType } from "@/lib/sandbox-agent/types";
 
+const sandboxManager = new SandboxManager();
+
+const RESUMABLE_STATUSES = ["idle", "stopped", "completed"];
+
 /**
  * POST /api/interactive-sessions/:sessionId/prompt — send a message.
  *
- * If the session is active: completes the Trigger.dev wait token.
- * If the session is stopped/completed: triggers a new task to resume
- * with history replay, transparent to the user.
+ * Three-tier routing:
+ * 1. Hot (task running): send via Trigger.dev input stream — instant.
+ * 2. Warm (task ended, sandbox alive): reconnect to existing sandbox — ~2-3s.
+ * 3. Cold (sandbox dead): create new sandbox with replay — ~15-20s.
  */
 export async function POST(
   req: NextRequest,
@@ -39,7 +45,7 @@ export async function POST(
     );
   }
 
-  // ── Active session: send via input stream ──
+  // ── Tier 1: Hot — active session with running task ──
   if (session.status === "active" && session.triggerRunId) {
     await sessionMessages.send(session.triggerRunId, {
       action: "prompt",
@@ -49,11 +55,30 @@ export async function POST(
     return NextResponse.json({ ok: true });
   }
 
-  // ── Stopped/completed session: auto-resume with history ──
+  // ── Tier 2/3: Resumable session — probe sandbox, then trigger task ──
   if (
-    (session.status === "stopped" || session.status === "completed") &&
+    RESUMABLE_STATUSES.includes(session.status) &&
     session.sdkSessionId
   ) {
+    // Optimistic lock: atomically transition to "creating" to prevent races
+    const updated = await db
+      .update(interactiveSessions)
+      .set({ status: "creating", error: null, endedAt: null })
+      .where(
+        and(
+          eq(interactiveSessions.id, sessionId),
+          inArray(interactiveSessions.status, RESUMABLE_STATUSES),
+        ),
+      )
+      .returning();
+
+    if (updated.length === 0) {
+      return NextResponse.json(
+        { error: "Session is already resuming" },
+        { status: 409 },
+      );
+    }
+
     // Resolve credentials for the new task run
     let agentApiKey: string | undefined;
 
@@ -109,14 +134,19 @@ export async function POST(
       );
     }
 
-    // Mark as creating while the new task boots
-    await updateInteractiveSession(sessionId, {
-      status: "creating",
-      error: null,
-      endedAt: null,
-    });
+    // Probe sandbox: is it still alive? (warm vs cold)
+    let warmResumeSandboxId: string | undefined;
+    let warmResumeSandboxBaseUrl: string | undefined;
 
-    // Trigger a new task with resume flag
+    if (session.sandboxId) {
+      const alive = await sandboxManager.reconnect(session.sandboxId);
+      if (alive) {
+        warmResumeSandboxId = session.sandboxId;
+        warmResumeSandboxBaseUrl = session.sandboxBaseUrl ?? undefined;
+      }
+    }
+
+    // Trigger a new task with appropriate resume mode
     await tasks.trigger<typeof interactiveSessionTask>(
       "interactive-session",
       {
@@ -130,11 +160,17 @@ export async function POST(
         githubInstallationId,
         prompt,
         resumeSdkSessionId: session.sdkSessionId,
+        warmResumeSandboxId,
+        warmResumeSandboxBaseUrl,
       },
       { tags: [`session:${sessionId}`] },
     );
 
-    return NextResponse.json({ ok: true, resumed: true });
+    return NextResponse.json({
+      ok: true,
+      resumed: true,
+      warm: !!warmResumeSandboxId,
+    });
   }
 
   // ── Creating or failed: can't send ──

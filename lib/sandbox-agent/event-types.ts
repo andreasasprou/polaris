@@ -55,6 +55,60 @@ export type UsageEvent = {
   size?: number;
 };
 
+/** Permission request from the agent. */
+export type PermissionRequestEvent = {
+  type: "permission_requested";
+  permissionId: string;
+  action: string;
+  status: string;
+  metadata?: Record<string, unknown>;
+};
+
+/** Permission resolved (user replied or auto-resolved). */
+export type PermissionResolvedEvent = {
+  type: "permission_resolved";
+  permissionId: string;
+  action: string;
+  status: string;
+};
+
+/** Question from the agent requiring user input. */
+export type QuestionRequestEvent = {
+  type: "question_requested";
+  questionId: string;
+  prompt: string;
+  options: string[];
+  status: string;
+};
+
+/** Question resolved (user answered or rejected). */
+export type QuestionResolvedEvent = {
+  type: "question_resolved";
+  questionId: string;
+  status: string;
+  response?: string;
+};
+
+/** Turn lifecycle events. */
+export type TurnEvent = {
+  type: "turn_started" | "turn_ended";
+};
+
+/** Session ended event. */
+export type SessionEndedEvent = {
+  type: "session_ended";
+  reason: string;
+  terminatedBy?: string;
+  message?: string;
+};
+
+/** Runtime error event. */
+export type ErrorEvent = {
+  type: "error";
+  message: string;
+  code?: string;
+};
+
 /** Catch-all for unknown events. */
 export type UnknownEvent = {
   type: "unknown";
@@ -68,6 +122,13 @@ export type ParsedEvent =
   | PromptEvent
   | SessionLifecycleEvent
   | UsageEvent
+  | PermissionRequestEvent
+  | PermissionResolvedEvent
+  | QuestionRequestEvent
+  | QuestionResolvedEvent
+  | TurnEvent
+  | SessionEndedEvent
+  | ErrorEvent
   | UnknownEvent;
 
 /**
@@ -128,6 +189,61 @@ export function parseEventPayload(
           size: update.size as number | undefined,
         };
 
+      case "permission_requested":
+        return {
+          type: "permission_requested",
+          permissionId: update.permissionId as string ?? update.permission_id as string,
+          action: update.action as string ?? "",
+          status: update.status as string ?? "requested",
+          metadata: update.metadata as Record<string, unknown> | undefined,
+        };
+
+      case "permission_resolved":
+        return {
+          type: "permission_resolved",
+          permissionId: update.permissionId as string ?? update.permission_id as string,
+          action: update.action as string ?? "",
+          status: update.status as string ?? "",
+        };
+
+      case "question_requested":
+        return {
+          type: "question_requested",
+          questionId: update.questionId as string ?? update.question_id as string,
+          prompt: update.prompt as string ?? "",
+          options: (update.options as string[]) ?? [],
+          status: update.status as string ?? "requested",
+        };
+
+      case "question_resolved":
+        return {
+          type: "question_resolved",
+          questionId: update.questionId as string ?? update.question_id as string,
+          status: update.status as string ?? "",
+          response: update.response as string | undefined,
+        };
+
+      case "turn_started":
+        return { type: "turn_started" };
+
+      case "turn_ended":
+        return { type: "turn_ended" };
+
+      case "session_ended":
+        return {
+          type: "session_ended",
+          reason: update.reason as string ?? "completed",
+          terminatedBy: update.terminated_by as string ?? update.terminatedBy as string,
+          message: update.message as string | undefined,
+        };
+
+      case "error":
+        return {
+          type: "error",
+          message: update.message as string ?? "Unknown error",
+          code: update.code as string | undefined,
+        };
+
       case "available_commands_update":
       case "config_option_update":
         return null; // Skip config noise
@@ -184,7 +300,16 @@ export type ChatItem =
       content: Array<Record<string, unknown>>;
     }
   | { type: "usage"; cost?: { amount: number; currency: string }; used?: number; size?: number }
-  | { type: "status"; label: string; detail?: string };
+  | { type: "status"; label: string; detail?: string }
+  | { type: "permission_request"; permissionId: string; action: string; status: "pending" | "accepted" | "rejected"; metadata?: Record<string, unknown> }
+  | { type: "question_request"; questionId: string; prompt: string; options: string[]; status: "pending" | "answered" | "rejected"; response?: string }
+  | { type: "error"; message: string; code?: string }
+  | { type: "session_ended"; reason: string; message?: string };
+
+export type ConsolidatedResult = {
+  items: ChatItem[];
+  turnInProgress: boolean;
+};
 
 /**
  * Consolidate a stream of parsed events into displayable chat items.
@@ -192,11 +317,14 @@ export type ChatItem =
  */
 export function consolidateEvents(
   events: Array<{ payload: Record<string, unknown> }>,
-): ChatItem[] {
+): ConsolidatedResult {
   const items: ChatItem[] = [];
   let currentThought = "";
   let currentMessage = "";
+  let turnInProgress = false;
   const toolCalls = new Map<string, ChatItem & { type: "tool_call" }>();
+  const permissions = new Map<string, ChatItem & { type: "permission_request" }>();
+  const questions = new Map<string, ChatItem & { type: "question_request" }>();
 
   function flushThought() {
     if (currentThought.trim()) {
@@ -206,8 +334,12 @@ export function consolidateEvents(
   }
 
   function flushMessage() {
-    if (currentMessage.trim()) {
-      items.push({ type: "agent_message", text: currentMessage.trim() });
+    const trimmed = currentMessage.trim();
+    if (trimmed) {
+      // Filter out session replay preamble — internal context not meant for the user
+      if (!trimmed.startsWith("Previous session history is replayed below")) {
+        items.push({ type: "agent_message", text: trimmed });
+      }
     }
     currentMessage = "";
   }
@@ -291,6 +423,81 @@ export function consolidateEvents(
         });
         break;
 
+      case "permission_requested": {
+        flushThought();
+        flushMessage();
+        const perm: ChatItem & { type: "permission_request" } = {
+          type: "permission_request",
+          permissionId: parsed.permissionId,
+          action: parsed.action,
+          status: "pending",
+          metadata: parsed.metadata,
+        };
+        permissions.set(parsed.permissionId, perm);
+        items.push(perm);
+        break;
+      }
+
+      case "permission_resolved": {
+        const existing = permissions.get(parsed.permissionId);
+        if (existing) {
+          existing.status = parsed.status === "reject" ? "rejected" : "accepted";
+        }
+        break;
+      }
+
+      case "question_requested": {
+        flushThought();
+        flushMessage();
+        const q: ChatItem & { type: "question_request" } = {
+          type: "question_request",
+          questionId: parsed.questionId,
+          prompt: parsed.prompt,
+          options: parsed.options,
+          status: "pending",
+        };
+        questions.set(parsed.questionId, q);
+        items.push(q);
+        break;
+      }
+
+      case "question_resolved": {
+        const existing = questions.get(parsed.questionId);
+        if (existing) {
+          existing.status = parsed.status === "rejected" ? "rejected" : "answered";
+          existing.response = parsed.response;
+        }
+        break;
+      }
+
+      case "turn_started":
+        turnInProgress = true;
+        break;
+
+      case "turn_ended":
+        turnInProgress = false;
+        break;
+
+      case "session_ended":
+        flushThought();
+        flushMessage();
+        items.push({
+          type: "session_ended",
+          reason: parsed.reason,
+          message: parsed.message,
+        });
+        break;
+
+      case "error":
+        flushThought();
+        flushMessage();
+        items.push({
+          type: "error",
+          message: parsed.message,
+          code: parsed.code,
+        });
+        break;
+
       case "session_created":
         items.push({ type: "status", label: "Session created" });
         break;
@@ -313,5 +520,5 @@ export function consolidateEvents(
   flushThought();
   flushMessage();
 
-  return items;
+  return { items, turnInProgress };
 }

@@ -25,6 +25,10 @@ export type InteractiveSessionPayload = {
   prompt: string;
   /** If set, resume the given SDK session instead of creating a new one */
   resumeSdkSessionId?: string;
+  /** If set, reconnect to this existing sandbox instead of creating a new one */
+  warmResumeSandboxId?: string;
+  /** Agent server URL from the previous task (used for warm resume) */
+  warmResumeSandboxBaseUrl?: string;
 };
 
 const sandboxManager = new SandboxManager();
@@ -55,6 +59,8 @@ export const interactiveSessionTask = task({
       githubInstallationId,
       prompt,
       resumeSdkSessionId,
+      warmResumeSandboxId,
+      warmResumeSandboxBaseUrl,
     } = payload;
 
     const isResume = !!resumeSdkSessionId;
@@ -84,60 +90,103 @@ export const interactiveSessionTask = task({
 
     const repoUrl = `https://github.com/${repositoryOwner}/${repositoryName}.git`;
 
-    // ── Resolve snapshot (builds one on first use) ──
-    metadata.set("setupStep", "Preparing environment...");
-    const source = await resolveSnapshotSource(agentType);
+    // ── Resolve sandbox: warm resume (reconnect) or cold (create new) ──
+    // Definite assignment: one of the two branches below always assigns sandbox
+    let sandbox!: Awaited<ReturnType<typeof sandboxManager.create>>;
+    let isWarmResume = false;
+    let serverUrl!: string;
 
-    metadata.set("setupStep", "Creating sandbox...");
-    logger.info("Creating sandbox", { repoUrl, source: source.type });
+    if (warmResumeSandboxId) {
+      metadata.set("setupStep", "Reconnecting to sandbox...");
+      const reconnected = await sandboxManager.reconnect(warmResumeSandboxId);
 
-    const sandbox = await sandboxManager.create({
-      source,
-      repoUrl,
-      gitToken,
-      baseBranch: defaultBranch ?? "main",
-      timeoutMs: 3600_000,
-      ports: [2468],
-    });
+      if (reconnected) {
+        sandbox = reconnected;
+        isWarmResume = true;
+        await sandboxManager.extendTimeout(sandbox, 3600_000);
+        logger.info("Warm resume: reconnected to existing sandbox", {
+          sandboxId: sandbox.sandboxId,
+        });
+      }
+    }
 
-    logger.info("Sandbox created", { sandboxId: sandbox.sandboxId });
+    if (!isWarmResume) {
+      // Cold path: create new sandbox
+      metadata.set("setupStep", "Preparing environment...");
+      const source = await resolveSnapshotSource(agentType);
 
-    await updateInteractiveSession(sessionId, {
-      sandboxId: sandbox.sandboxId,
-    });
+      metadata.set("setupStep", "Creating sandbox...");
+      logger.info("Creating sandbox", { repoUrl, source: source.type });
 
-    const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
-
-    // Configure git
-    const git = new GitOperations(commands);
-    await git.configure({ repoUrl, gitToken });
-
-    try {
-      // ── Bootstrap agent (skip install when using snapshot) ──
-      const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
-
-      const sessionEnv = buildSessionEnv(agentType, agentApiKey, {
-        GITHUB_TOKEN: gitToken,
+      sandbox = await sandboxManager.create({
+        source,
+        repoUrl,
+        gitToken,
+        baseBranch: defaultBranch ?? "main",
+        timeoutMs: 3600_000,
+        ports: [2468],
       });
 
-      if (source.type === "git") {
-        await bootstrap.install();
-        await bootstrap.installAgent(agentType, sessionEnv);
-      }
-
-      const serverUrl = await bootstrap.start(2468, sessionEnv);
-
-      logger.info("Agent server started", { serverUrl });
+      logger.info("Sandbox created", { sandboxId: sandbox.sandboxId });
 
       await updateInteractiveSession(sessionId, {
-        sandboxBaseUrl: serverUrl,
+        sandboxId: sandbox.sandboxId,
       });
+    }
+
+    // ── Heartbeat: extend sandbox timeout periodically ──
+    const HEARTBEAT_INTERVAL_MS = 20 * 60 * 1000;
+    const HEARTBEAT_EXTEND_MS = 30 * 60 * 1000;
+    const heartbeat = setInterval(async () => {
+      await sandboxManager.extendTimeout(sandbox, HEARTBEAT_EXTEND_MS);
+    }, HEARTBEAT_INTERVAL_MS);
+
+    const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
+    const git = new GitOperations(commands);
+
+    // Track why the task exits to decide sandbox fate
+    let exitReason: "idle_timeout" | "user_stop" | "error" = "idle_timeout";
+
+    try {
+      if (isWarmResume) {
+        // Warm resume: agent server is already running, just reconfigure git auth
+        await git.configure({ repoUrl, gitToken });
+        serverUrl = warmResumeSandboxBaseUrl!;
+        logger.info("Warm resume: reusing agent server", { serverUrl });
+      } else {
+        // Cold path: full bootstrap
+        await git.configure({ repoUrl, gitToken });
+
+        const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
+
+        const sessionEnv = buildSessionEnv(agentType, agentApiKey, {
+          GITHUB_TOKEN: gitToken,
+        });
+
+        // Snapshot source — agent already installed; git source — need full install
+        const source = await resolveSnapshotSource(agentType);
+        if (source.type === "git") {
+          await bootstrap.install();
+          await bootstrap.installAgent(agentType, sessionEnv);
+        }
+
+        serverUrl = await bootstrap.start(2468, sessionEnv);
+
+        logger.info("Agent server started", { serverUrl });
+
+        await updateInteractiveSession(sessionId, {
+          sandboxBaseUrl: serverUrl,
+        });
+      }
 
       // ── Connect SDK with persistence ──
       const persist = createPersistDriver();
       const client = await SandboxAgentClient.connect({
         baseUrl: serverUrl,
         persist,
+        ...(isResume && !isWarmResume
+          ? { replayMaxEvents: 200, replayMaxChars: 50_000 }
+          : {}),
       });
 
       const defaultMode =
@@ -202,12 +251,9 @@ export const interactiveSessionTask = task({
       // ── Wait loop: accept follow-up prompts via input stream ──
       // NOTE: input stream .wait() may return a stale buffered value
       // repeatedly (the buffer isn't cleared on read). We track the last
-      // prompt text and skip duplicates, with a safety limit to avoid
-      // infinite spinning if the buffer never clears.
+      // prompt text and skip duplicates silently.
       let shouldContinue = true;
       let lastPromptText = prompt;
-      let consecutiveDupes = 0;
-      const MAX_CONSECUTIVE_DUPES = 3;
 
       while (shouldContinue) {
         logger.info("Waiting for next message");
@@ -215,28 +261,20 @@ export const interactiveSessionTask = task({
         const message = await sessionMessages.wait({ timeout: "55m" });
 
         if (!message.ok) {
-          logger.info("Session timed out");
+          logger.info("Session timed out — entering idle for warm resume");
+          exitReason = "idle_timeout";
           shouldContinue = false;
         } else if (message.output.action === "stop") {
           logger.info("Session stopped by user");
+          exitReason = "user_stop";
           shouldContinue = false;
         } else if (message.output.action === "prompt") {
           if (message.output.prompt === lastPromptText) {
-            consecutiveDupes++;
-            logger.info("Skipping duplicate prompt", {
-              count: consecutiveDupes,
-              max: MAX_CONSECUTIVE_DUPES,
-            });
-            if (consecutiveDupes >= MAX_CONSECUTIVE_DUPES) {
-              logger.warn(
-                "Too many duplicate messages from input stream buffer, stopping",
-              );
-              shouldContinue = false;
-            }
+            // Stale buffer — throttle to avoid busy-spinning
+            await new Promise((r) => setTimeout(r, 2000));
             continue;
           }
 
-          consecutiveDupes = 0;
           lastPromptText = message.output.prompt;
           logger.info("Sending follow-up prompt", {
             length: message.output.prompt.length,
@@ -248,6 +286,30 @@ export const interactiveSessionTask = task({
           });
 
           logger.info("Follow-up prompt completed");
+        } else if (message.output.action === "permission_reply") {
+          logger.info("Replying to permission", {
+            permissionId: message.output.permissionId,
+            reply: message.output.reply,
+          });
+          await client.replyPermission(
+            session,
+            message.output.permissionId,
+            message.output.reply,
+          );
+        } else if (message.output.action === "question_reply") {
+          logger.info("Replying to question", {
+            questionId: message.output.questionId,
+          });
+          await client.replyQuestion(
+            session,
+            message.output.questionId,
+            message.output.answers,
+          );
+        } else if (message.output.action === "question_reject") {
+          logger.info("Rejecting question", {
+            questionId: message.output.questionId,
+          });
+          await client.rejectQuestion(session, message.output.questionId);
         }
       }
 
@@ -256,15 +318,20 @@ export const interactiveSessionTask = task({
       await waitForEventStream();
       await client.dispose();
 
-      metadata.set("status", "stopped");
-
-      await updateInteractiveSession(sessionId, {
-        status: "stopped",
-        endedAt: new Date(),
-      });
+      if (exitReason === "user_stop") {
+        metadata.set("status", "stopped");
+        await updateInteractiveSession(sessionId, {
+          status: "stopped",
+          endedAt: new Date(),
+        });
+      } else {
+        // idle_timeout — status set in finally block
+        metadata.set("status", "idle");
+      }
 
       return { ok: true, sessionId };
     } catch (error) {
+      exitReason = "error";
       const message = error instanceof Error ? error.message : String(error);
       logger.error("Session failed", { error: message });
 
@@ -278,8 +345,26 @@ export const interactiveSessionTask = task({
 
       throw error;
     } finally {
-      logger.info("Destroying sandbox");
-      await sandboxManager.destroy(sandbox);
+      clearInterval(heartbeat);
+
+      if (exitReason === "idle_timeout") {
+        // Keep sandbox alive for warm resume
+        logger.info("Keeping sandbox alive for warm resume", {
+          gracePeriodMs: SandboxManager.IDLE_GRACE_PERIOD_MS,
+        });
+        await sandboxManager.extendTimeout(
+          sandbox,
+          SandboxManager.IDLE_GRACE_PERIOD_MS,
+        );
+        await updateInteractiveSession(sessionId, {
+          status: "idle",
+          triggerRunId: null,
+          endedAt: new Date(),
+        });
+      } else {
+        logger.info("Destroying sandbox");
+        await sandboxManager.destroy(sandbox);
+      }
     }
   },
 

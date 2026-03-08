@@ -24,7 +24,7 @@ export async function updateInteractiveSession(
     sdkSessionId: string;
     sandboxId: string;
     sandboxBaseUrl: string;
-    triggerRunId: string;
+    triggerRunId: string | null;
     summary: string | null;
     error: string | null;
     startedAt: Date;

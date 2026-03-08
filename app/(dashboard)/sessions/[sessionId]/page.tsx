@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, createContext, useContext } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useInputStreamSend } from "@trigger.dev/react-hooks";
@@ -24,16 +24,34 @@ type InteractiveSession = {
   endedAt: string | null;
 };
 
+// ── HITL Action Context ──
+
+export type HitlActions = {
+  replyPermission: (permissionId: string, reply: string) => void;
+  replyQuestion: (questionId: string, answers: string[][]) => void;
+  rejectQuestion: (questionId: string) => void;
+};
+
+const HitlContext = createContext<HitlActions | null>(null);
+
+export function useHitlActions(): HitlActions | null {
+  return useContext(HitlContext);
+}
+
+// ── Components ──
+
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     creating: "bg-yellow-100 text-yellow-800",
     active: "bg-green-100 text-green-800",
+    idle: "bg-blue-100 text-blue-800",
     completed: "bg-gray-100 text-gray-800",
     failed: "bg-red-100 text-red-800",
     stopped: "bg-blue-100 text-blue-800",
   };
 
   const labels: Record<string, string> = {
+    idle: "paused",
     stopped: "paused",
     completed: "paused",
   };
@@ -57,13 +75,17 @@ function ActiveChatInput({
   triggerRunId,
   accessToken,
   status,
+  turnInProgress,
   onResumeTriggered,
+  children,
 }: {
   sessionId: string;
   triggerRunId: string;
   accessToken: string;
   status: string;
+  turnInProgress: boolean;
   onResumeTriggered: () => void;
+  children: React.ReactNode;
 }) {
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
@@ -78,9 +100,28 @@ function ActiveChatInput({
     { accessToken },
   );
 
-  const isResumable = status === "stopped" || status === "completed";
+  const isResumable = status === "idle" || status === "stopped" || status === "completed";
   const isActive = status === "active";
-  const canSend = isActive || isResumable;
+  const canSend = (isActive && !turnInProgress) || isResumable;
+
+  // HITL actions via input stream
+  const hitlActions: HitlActions = {
+    replyPermission: (permissionId, reply) => {
+      if (isReady) {
+        send({ action: "permission_reply", permissionId, reply });
+      }
+    },
+    replyQuestion: (questionId, answers) => {
+      if (isReady) {
+        send({ action: "question_reply", questionId, answers });
+      }
+    },
+    rejectQuestion: (questionId) => {
+      if (isReady) {
+        send({ action: "question_reject", questionId });
+      }
+    },
+  };
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -144,31 +185,38 @@ function ActiveChatInput({
   const isBusy = sending || isSending;
 
   const placeholder = !canSend
-    ? status === "creating"
-      ? "Starting up..."
-      : "Session failed"
+    ? turnInProgress
+      ? "Agent is working..."
+      : status === "creating"
+        ? "Starting up..."
+        : "Session failed"
     : isResumable
       ? "Send a message to resume..."
       : "Send a message...";
 
   return (
-    <form onSubmit={handleSend} className="flex gap-2">
-      <input
-        type="text"
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder={placeholder}
-        disabled={!canSend || isBusy}
-        className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
-      />
-      <button
-        type="submit"
-        disabled={!canSend || isBusy || !prompt.trim()}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-      >
-        {isBusy ? (isResumable ? "Resuming..." : "Sending...") : "Send"}
-      </button>
-    </form>
+    <HitlContext.Provider value={hitlActions}>
+      {children}
+      <div className="border-t border-border pt-4">
+        <form onSubmit={handleSend} className="flex gap-2">
+          <input
+            type="text"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={placeholder}
+            disabled={!canSend || isBusy}
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={!canSend || isBusy || !prompt.trim()}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {isBusy ? (isResumable ? "Resuming..." : "Sending...") : "Send"}
+          </button>
+        </form>
+      </div>
+    </HitlContext.Provider>
   );
 }
 
@@ -188,7 +236,7 @@ function FallbackChatInput({
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
 
-  const isResumable = status === "stopped" || status === "completed";
+  const isResumable = status === "idle" || status === "stopped" || status === "completed";
   const canSend = isResumable;
 
   async function handleSend(e: React.FormEvent) {
@@ -265,16 +313,21 @@ export default function SessionDetailPage() {
       .catch(() => setLoading(false));
   }, [sessionId]);
 
-  // Obtain scoped access token when session has a triggerRunId
+  // Obtain scoped access token when session has a triggerRunId.
+  // Re-mint when triggerRunId changes (e.g. after resume creates a new run).
+  const triggerRunId = session?.triggerRunId ?? null;
   useEffect(() => {
-    if (!session?.triggerRunId) return;
+    if (!triggerRunId) return;
+
+    // Clear stale token immediately so we don't use it for the wrong run
+    setAccessToken(null);
 
     createSessionAccessToken(sessionId)
       .then(setAccessToken)
       .catch((err) => {
         console.error("Failed to create access token:", err);
       });
-  }, [sessionId, session?.triggerRunId]);
+  }, [sessionId, triggerRunId]);
 
   // Realtime subscription for live sessions
   const isLive =
@@ -309,20 +362,42 @@ export default function SessionDetailPage() {
     }
   }, [realtime.status, sessionId]);
 
-  // After resume: poll briefly until session transitions to creating/active with new triggerRunId
-  const handleResumeTriggered = useCallback(() => {
+  // Poll while session is "creating" to detect when triggerRunId is set
+  // and status transitions to "active". Covers both initial creation and resume.
+  useEffect(() => {
+    if (session?.status !== "creating") return;
+
     const poll = setInterval(async () => {
-      const r = await fetch(`/api/interactive-sessions/${sessionId}`);
-      const d = await r.json();
-      if (d.session) {
-        setSession(d.session);
-        if (d.session.status !== "creating") {
-          clearInterval(poll);
+      try {
+        const r = await fetch(`/api/interactive-sessions/${sessionId}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d.session) {
+          setSession(d.session);
+          if (d.session.status !== "creating") {
+            clearInterval(poll);
+          }
         }
-      }
+      } catch { /* ignore */ }
     }, 2000);
 
-    setTimeout(() => clearInterval(poll), 60_000);
+    const timeout = setTimeout(() => clearInterval(poll), 120_000);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(timeout);
+    };
+  }, [session?.status, sessionId]);
+
+  // After resume: trigger the creating poll by setting status
+  const handleResumeTriggered = useCallback(() => {
+    // The "creating" status is already set by the API route.
+    // Re-fetch session to pick it up and trigger the poll above.
+    fetch(`/api/interactive-sessions/${sessionId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.session) setSession(data.session);
+      })
+      .catch(() => {});
   }, [sessionId]);
 
   if (loading) {
@@ -336,6 +411,61 @@ export default function SessionDetailPage() {
   const isActive = session.status === "active";
   const isCreating = session.status === "creating";
   const hasRealtimeAccess = !!session.triggerRunId && !!accessToken;
+
+  // Use live stream once it has events; otherwise fall back to history to avoid layout shift
+  const liveHasEvents = realtime.items.length > 0;
+  const canShowLive = !!(session.triggerRunId && accessToken && (isActive || isCreating));
+
+  // Chat content to render — always show history first, append live events below
+  let chatContent: React.ReactNode;
+  if (session.sdkSessionId) {
+    // Session has history — always show it
+    chatContent = (
+      <>
+        <SessionChat mode="history" sdkSessionId={session.sdkSessionId} />
+        {canShowLive && liveHasEvents && (
+          <SessionChat
+            mode="live"
+            triggerRunId={session.triggerRunId!}
+            accessToken={accessToken!}
+            skipInitialPrompt
+          />
+        )}
+        {canShowLive && !liveHasEvents && (
+          <div className="flex items-center gap-2 py-3">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+            <span className="text-xs text-muted-foreground">
+              {realtime.setupStep ?? "Resuming session..."}
+            </span>
+          </div>
+        )}
+      </>
+    );
+  } else if (canShowLive) {
+    // Fresh session — no history yet, show live only
+    chatContent = (
+      <SessionChat
+        mode="live"
+        triggerRunId={session.triggerRunId!}
+        accessToken={accessToken!}
+      />
+    );
+  } else if (isCreating) {
+    chatContent = (
+      <div className="flex flex-col items-center gap-3 py-16">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+        <p className="text-sm text-muted-foreground">
+          {realtime.setupStep ?? "Provisioning sandbox..."}
+        </p>
+      </div>
+    );
+  } else {
+    chatContent = (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        No session data available.
+      </p>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -375,48 +505,34 @@ export default function SessionDetailPage() {
         </div>
       )}
 
-      {/* Chat area */}
-      <div className="min-h-0 flex-1 overflow-auto pb-4">
-        {session.triggerRunId && accessToken && (isActive || isCreating) ? (
-          <SessionChat
-            mode="live"
-            triggerRunId={session.triggerRunId}
-            accessToken={accessToken}
-          />
-        ) : session.sdkSessionId ? (
-          <SessionChat mode="history" sdkSessionId={session.sdkSessionId} />
-        ) : isCreating ? (
-          <div className="flex flex-col items-center gap-3 py-16">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-            <p className="text-sm text-muted-foreground">
-              {realtime.setupStep ?? "Provisioning sandbox..."}
-            </p>
+      {/* Chat area + Input — wrapped in HITL context when active */}
+      {hasRealtimeAccess ? (
+        <ActiveChatInput
+          sessionId={session.id}
+          triggerRunId={session.triggerRunId!}
+          accessToken={accessToken!}
+          status={session.status}
+          turnInProgress={realtime.turnInProgress}
+          onResumeTriggered={handleResumeTriggered}
+        >
+          <div className="min-h-0 flex-1 overflow-auto pb-4">
+            {chatContent}
           </div>
-        ) : (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No session data available.
-          </p>
-        )}
-      </div>
-
-      {/* Input — mount ActiveChatInput only when we have a valid token */}
-      <div className="border-t border-border pt-4">
-        {hasRealtimeAccess ? (
-          <ActiveChatInput
-            sessionId={session.id}
-            triggerRunId={session.triggerRunId!}
-            accessToken={accessToken!}
-            status={session.status}
-            onResumeTriggered={handleResumeTriggered}
-          />
-        ) : (
-          <FallbackChatInput
-            sessionId={session.id}
-            status={session.status}
-            onResumeTriggered={handleResumeTriggered}
-          />
-        )}
-      </div>
+        </ActiveChatInput>
+      ) : (
+        <>
+          <div className="min-h-0 flex-1 overflow-auto pb-4">
+            {chatContent}
+          </div>
+          <div className="border-t border-border pt-4">
+            <FallbackChatInput
+              sessionId={session.id}
+              status={session.status}
+              onResumeTriggered={handleResumeTriggered}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

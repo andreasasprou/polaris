@@ -1,7 +1,7 @@
 "use client";
 
 import { useRealtimeRunWithStreams } from "@trigger.dev/react-hooks";
-import { consolidateEvents, type ChatItem } from "@/lib/sandbox-agent/event-types";
+import { consolidateEvents, type ChatItem, type ConsolidatedResult } from "@/lib/sandbox-agent/event-types";
 import type { SandboxAgentEvent } from "@/lib/sandbox-agent/SandboxAgentClient";
 import type { EventStreamMap } from "@/lib/trigger/types";
 import type { interactiveSessionTask } from "@/trigger/interactive-session";
@@ -14,6 +14,8 @@ type UseRealtimeSessionOptions = {
 type UseRealtimeSessionReturn = {
   /** Consolidated chat items for rendering. */
   items: ChatItem[];
+  /** Whether a turn is currently in progress (agent is working). */
+  turnInProgress: boolean;
   /** Raw agent events from the output stream. */
   rawEvents: SandboxAgentEvent[];
   /** Current run status from Trigger.dev. */
@@ -51,12 +53,13 @@ export function useRealtimeSession({
   });
 
   const rawEvents = (streams?.events ?? []) as SandboxAgentEvent[];
-  const items = consolidateEvents(rawEvents);
+  const { items, turnInProgress } = consolidateEvents(rawEvents);
 
   const meta = run?.metadata as Record<string, string> | undefined;
 
   return {
     items,
+    turnInProgress,
     rawEvents,
     status: run?.status ?? null,
     sessionStatus: meta?.status ?? null,

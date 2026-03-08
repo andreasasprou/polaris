@@ -6,6 +6,7 @@ const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
 
 export class SandboxManager {
   static readonly PROJECT_DIR = "/vercel/sandbox";
+  static readonly IDLE_GRACE_PERIOD_MS = 30 * 60 * 1000; // 30 minutes
 
   async create(config: SandboxConfig): Promise<Sandbox> {
     const { source } = config;
@@ -70,6 +71,36 @@ export class SandboxManager {
       await sandbox.stop();
     } catch {
       // Best-effort cleanup — sandbox may already be stopped or timed out
+    }
+  }
+
+  /**
+   * Reconnect to an existing running sandbox by ID.
+   * Returns the sandbox if it's still running, null otherwise.
+   */
+  async reconnect(sandboxId: string): Promise<Sandbox | null> {
+    try {
+      const sandbox = await Sandbox.get({
+        sandboxId,
+        token: process.env.VERCEL_TOKEN,
+        teamId: process.env.VERCEL_TEAM_ID,
+      });
+      if (sandbox.status === "running") return sandbox;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Extend sandbox timeout by the given duration. Best-effort — may
+   * fail silently if the sandbox has already stopped or hit plan limits.
+   */
+  async extendTimeout(sandbox: Sandbox, durationMs: number): Promise<void> {
+    try {
+      await sandbox.extendTimeout(durationMs);
+    } catch {
+      // Best-effort — sandbox may have reached plan max or already stopped
     }
   }
 

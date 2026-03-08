@@ -103,7 +103,7 @@ export function useSessionEvents({
   }, [sessionId, live]);
 
   // Consolidate into chat items
-  const items = consolidateEvents(rawEvents);
+  const { items } = consolidateEvents(rawEvents);
 
   return { items, rawEvents, loading, error, streaming };
 }

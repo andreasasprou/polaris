@@ -13,6 +13,8 @@ type SessionConfig = {
 type ConnectOptions = {
   baseUrl: string;
   persist?: SessionPersistDriver;
+  replayMaxEvents?: number;
+  replayMaxChars?: number;
 };
 
 type ExecuteOptions = {
@@ -40,6 +42,8 @@ export class SandboxAgentClient {
     const sdk = await SandboxAgent.connect({
       baseUrl: opts.baseUrl,
       persist: opts.persist,
+      replayMaxEvents: opts.replayMaxEvents,
+      replayMaxChars: opts.replayMaxChars,
       waitForHealth: { timeoutMs: 30_000 },
     });
     return new SandboxAgentClient(sdk);
@@ -167,6 +171,38 @@ export class SandboxAgentClient {
     } catch {
       // Best-effort cleanup
     }
+  }
+
+  /**
+   * Reply to a permission request from the agent.
+   */
+  async replyPermission(
+    session: SandboxAgentSession,
+    permissionId: string,
+    reply: string,
+  ): Promise<void> {
+    await session.send("permission/reply", { permissionId, reply });
+  }
+
+  /**
+   * Reply to a question from the agent with selected answers.
+   */
+  async replyQuestion(
+    session: SandboxAgentSession,
+    questionId: string,
+    answers: string[][],
+  ): Promise<void> {
+    await session.send("question/reply", { questionId, answers });
+  }
+
+  /**
+   * Reject a question from the agent.
+   */
+  async rejectQuestion(
+    session: SandboxAgentSession,
+    questionId: string,
+  ): Promise<void> {
+    await session.send("question/reject", { questionId });
   }
 
   async dispose(): Promise<void> {
