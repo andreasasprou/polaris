@@ -7,6 +7,8 @@ import { authClient } from "@/lib/auth/client";
 const navigation = [
   { name: "Dashboard", href: "/dashboard" },
   { name: "Automations", href: "/automations" },
+  { name: "Runs", href: "/runs" },
+  { name: "Sessions", href: "/sessions" },
   { name: "Integrations", href: "/integrations" },
   { name: "Settings", href: "/settings" },
 ];

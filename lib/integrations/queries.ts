@@ -18,6 +18,15 @@ export async function findGithubInstallationByInstallationId(installationId: num
   return row ?? null;
 }
 
+export async function findGithubInstallationById(id: string) {
+  const [row] = await db
+    .select()
+    .from(githubInstallations)
+    .where(eq(githubInstallations.id, id))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function findRepositoriesByOrg(organizationId: string) {
   return db
     .select()

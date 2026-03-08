@@ -16,6 +16,6 @@ export default defineConfig({
   },
   dirs: ["./trigger"],
   build: {
-    external: ["@vercel/sandbox"],
+    external: ["@vercel/sandbox", "sandbox-agent", "@sandbox-agent/persist-postgres"],
   },
 });

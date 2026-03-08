@@ -17,6 +17,7 @@ export type ResolvedCredentials = {
   prompt: string;
   agentType: string;
   model: string | null;
+  agentMode: string | null;
   maxDurationSeconds: number;
   allowPush: boolean;
   allowPrCreate: boolean;
@@ -65,6 +66,7 @@ export async function resolveCredentials(
     prompt: automation.prompt,
     agentType: automation.agentType,
     model: automation.model,
+    agentMode: automation.agentMode,
     maxDurationSeconds: automation.maxDurationSeconds,
     allowPush: automation.allowPush,
     allowPrCreate: automation.allowPrCreate,

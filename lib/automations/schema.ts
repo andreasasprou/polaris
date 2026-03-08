@@ -19,8 +19,9 @@ export const automations = pgTable("automations", {
   triggerType: text("trigger_type").notNull(), // 'github' | 'slack' | 'schedule' | 'webhook' | 'sentry'
   triggerConfig: jsonb("trigger_config").notNull().$type<Record<string, unknown>>(),
   prompt: text("prompt").notNull(),
-  agentType: text("agent_type").notNull().default("claude"), // 'claude' | 'codex'
+  agentType: text("agent_type").notNull().default("claude"), // 'claude' | 'codex' | 'opencode' | 'amp'
   model: text("model"),
+  agentMode: text("agent_mode"),
   repositoryId: uuid("repository_id").references(() => repositories.id),
   agentSecretId: uuid("agent_secret_id").references(() => secrets.id),
   webhookKeyHash: text("webhook_key_hash").unique(),
@@ -47,6 +48,7 @@ export const automationRuns = pgTable("automation_runs", {
   externalEventId: text("external_event_id"),
   dedupeKey: text("dedupe_key"),
   triggerEvent: jsonb("trigger_event").$type<Record<string, unknown>>(),
+  agentSessionId: text("agent_session_id"), // Links to SDK persist session
   prUrl: text("pr_url"),
   branchName: text("branch_name"),
   summary: text("summary"),

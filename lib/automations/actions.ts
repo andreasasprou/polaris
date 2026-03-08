@@ -84,6 +84,7 @@ export async function updateAutomationRun(
   input: Partial<{
     triggerRunId: string;
     status: string;
+    agentSessionId: string;
     prUrl: string;
     branchName: string;
     summary: string;

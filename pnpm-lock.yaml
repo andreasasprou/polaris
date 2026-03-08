@@ -11,9 +11,15 @@ importers:
       '@neondatabase/serverless':
         specifier: ^1.0.2
         version: 1.0.2
+      '@sandbox-agent/persist-postgres':
+        specifier: 0.3.x
+        version: 0.3.0(zod@4.3.6)
       '@slack/web-api':
         specifier: ^7.14.1
         version: 7.14.1
+      '@trigger.dev/react-hooks':
+        specifier: ^4.4.2
+        version: 4.4.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@trigger.dev/sdk':
         specifier: ^4.4.2
         version: 4.4.2(zod@4.3.6)
@@ -47,6 +53,9 @@ importers:
       react-dom:
         specifier: ^19.2.4
         version: 19.2.4(react@19.2.4)
+      sandbox-agent:
+        specifier: 0.3.x
+        version: 0.3.0(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -104,6 +113,11 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@agentclientprotocol/sdk@0.14.1':
+    resolution: {integrity: sha512-b6r3PS3Nly+Wyw9U+0nOr47bV8tfS476EgyEMhoKvJCZLbgqoDFN7DJwkxL88RR0aiOqOYV1ZnESHqb+RmdH8w==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -1709,6 +1723,41 @@ packages:
   '@s2-dev/streamstore@0.22.5':
     resolution: {integrity: sha512-GqdOKIbIoIxT+40fnKzHbrsHB6gBqKdECmFe7D3Ojk4FoN1Hu0LhFzZv6ZmVMjoHHU+55debS1xSWjZwQmbIyQ==}
 
+  '@sandbox-agent/cli-darwin-arm64@0.3.0':
+    resolution: {integrity: sha512-Tp4IQLY8JLR1R+GoN1UfWTUbclIhISUggRJ4PhWKIiwq1IhN1ohHjWoluz7etDlMmK8tVLbvJGvziru/3FpoTA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@sandbox-agent/cli-darwin-x64@0.3.0':
+    resolution: {integrity: sha512-Soe0gO20I14nhotBIVK3SOoGJpBAL/qvh6FstsgW7tyj6azlqYPwJEnapx8DNeFOZosuZlGpAOJEm64YqhxYeA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@sandbox-agent/cli-linux-arm64@0.3.0':
+    resolution: {integrity: sha512-YqbQ2AY0cux72+XL25GAqHVWL4iM4yUlFsYfUDfb0lHJFRueFmhIVLfgbkuDKqwRUeTNbzHN8EiZihEfDqe7ZA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@sandbox-agent/cli-linux-x64@0.3.0':
+    resolution: {integrity: sha512-r7UCwERhzc41RIN5lzwCEuiptBTT2LHHV0Byse2SUDWG70gt6dupFfvquR7NRglT8IKua4ybDyE0tW5W+LTDGA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@sandbox-agent/cli-shared@0.3.0':
+    resolution: {integrity: sha512-RAdLm/nNLM5Pu/X/yxKWmM/If4EpTWd6X06+r58HsTOBgbjN8TC7chaPpv5GBIG9ghoHcHkaAc1BTSptB21AGA==}
+
+  '@sandbox-agent/cli-win32-x64@0.3.0':
+    resolution: {integrity: sha512-7z7SfLfFBpBfQEBhwprS8XZmYZnqVntMF+C3eHWNCulYp6v/EfU6Siu7hoPOSCXzKzjtDZZIfLw+d4Iv5yYxNw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@sandbox-agent/cli@0.3.0':
+    resolution: {integrity: sha512-YQL2BTt1g5ZqyKY1tV1SZBLePTR6S5AZD56ehaI/TDvrAwwJM01xKuWrLnLbPP6aIXwS2VkJT1l1ouPh2k+S2g==}
+    hasBin: true
+
+  '@sandbox-agent/persist-postgres@0.3.0':
+    resolution: {integrity: sha512-Bbn95MTNvh1/y9SOo5iH/K1t2Sx64FNbBdgK0SQikpjIrhrcrftqou6Pwg7T0LVFEGocChK8hEqmMlDQv3VyHw==}
+
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
 
@@ -1835,6 +1884,13 @@ packages:
   '@trigger.dev/core@4.4.2':
     resolution: {integrity: sha512-nuEs6md0PQ/i6PBtQa/llGftIZb/mUgS1xxx6lPymnWRi/WnjeRFcQ0omebFjfAloRtvh7ZnBAMmkNuHG3Nufw==}
     engines: {node: '>=18.20.0'}
+
+  '@trigger.dev/react-hooks@4.4.2':
+    resolution: {integrity: sha512-Ak51xNpmrXW/ceQ6iLuGSuv22ntnf9kOWku0/19U5RqD8S1H7Hjf7x7YFLECiWk0F5eNRKqraG4cHYi6hKXdnQ==}
+    engines: {node: '>=18.20.0'}
+    peerDependencies:
+      react: ^18.0 || ^19.0 || ^19.0.0-rc
+      react-dom: ^18.0 || ^19.0 || ^19.0.0-rc
 
   '@trigger.dev/schema-to-json@4.4.2':
     resolution: {integrity: sha512-CrFKo4szAUQG3sEPbEkkEbCSCkNKtaNwI27M5BghmtNzDBEnE7TNNUMzvJ29zZ4crHWpgSYkTaw7syH6xVOMJQ==}
@@ -2103,6 +2159,9 @@ packages:
     resolution: {integrity: sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==}
     engines: {node: '>=0.4.0'}
     hasBin: true
+
+  acp-http-client@0.3.0:
+    resolution: {integrity: sha512-Gy+HCU5Y8TLLnNZwjNMaEhdsSc62vdfHb1lAsGeNJ+XEonfCPLuYuGp8bzWDOvvxwQQU/SFsaYdvWYGzHieGvw==}
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -4636,6 +4695,9 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
+  sandbox-agent@0.3.0:
+    resolution: {integrity: sha512-PO+olDQX+elgWnFw7xyQDTliKB+vvnHpJdd7JqiPR717GoS9mCO87Xz7HbPRgJmXLtvhr32AvHzsi4mL+9MwLA==}
+
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
 
@@ -4864,6 +4926,11 @@ packages:
     resolution: {integrity: sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==}
     engines: {node: '>= 0.4'}
 
+  swr@2.4.1:
+    resolution: {integrity: sha512-2CC6CiKQtEwaEeNiqWTAw9PGykW8SR5zZX8MZk6TeAvEAnVS7Visz8WzphqgtQ8v2xz/4Q5K+j+SeMaKXeeQIA==}
+    peerDependencies:
+      react: ^16.11.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   systeminformation@5.23.8:
     resolution: {integrity: sha512-Osd24mNKe6jr/YoXLLK3k8TMdzaxDffhpCxgkfgBHcapykIkd50HXThM3TCEuHO2pPuCsSx2ms/SunqhU5MmsQ==}
     engines: {node: '>=8.0.0'}
@@ -5066,6 +5133,11 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
+  use-sync-external-store@1.6.0:
+    resolution: {integrity: sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
@@ -5244,6 +5316,10 @@ packages:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
+
+  '@agentclientprotocol/sdk@0.14.1(zod@4.3.6)':
+    dependencies:
+      zod: 4.3.6
 
   '@alloc/quick-lru@5.2.0': {}
 
@@ -6709,6 +6785,42 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@sandbox-agent/cli-darwin-arm64@0.3.0':
+    optional: true
+
+  '@sandbox-agent/cli-darwin-x64@0.3.0':
+    optional: true
+
+  '@sandbox-agent/cli-linux-arm64@0.3.0':
+    optional: true
+
+  '@sandbox-agent/cli-linux-x64@0.3.0':
+    optional: true
+
+  '@sandbox-agent/cli-shared@0.3.0': {}
+
+  '@sandbox-agent/cli-win32-x64@0.3.0':
+    optional: true
+
+  '@sandbox-agent/cli@0.3.0':
+    dependencies:
+      '@sandbox-agent/cli-shared': 0.3.0
+    optionalDependencies:
+      '@sandbox-agent/cli-darwin-arm64': 0.3.0
+      '@sandbox-agent/cli-darwin-x64': 0.3.0
+      '@sandbox-agent/cli-linux-arm64': 0.3.0
+      '@sandbox-agent/cli-linux-x64': 0.3.0
+      '@sandbox-agent/cli-win32-x64': 0.3.0
+    optional: true
+
+  '@sandbox-agent/persist-postgres@0.3.0(zod@4.3.6)':
+    dependencies:
+      pg: 8.20.0
+      sandbox-agent: 0.3.0(zod@4.3.6)
+    transitivePeerDependencies:
+      - pg-native
+      - zod
+
   '@sec-ant/readable-stream@0.4.1': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
@@ -6868,6 +6980,17 @@ snapshots:
       zod: 3.25.76
       zod-error: 1.5.0
       zod-validation-error: 1.5.0(zod@3.25.76)
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  '@trigger.dev/react-hooks@4.4.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+    dependencies:
+      '@trigger.dev/core': 4.4.2(supports-color@10.2.2)
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+      swr: 2.4.1(react@19.2.4)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -7146,6 +7269,12 @@ snapshots:
       acorn: 8.16.0
 
   acorn@8.16.0: {}
+
+  acp-http-client@0.3.0(zod@4.3.6):
+    dependencies:
+      '@agentclientprotocol/sdk': 0.14.1(zod@4.3.6)
+    transitivePeerDependencies:
+      - zod
 
   ajv-formats@3.0.1(ajv@8.18.0):
     optionalDependencies:
@@ -9673,6 +9802,15 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
+  sandbox-agent@0.3.0(zod@4.3.6):
+    dependencies:
+      '@sandbox-agent/cli-shared': 0.3.0
+      acp-http-client: 0.3.0(zod@4.3.6)
+    optionalDependencies:
+      '@sandbox-agent/cli': 0.3.0
+    transitivePeerDependencies:
+      - zod
+
   scheduler@0.27.0: {}
 
   semver@6.3.1: {}
@@ -9986,6 +10124,12 @@ snapshots:
       has-flag: 4.0.0
 
   supports-preserve-symlinks-flag@1.0.0: {}
+
+  swr@2.4.1(react@19.2.4):
+    dependencies:
+      dequal: 2.0.3
+      react: 19.2.4
+      use-sync-external-store: 1.6.0(react@19.2.4)
 
   systeminformation@5.23.8: {}
 
@@ -10303,6 +10447,10 @@ snapshots:
   uri-js@4.4.1:
     dependencies:
       punycode: 2.3.1
+
+  use-sync-external-store@1.6.0(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   util-deprecate@1.0.2: {}
 

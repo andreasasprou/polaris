@@ -1,4 +1,5 @@
-export type { AgentType } from "@/lib/agents/types";
+import type { AgentType } from "@/lib/sandbox-agent/types";
+export type { AgentType };
 
 export type TaskStage =
   | "queued"
@@ -23,7 +24,7 @@ export type LegacyCodingTaskPayload = {
   baseBranch: string;
   title: string;
   prompt: string;
-  agentType?: "claude" | "codex";
+  agentType?: AgentType;
 
   // for continue mode
   branchName?: string;
