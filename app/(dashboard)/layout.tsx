@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { Sidebar } from "./_components/sidebar";
 
@@ -7,11 +8,33 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Proxy handles redirect for unauthenticated users.
-  // This is a best-effort session fetch for rendering.
+  const hdrs = await headers();
   const session = await auth.api.getSession({
-    headers: await headers(),
+    headers: hdrs,
   }).catch(() => null);
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  // If logged in but no active org, try to auto-set one
+  if (!session.session.activeOrganizationId) {
+    const orgs = await auth.api.listOrganizations({
+      headers: hdrs,
+    }).catch(() => null);
+
+    if (orgs && orgs.length > 0) {
+      await auth.api.setActiveOrganization({
+        headers: hdrs,
+        body: { organizationId: orgs[0].id },
+      });
+      // Refresh the page to pick up the active org
+      redirect(hdrs.get("x-url") ?? "/dashboard");
+    } else {
+      // No orgs at all — redirect to onboarding
+      redirect("/onboarding");
+    }
+  }
 
   return (
     <div className="flex h-svh">

@@ -336,8 +336,8 @@ export const codingTask = task({
       });
 
       // Store agent output in metadata for debugging (visible via MCP)
-      metadata.set("agentOutput", agentResult.output?.slice(0, 2000));
-      metadata.set("agentError", agentResult.errorOutput?.slice(0, 2000));
+      metadata.set("agentOutput", agentResult.output?.slice(0, 2000) ?? "");
+      metadata.set("agentError", agentResult.errorOutput?.slice(0, 2000) ?? "");
 
       // ── Collect results ──
       patchTaskStatus({ stage: "collecting_results", progress: 0.7 });
