@@ -333,6 +333,8 @@ export const codingTask = task({
         success: agentResult.success,
         changesDetected: agentResult.changesDetected,
         error: agentResult.error,
+        stdout: agentResult.output?.slice(0, 3000),
+        stderr: agentResult.errorOutput?.slice(0, 3000),
       });
 
       // ── Collect results ──
