@@ -33,8 +33,12 @@ export class ClaudeAgent extends Agent {
     prompt: string,
     config: AgentConfig,
   ): Promise<Omit<AgentResult, "changesDetected">> {
+    // sk-ant-oat01- = OAuth token (consumer), sk-ant-api03- = API key
+    const isOAuthToken = config.apiKey.startsWith("sk-ant-oat");
+    const isApiKey = config.apiKey.startsWith("sk-ant-") && !isOAuthToken;
+
     const env: Record<string, string> = {
-      ...(config.apiKey.startsWith("sk-ant-")
+      ...(isApiKey
         ? { ANTHROPIC_API_KEY: config.apiKey }
         : { CLAUDE_CODE_OAUTH_TOKEN: config.apiKey }),
       ...config.env,

@@ -1,8 +1,13 @@
-import { task, wait, logger } from "@trigger.dev/sdk/v3";
-import type { CodingTaskPayload, AgentType } from "@/lib/orchestration/types";
+import { task, wait, logger, metadata } from "@trigger.dev/sdk/v3";
+import type {
+  CodingTaskPayload,
+  LegacyCodingTaskPayload,
+  AutomationCodingTaskPayload,
+  AgentType,
+} from "@/lib/orchestration/types";
 import { patchTaskStatus } from "@/lib/orchestration/status";
 import { buildAgentPrompt } from "@/lib/orchestration/prompts";
-import { getInstallationToken } from "@/lib/integrations/github";
+import { getInstallationToken, mintInstallationToken } from "@/lib/integrations/github";
 import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
 import { GitOperations } from "@/lib/sandbox/GitOperations";
@@ -42,6 +47,51 @@ function slackApprovalBlocks(runId: string, tokenId: string) {
   ];
 }
 
+function isAutomationPayload(
+  p: CodingTaskPayload,
+): p is AutomationCodingTaskPayload {
+  return p.source === "automation";
+}
+
+/**
+ * Resolve everything needed to run an automation task.
+ * Returns a normalized context object.
+ */
+async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
+  const { resolveCredentials } = await import("@/lib/credentials/resolver");
+  const creds = await resolveCredentials(payload.automationId);
+  if (!creds) {
+    throw new Error(
+      `Failed to resolve credentials for automation ${payload.automationId}`,
+    );
+  }
+
+  // Derive a title from the trigger event
+  const event = payload.triggerEvent;
+  let title = "Automation task";
+  if (event.action && event.pull_request) {
+    const pr = event.pull_request as Record<string, unknown>;
+    title = `PR ${event.action}: ${pr.title ?? ""}`;
+  } else if (event.ref && event.commits) {
+    const commits = event.commits as Array<Record<string, unknown>>;
+    title = `Push to ${String(event.ref).replace("refs/heads/", "")}: ${commits[0]?.message ?? ""}`;
+  }
+
+  return {
+    owner: creds.repositoryOwner,
+    repo: creds.repositoryName,
+    baseBranch: creds.defaultBranch,
+    title: title.slice(0, 200),
+    prompt: creds.prompt,
+    agentType: creds.agentType as AgentType,
+    agentApiKey: creds.agentApiKey,
+    githubInstallationId: creds.githubInstallationId,
+    maxDurationSeconds: creds.maxDurationSeconds,
+    allowPush: creds.allowPush,
+    allowPrCreate: creds.allowPrCreate,
+  };
+}
+
 const sandboxManager = new SandboxManager();
 
 export const codingTask = task({
@@ -55,53 +105,128 @@ export const codingTask = task({
   },
 
   run: async (payload: CodingTaskPayload, { ctx }) => {
-    const agentType: AgentType =
-      payload.agentType ??
-      (process.env.DEFAULT_AGENT as AgentType) ??
-      "claude";
+    // ── Resolve context depending on payload type ──
+    let owner: string;
+    let repo: string;
+    let baseBranch: string;
+    let title: string;
+    let prompt: string;
+    let agentType: AgentType;
+    let agentApiKey: string | undefined;
+    let gitToken: string;
+    let maxDurationMs = 600_000;
+    let allowPush = true;
+    let allowPrCreate = true;
+    let automationRunId: string | undefined;
+
+    // Slack context (only for legacy payloads)
+    let slackChannelId: string | undefined;
+    let slackThreadTs: string | undefined;
+
+    // Sentry context (only for legacy payloads)
+    let legacyPayload: LegacyCodingTaskPayload | undefined;
+
+    if (isAutomationPayload(payload)) {
+      // ── v3 Automation payload ──
+      automationRunId = payload.automationRunId;
+
+      // Mark the run as running
+      const { updateAutomationRun } = await import(
+        "@/lib/automations/actions"
+      );
+      await updateAutomationRun(automationRunId, {
+        status: "running",
+        startedAt: new Date(),
+      });
+
+      const ctx = await resolveAutomationContext(payload);
+      owner = ctx.owner;
+      repo = ctx.repo;
+      baseBranch = ctx.baseBranch;
+      title = ctx.title;
+      prompt = ctx.prompt;
+      agentType = ctx.agentType;
+      agentApiKey = ctx.agentApiKey;
+      allowPush = ctx.allowPush;
+      allowPrCreate = ctx.allowPrCreate;
+      maxDurationMs = ctx.maxDurationSeconds * 1000;
+
+      // Mint a fresh GitHub token using the stored installation ID
+      logger.info("Minting installation token", {
+        installationId: ctx.githubInstallationId,
+        repo: `${owner}/${repo}`,
+      });
+      gitToken = await mintInstallationToken(
+        ctx.githubInstallationId,
+        [repo],
+        { contents: "write", pull_requests: "write" },
+      );
+    } else {
+      // ── Legacy v2 payload ──
+      legacyPayload = payload;
+      owner = payload.owner;
+      repo = payload.repo;
+      baseBranch = payload.baseBranch;
+      title = payload.title;
+      prompt = payload.prompt;
+      agentType =
+        payload.agentType ??
+        (process.env.DEFAULT_AGENT as AgentType) ??
+        "claude";
+      slackChannelId = payload.slack?.channelId;
+      slackThreadTs = payload.slack?.threadTs;
+
+      // Use env-based API key for legacy payloads
+      agentApiKey =
+        agentType === "claude"
+          ? (process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_CODE_OAUTH_TOKEN!)
+          : (process.env.OPENAI_API_KEY ?? process.env.CODEX_AUTH_JSON_B64!);
+
+      logger.info("Minting GitHub installation token", { owner, repo });
+      gitToken = await getInstallationToken(owner, repo);
+    }
 
     logger.info("Starting coding task", {
-      repo: `${payload.owner}/${payload.repo}`,
+      repo: `${owner}/${repo}`,
       source: payload.source,
-      mode: payload.mode,
       agentType,
+      automationRunId,
     });
 
     patchTaskStatus({
       stage: "queued",
       progress: 0,
-      repo: payload.repo,
-      owner: payload.owner,
-      baseBranch: payload.baseBranch,
+      repo,
+      owner,
+      baseBranch,
       agentType,
     });
 
-    // 1. Ensure Slack thread
-    let threadTs = payload.slack?.threadTs;
-    if (payload.slack?.channelId) {
-      logger.info("Ensuring Slack thread", { channelId: payload.slack.channelId });
+    // ── Ensure Slack thread (legacy only) ──
+    if (slackChannelId) {
+      logger.info("Ensuring Slack thread", { channelId: slackChannelId });
       const ensured = await ensureSlackThread
         .triggerAndWait({
-          channelId: payload.slack.channelId,
-          existingThreadTs: payload.slack.threadTs,
-          title: payload.title,
-          repo: `${payload.owner}/${payload.repo}`,
+          channelId: slackChannelId,
+          existingThreadTs: slackThreadTs,
+          title,
+          repo: `${owner}/${repo}`,
         })
         .unwrap();
 
-      threadTs = ensured.threadTs;
-      patchTaskStatus({ threadTs });
+      slackThreadTs = ensured.threadTs;
+      patchTaskStatus({ threadTs: slackThreadTs });
     }
 
     patchTaskStatus({
       stage: "starting",
       progress: 0.05,
-      summary: payload.title,
+      summary: title,
     });
 
-    // 2. Optional pre-execution approval for sentry tasks
+    // ── Optional pre-execution approval (legacy sentry) ──
     if (
-      payload.source === "sentry" &&
+      legacyPayload?.source === "sentry" &&
       process.env.REQUIRE_SENTRY_APPROVAL === "true"
     ) {
       logger.info("Awaiting Sentry approval");
@@ -112,10 +237,10 @@ export const codingTask = task({
         tags: [`run:${ctx.run.id}`],
       });
 
-      if (payload.slack?.channelId && threadTs) {
+      if (slackChannelId && slackThreadTs) {
         await notifySlack.triggerAndWait({
-          channelId: payload.slack.channelId,
-          threadTs,
+          channelId: slackChannelId,
+          threadTs: slackThreadTs,
           text: "Sentry-triggered task awaiting approval before execution.",
           blocks: slackApprovalBlocks(ctx.run.id, token.id),
         });
@@ -136,29 +261,18 @@ export const codingTask = task({
       }
     }
 
-    // 3. Mint GitHub installation token
-    logger.info("Minting GitHub installation token", {
-      owner: payload.owner,
-      repo: payload.repo,
-    });
-    const gitToken = await getInstallationToken(payload.owner, payload.repo);
-    const repoUrl = `https://github.com/${payload.owner}/${payload.repo}.git`;
+    // ── Create sandbox ──
+    const repoUrl = `https://github.com/${owner}/${repo}.git`;
     logger.info("Installation token acquired");
 
-    // 4. Create sandbox
     patchTaskStatus({ stage: "provisioning_sandbox", progress: 0.1 });
 
-    const agentApiKey =
-      agentType === "claude"
-        ? (process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_CODE_OAUTH_TOKEN!)
-        : (process.env.OPENAI_API_KEY ?? process.env.CODEX_AUTH_JSON_B64!);
-
-    logger.info("Creating sandbox", { repoUrl, baseBranch: payload.baseBranch });
+    logger.info("Creating sandbox", { repoUrl, baseBranch });
     const sandbox = await sandboxManager.create({
       repoUrl,
       gitToken,
-      baseBranch: payload.baseBranch,
-      timeoutMs: 600_000,
+      baseBranch,
+      timeoutMs: maxDurationMs,
     });
     logger.info("Sandbox created", { sandboxId: sandbox.sandboxId });
 
@@ -168,41 +282,52 @@ export const codingTask = task({
     const git = new GitOperations(commands);
 
     try {
-      // 5. Setup git branch
+      // ── Setup git branch ──
       logger.info("Configuring git");
       await git.configure({ repoUrl, gitToken });
-      const branchName = payload.branchName ?? `agent/${Date.now()}`;
+      const branchName =
+        (legacyPayload?.branchName) ?? `agent/${Date.now()}`;
 
-      if (payload.mode === "continue" && payload.branchName) {
-        logger.info("Checking out existing branch", { branch: payload.branchName });
-        await git.checkoutBranch(payload.branchName);
+      if (legacyPayload?.mode === "continue" && legacyPayload.branchName) {
+        logger.info("Checking out existing branch", {
+          branch: legacyPayload.branchName,
+        });
+        await git.checkoutBranch(legacyPayload.branchName);
       } else {
-        logger.info("Creating branch", { branch: branchName, base: payload.baseBranch });
-        await git.createBranch(branchName, payload.baseBranch);
+        logger.info("Creating branch", { branch: branchName, base: baseBranch });
+        await git.createBranch(branchName, baseBranch);
       }
 
       // Save base commit SHA before agent runs (agents may remove remote refs)
-      const baseSha = await git.resolveRef(`origin/${payload.baseBranch}`);
+      const baseSha = await git.resolveRef(`origin/${baseBranch}`);
       logger.info("Base commit resolved", { baseSha });
 
       patchTaskStatus({ branchName, progress: 0.2 });
 
-      // 6. Execute agent
+      // ── Execute agent ──
       patchTaskStatus({ stage: "running_agent", progress: 0.25 });
 
-      if (payload.slack?.channelId && threadTs) {
+      if (slackChannelId && slackThreadTs) {
         await notifySlack.triggerAndWait({
-          channelId: payload.slack.channelId,
-          threadTs,
-          text: `Running ${agentType} agent on ${payload.owner}/${payload.repo}...`,
+          channelId: slackChannelId,
+          threadTs: slackThreadTs,
+          text: `Running ${agentType} agent on ${owner}/${repo}...`,
         });
       }
 
-      const prompt = buildAgentPrompt({ ...payload, branchName });
-      logger.info("Executing agent", { agentType, promptLength: prompt.length });
+      const agentPrompt = legacyPayload
+        ? buildAgentPrompt({ ...legacyPayload, branchName })
+        : buildAutomationPrompt({ prompt, title, branchName });
+
+      logger.info("Executing agent", {
+        agentType,
+        promptLength: agentPrompt.length,
+      });
 
       const agent = AgentRegistry.create(agentType, commands);
-      const agentResult = await agent.execute(prompt, { apiKey: agentApiKey });
+      const agentResult = await agent.execute(agentPrompt, {
+        apiKey: agentApiKey!,
+      });
 
       logger.info("Agent finished", {
         success: agentResult.success,
@@ -210,11 +335,14 @@ export const codingTask = task({
         error: agentResult.error,
       });
 
-      // 7. Collect results
+      // Store agent output in metadata for debugging (visible via MCP)
+      metadata.set("agentOutput", agentResult.output?.slice(0, 2000));
+      metadata.set("agentError", agentResult.errorOutput?.slice(0, 2000));
+
+      // ── Collect results ──
       patchTaskStatus({ stage: "collecting_results", progress: 0.7 });
 
-      // Ensure we're on the expected branch before checking changes
-      // (agent may have detached HEAD or switched branches)
+      // Ensure we're on the expected branch
       await git.ensureBranch(branchName);
 
       const changes = await git.checkChanges(baseSha);
@@ -228,12 +356,12 @@ export const codingTask = task({
       let prUrl: string | undefined;
       let commitSha: string | undefined;
 
-      if (changes.changed) {
-        // 8. Commit and push
+      if (changes.changed && allowPush) {
+        // ── Commit and push ──
         logger.info("Committing and pushing", { branch: branchName });
         const gitResult = await git.commitAndPush(
           branchName,
-          `fix: ${payload.title}`,
+          `fix: ${title}`,
           baseSha,
         );
         commitSha = gitResult.commitSha;
@@ -245,19 +373,19 @@ export const codingTask = task({
           commitSha,
         });
 
-        if (gitResult.pushed) {
+        if (gitResult.pushed && allowPrCreate) {
           logger.info("Creating PR", {
             head: branchName,
-            base: payload.baseBranch,
+            base: baseBranch,
           });
 
           const pr = await createPr
             .triggerAndWait({
-              owner: payload.owner,
-              repo: payload.repo,
+              owner,
+              repo,
               head: branchName,
-              base: payload.baseBranch,
-              title: payload.title,
+              base: baseBranch,
+              title,
               body: `Automated PR by Polaris (${agentType} agent).\n\n${changes.diffSummary}`,
             })
             .unwrap();
@@ -265,27 +393,31 @@ export const codingTask = task({
           prUrl = pr.url;
           logger.info("PR created", { prUrl, prNumber: pr.number });
           patchTaskStatus({ prUrl });
-        } else {
-          logger.error("Push failed", { stderr: gitResult.pushStderr?.slice(0, 2000) });
+        } else if (!gitResult.pushed) {
+          logger.error("Push failed", {
+            stderr: gitResult.pushStderr?.slice(0, 2000),
+          });
         }
-      } else {
+      } else if (!changes.changed) {
         logger.info("No changes detected — skipping commit and PR");
+      } else {
+        logger.info("Push disabled by automation policy — skipping");
       }
 
-      // 9. Notify Slack
+      // ── Notify Slack (legacy only) ──
       patchTaskStatus({ stage: "notifying", progress: 0.95 });
 
-      if (payload.slack?.channelId && threadTs) {
+      if (slackChannelId && slackThreadTs) {
         await notifySlack.triggerAndWait({
-          channelId: payload.slack.channelId,
-          threadTs,
+          channelId: slackChannelId,
+          threadTs: slackThreadTs,
           text: prUrl
             ? `Done. PR created: ${prUrl}`
             : `Done. ${summary}`,
         });
       }
 
-      // 10. Mark success
+      // ── Mark success ──
       patchTaskStatus({
         stage: "succeeded",
         progress: 1,
@@ -293,12 +425,30 @@ export const codingTask = task({
         summary,
       });
 
-      logger.info("Task completed", { prUrl, commitSha, changesDetected: changes.changed });
+      // Update automation run if applicable
+      if (automationRunId) {
+        const { updateAutomationRun } = await import(
+          "@/lib/automations/actions"
+        );
+        await updateAutomationRun(automationRunId, {
+          status: "succeeded",
+          prUrl,
+          branchName,
+          summary,
+          completedAt: new Date(),
+        });
+      }
+
+      logger.info("Task completed", {
+        prUrl,
+        commitSha,
+        changesDetected: changes.changed,
+      });
 
       return {
         ok: true,
         branchName,
-        threadTs,
+        threadTs: slackThreadTs,
         prUrl,
         commitSha,
         agentType,
@@ -313,6 +463,19 @@ export const codingTask = task({
         progress: 1,
         error: { message },
       });
+
+      // Update automation run if applicable
+      if (automationRunId) {
+        const { updateAutomationRun } = await import(
+          "@/lib/automations/actions"
+        );
+        await updateAutomationRun(automationRunId, {
+          status: "failed",
+          error: message,
+          completedAt: new Date(),
+        });
+      }
+
       throw error;
     } finally {
       logger.info("Destroying sandbox");
@@ -320,3 +483,29 @@ export const codingTask = task({
     }
   },
 });
+
+/**
+ * Build a prompt for automation-triggered tasks.
+ */
+function buildAutomationPrompt(input: {
+  prompt: string;
+  title: string;
+  branchName: string;
+}): string {
+  return [
+    `Task: ${input.title}`,
+    "",
+    input.prompt,
+    "",
+    "REQUIREMENTS:",
+    `1. You are on branch ${input.branchName}. Make changes on this branch.`,
+    "2. Make the smallest safe fix.",
+    "3. Run the most relevant checks available in the repo.",
+    "4. Do NOT commit or push — the orchestrator handles git operations.",
+    "5. Do not open a PR yourself.",
+    "",
+    "OUTPUT STYLE:",
+    "- Be concise in intermediate messages.",
+    "- Prefer concrete repo actions over general commentary.",
+  ].join("\n");
+}

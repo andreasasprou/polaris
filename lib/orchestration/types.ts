@@ -14,7 +14,8 @@ export type TaskStage =
   | "failed"
   | "cancelled";
 
-export type CodingTaskPayload = {
+/** Legacy v2 payload — direct trigger from Slack/Sentry/manual. */
+export type LegacyCodingTaskPayload = {
   mode: "new" | "continue";
   source: "slack" | "sentry" | "manual";
   repo: string;
@@ -42,6 +43,19 @@ export type CodingTaskPayload = {
     level?: string;
   };
 };
+
+/** v3 payload — dispatched from automation trigger router. */
+export type AutomationCodingTaskPayload = {
+  source: "automation";
+  orgId: string;
+  automationId: string;
+  automationRunId: string;
+  triggerEvent: Record<string, unknown>;
+};
+
+export type CodingTaskPayload =
+  | LegacyCodingTaskPayload
+  | AutomationCodingTaskPayload;
 
 export type TaskStatusMetadata = {
   stage: TaskStage;
