@@ -1,6 +1,9 @@
 import { findAutomationById } from "@/lib/automations/queries";
 import { findRepositoryById } from "@/lib/integrations/queries";
 import { getDecryptedSecret } from "@/lib/secrets/queries";
+import { db } from "@/lib/db";
+import { githubInstallations } from "@/lib/integrations/schema";
+import { eq } from "drizzle-orm";
 
 export type ResolvedCredentials = {
   agentApiKey: string;
@@ -8,7 +11,9 @@ export type ResolvedCredentials = {
   repositoryOwner: string;
   repositoryName: string;
   defaultBranch: string;
-  githubInstallationId: string;
+  githubInstallationDbId: string;
+  /** The numeric GitHub App installation ID (for minting tokens). */
+  githubInstallationId: number;
   prompt: string;
   agentType: string;
   model: string | null;
@@ -41,13 +46,22 @@ export async function resolveCredentials(
   const repo = await findRepositoryById(automation.repositoryId);
   if (!repo) return null;
 
+  // Look up the numeric GitHub installation ID
+  const [installation] = await db
+    .select()
+    .from(githubInstallations)
+    .where(eq(githubInstallations.id, repo.githubInstallationId))
+    .limit(1);
+  if (!installation) return null;
+
   return {
     agentApiKey,
     provider: secret.provider,
     repositoryOwner: repo.owner,
     repositoryName: repo.name,
     defaultBranch: repo.defaultBranch,
-    githubInstallationId: repo.githubInstallationId,
+    githubInstallationDbId: repo.githubInstallationId,
+    githubInstallationId: installation.installationId,
     prompt: automation.prompt,
     agentType: automation.agentType,
     model: automation.model,

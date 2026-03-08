@@ -1,7 +1,7 @@
-import type { CodingTaskPayload } from "./types";
+import type { LegacyCodingTaskPayload } from "./types";
 
 export function buildAgentPrompt(
-  input: CodingTaskPayload & { branchName: string },
+  input: LegacyCodingTaskPayload & { branchName: string },
 ) {
   const sentryBlock = input.sentry
     ? [
