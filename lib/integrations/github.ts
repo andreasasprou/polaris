@@ -70,3 +70,52 @@ export async function createPullRequest(params: {
     url: pr.data.html_url,
   };
 }
+
+/**
+ * Mint a short-lived installation access token from a stored installationId.
+ * Used by Trigger.dev tasks to authenticate with GitHub.
+ */
+export async function mintInstallationToken(
+  installationId: number,
+  repos?: string[],
+  permissions?: Record<string, string>,
+): Promise<string> {
+  const app = createApp();
+  const { data } = await app.octokit.rest.apps.createInstallationAccessToken({
+    installation_id: installationId,
+    ...(repos ? { repositories: repos } : {}),
+    ...(permissions ? { permissions } : {}),
+  });
+  return data.token;
+}
+
+/**
+ * Get an Octokit instance for a specific installation ID.
+ * Used when we already have the installationId stored in the DB.
+ */
+export async function getInstallationOctokitById(installationId: number) {
+  const app = createApp();
+  return app.getInstallationOctokit(installationId);
+}
+
+/**
+ * Verify a GitHub webhook signature.
+ */
+export function verifyWebhookSignature(
+  payload: string,
+  signature: string,
+): boolean {
+  const crypto = require("node:crypto") as typeof import("node:crypto");
+  const secret = process.env.GITHUB_APP_WEBHOOK_SECRET;
+  if (!secret) throw new Error("GITHUB_APP_WEBHOOK_SECRET not configured");
+
+  const expected = `sha256=${crypto
+    .createHmac("sha256", secret)
+    .update(payload)
+    .digest("hex")}`;
+
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expected),
+  );
+}
