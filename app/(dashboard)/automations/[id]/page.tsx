@@ -1,6 +1,5 @@
-import { headers } from "next/headers";
-import { redirect, notFound } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { notFound } from "next/navigation";
+import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationById } from "@/lib/automations/queries";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
@@ -11,16 +10,8 @@ export default async function EditAutomationPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  }).catch(() => null);
-
-  if (!session?.session.activeOrganizationId) {
-    redirect("/onboarding");
-  }
-
+  const { orgId } = await getSessionWithOrg();
   const { id } = await params;
-  const orgId = session.session.activeOrganizationId;
   const automation = await findAutomationById(id);
 
   if (!automation || automation.organizationId !== orgId) {

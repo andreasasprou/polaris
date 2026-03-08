@@ -1,19 +1,10 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { auth } from "@/lib/auth";
+import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationsByOrg } from "@/lib/automations/queries";
 
 export default async function AutomationsPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session?.session.activeOrganizationId) {
-    redirect("/onboarding");
-  }
-
-  const automations = await findAutomationsByOrg(session.session.activeOrganizationId);
+  const { orgId } = await getSessionWithOrg();
+  const automations = await findAutomationsByOrg(orgId);
 
   return (
     <div className="space-y-6">

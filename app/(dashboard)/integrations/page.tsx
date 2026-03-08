@@ -1,19 +1,9 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { getSessionWithOrg } from "@/lib/auth/session";
 import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
 import { GitHubInstallCard } from "./_components/github-install-card";
 
 export default async function IntegrationsPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  }).catch(() => null);
-
-  if (!session?.session.activeOrganizationId) {
-    redirect("/onboarding");
-  }
-
-  const orgId = session.session.activeOrganizationId;
+  const { orgId } = await getSessionWithOrg();
   const installations = await findGithubInstallationsByOrg(orgId);
 
   return (

@@ -1,20 +1,10 @@
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
+import { getSessionWithOrg } from "@/lib/auth/session";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
 import { AutomationForm } from "../_components/automation-form";
 
 export default async function NewAutomationPage() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  }).catch(() => null);
-
-  if (!session?.session.activeOrganizationId) {
-    redirect("/onboarding");
-  }
-
-  const orgId = session.session.activeOrganizationId;
+  const { orgId } = await getSessionWithOrg();
 
   const [repos, secrets] = await Promise.all([
     syncReposForOrg(orgId),
