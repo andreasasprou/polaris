@@ -1,0 +1,70 @@
+# Docker
+
+> Source: `docs/deploy/docker.mdx`
+> Canonical URL: https://sandboxagent.dev/docs/deploy/docker
+> Description: Build and run Sandbox Agent in a Docker container.
+
+---
+Docker is not recommended for production isolation of untrusted workloads. Use dedicated sandbox providers (E2B, Daytona, etc.) for stronger isolation.
+
+## Quick start
+
+Run Sandbox Agent with agents pre-installed:
+
+```bash
+docker run --rm -p 3000:3000 \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+  alpine:latest sh -c "\
+    apk add --no-cache curl ca-certificates libstdc++ libgcc bash nodejs npm && \
+    curl -fsSL https://releases.rivet.dev/sandbox-agent/0.3.x/install.sh | sh && \
+    sandbox-agent server --no-token --host 0.0.0.0 --port 3000"
+```
+
+## TypeScript with dockerode
+
+```typescript
+import Docker from "dockerode";
+import { SandboxAgent } from "sandbox-agent";
+
+const docker = new Docker();
+const PORT = 3000;
+
+const container = await docker.createContainer({
+  Image: "node:22-bookworm-slim",
+  Cmd: ["sh", "-c", [
+    "apt-get update",
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates bash libstdc++6",
+    "rm -rf /var/lib/apt/lists/*",
+    "curl -fsSL https://releases.rivet.dev/sandbox-agent/0.3.x/install.sh | sh",
+    `sandbox-agent server --no-token --host 0.0.0.0 --port ${PORT}`,
+  ].join(" && ")],
+  Env: [
+    `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`,
+    `OPENAI_API_KEY=${process.env.OPENAI_API_KEY}`,
+    `CODEX_API_KEY=${process.env.CODEX_API_KEY}`,
+  ].filter(Boolean),
+  ExposedPorts: { [`${PORT}/tcp`]: {} },
+  HostConfig: {
+    AutoRemove: true,
+    PortBindings: { [`${PORT}/tcp`]: [{ HostPort: `${PORT}` }] },
+  },
+});
+
+await container.start();
+
+const baseUrl = `http://127.0.0.1:${PORT}`;
+const sdk = await SandboxAgent.connect({ baseUrl });
+
+const session = await sdk.createSession({ agent: "codex" });
+await session.prompt([{ type: "text", text: "Summarize this repository." }]);
+```
+
+## Building from source
+
+```bash
+docker build -f docker/release/linux-x86_64.Dockerfile -t sandbox-agent-build .
+docker run --rm -v "$PWD/artifacts:/artifacts" sandbox-agent-build
+```
+
+Binary output: `./artifacts/sandbox-agent-x86_64-unknown-linux-musl`.
