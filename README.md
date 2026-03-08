@@ -1,3 +1,4 @@
+<!-- Reviewed by Polaris Agent -->
 # Next.js template
 
 This is a Next.js template with shadcn/ui.
