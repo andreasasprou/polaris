@@ -1,17 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 
-type Step = "create-org" | "install-github" | "select-repos";
+type Step = "loading" | "create-org" | "install-github";
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>("create-org");
+  const [step, setStep] = useState<Step>("loading");
   const [orgName, setOrgName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // On mount, check if user already has an org — if so, set it active and redirect
+  useEffect(() => {
+    async function checkExistingOrgs() {
+      try {
+        const orgs = await authClient.organization.list();
+        if (orgs.data && orgs.data.length > 0) {
+          // User already has an org, set it active
+          await authClient.organization.setActive({
+            organizationId: orgs.data[0].id,
+          });
+          router.push("/dashboard");
+          return;
+        }
+      } catch {
+        // Failed to list orgs, fall through to create
+      }
+      setStep("create-org");
+    }
+    checkExistingOrgs();
+  }, [router]);
 
   async function handleCreateOrg(e: React.FormEvent) {
     e.preventDefault();
@@ -48,12 +69,19 @@ export default function OnboardingPage() {
   }
 
   async function handleInstallGitHub() {
-    // Redirect to our install endpoint which generates signed state
     window.location.href = "/api/integrations/github/install";
   }
 
   function handleSkipGitHub() {
     router.push("/dashboard");
+  }
+
+  if (step === "loading") {
+    return (
+      <div className="flex min-h-svh items-center justify-center p-6">
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
   }
 
   return (
@@ -64,7 +92,6 @@ export default function OnboardingPage() {
           <p className="mt-2 text-sm text-muted-foreground">
             {step === "create-org" && "Create your organization to get started."}
             {step === "install-github" && "Connect your GitHub repositories."}
-            {step === "select-repos" && "Choose which repos to use."}
           </p>
         </div>
 
