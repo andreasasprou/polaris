@@ -1,5 +1,5 @@
 /**
- * Test: Claude Code CLI agent execution inside Vercel Sandbox.
+ * Test: Claude agent execution via Sandbox Agent inside Vercel Sandbox.
  *
  * Usage:
  *   npx tsx scripts/test-agent-claude.ts owner/repo
@@ -12,7 +12,9 @@
 
 import { SandboxManager } from "../lib/sandbox/SandboxManager";
 import { SandboxCommands } from "../lib/sandbox/SandboxCommands";
-import { ClaudeAgent } from "../lib/agents/ClaudeAgent";
+import { SandboxAgentBootstrap } from "../lib/sandbox-agent/SandboxAgentBootstrap";
+import { SandboxAgentClient } from "../lib/sandbox-agent/SandboxAgentClient";
+import { buildSessionEnv } from "../lib/sandbox-agent/credentials";
 import { getInstallationToken } from "../lib/integrations/github";
 
 async function main() {
@@ -38,42 +40,70 @@ async function main() {
 
   console.log("\n2. Creating sandbox...");
   const sandbox = await manager.create({
+    source: { type: "git" },
     repoUrl: `https://github.com/${owner}/${repo}.git`,
     gitToken: token,
-    timeoutMs: 300_000, // 5 min for agent execution
+    timeoutMs: 300_000,
+    ports: [2468],
   });
   console.log(`   Sandbox ID: ${sandbox.sandboxId}`);
 
   const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
-  const agent = new ClaudeAgent(commands);
 
   try {
-    console.log("\n3. Executing Claude agent...");
-    console.log('   Prompt: "Add a comment to the top of README.md"');
+    console.log("\n3. Installing Sandbox Agent...");
+    const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
+    await bootstrap.install();
 
-    const result = await agent.execute(
+    const sessionEnv = buildSessionEnv("claude", apiKey, {
+      GITHUB_TOKEN: token,
+    });
+    await bootstrap.installAgent("claude", sessionEnv);
+
+    console.log("\n4. Starting server...");
+    const serverUrl = await bootstrap.start(2468, sessionEnv);
+    console.log(`   Server URL: ${serverUrl}`);
+
+    const client = await SandboxAgentClient.connect(serverUrl);
+
+    console.log("\n5. Running Claude agent...");
+    const session = await client.createSession({
+      agent: "claude",
+      mode: "bypassPermissions",
+      cwd: SandboxManager.PROJECT_DIR,
+    });
+
+    const result = await client.executePrompt(
+      session,
       "Add a single-line comment '<!-- Polaris test -->' to the very top of README.md. Do not change anything else.",
-      { apiKey },
+      {
+        onEvent: (event) => {
+          const payload = event.payload as Record<string, unknown>;
+          if (payload?.type) {
+            console.log(`   [${event.sender}] ${payload.type}`);
+          }
+        },
+      },
     );
 
-    console.log(`\n4. Results:`);
+    await client.destroySession(session.id);
+    await client.dispose();
+
+    console.log(`\n6. Results:`);
     console.log(`   Success: ${result.success}`);
-    console.log(`   Changes detected: ${result.changesDetected}`);
-    if (result.error) {
-      console.log(`   Error: ${result.error}`);
-    }
-    console.log(
-      `   Output length: ${result.output.length} chars`,
-    );
+    if (result.error) console.log(`   Error: ${result.error}`);
 
-    if (result.changesDetected) {
-      console.log("\n5. Checking diff...");
-      const diff = await commands.runInProject("git", ["diff"]);
+    // Check for changes via git
+    const diff = await commands.runInProject("git", ["diff"]);
+    const hasChanges = diff.stdout.trim().length > 0;
+    console.log(`   Changes detected: ${hasChanges}`);
+
+    if (hasChanges) {
       console.log(`   ${diff.stdout.slice(0, 500)}`);
     }
 
     console.log(
-      result.changesDetected ? "\n--- PASSED ---" : "\n--- NO CHANGES (may still be OK) ---",
+      hasChanges ? "\n--- PASSED ---" : "\n--- NO CHANGES (may still be OK) ---",
     );
   } finally {
     console.log("\nDestroying sandbox...");

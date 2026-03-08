@@ -24,6 +24,7 @@ async function main() {
 
   console.log("1. Creating sandbox...");
   const sandbox = await manager.create({
+    source: { type: "git" },
     repoUrl: "https://github.com/octocat/Hello-World.git",
     gitToken: "",
     timeoutMs: 180_000,

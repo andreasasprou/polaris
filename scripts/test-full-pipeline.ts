@@ -1,9 +1,9 @@
 /**
  * Test: Full pipeline without Slack/Trigger.
- * Sandbox → Agent → Git → PR creation.
+ * Sandbox → Sandbox Agent → Git → PR creation.
  *
  * Usage:
- *   npx tsx scripts/test-full-pipeline.ts owner/repo "your prompt" [--agent claude|codex]
+ *   npx tsx scripts/test-full-pipeline.ts owner/repo "your prompt" [--agent claude|codex|opencode|amp]
  *
  * Required env vars:
  *   VERCEL_TOKEN, VERCEL_TEAM_ID, VERCEL_PROJECT_ID
@@ -14,8 +14,10 @@
 import { SandboxManager } from "../lib/sandbox/SandboxManager";
 import { SandboxCommands } from "../lib/sandbox/SandboxCommands";
 import { GitOperations } from "../lib/sandbox/GitOperations";
-import { AgentRegistry } from "../lib/agents/AgentRegistry";
-import type { AgentType } from "../lib/agents/types";
+import { SandboxAgentBootstrap } from "../lib/sandbox-agent/SandboxAgentBootstrap";
+import { SandboxAgentClient } from "../lib/sandbox-agent/SandboxAgentClient";
+import { buildSessionEnv } from "../lib/sandbox-agent/credentials";
+import type { AgentType } from "../lib/sandbox-agent/types";
 import {
   getInstallationToken,
   createPullRequest,
@@ -26,7 +28,7 @@ function parseArgs() {
   const repoArg = args[0];
   if (!repoArg || !repoArg.includes("/")) {
     console.error(
-      'Usage: npx tsx scripts/test-full-pipeline.ts owner/repo "prompt" [--agent claude|codex]',
+      'Usage: npx tsx scripts/test-full-pipeline.ts owner/repo "prompt" [--agent claude|codex|opencode|amp]',
     );
     process.exit(1);
   }
@@ -86,9 +88,11 @@ async function main() {
 
   console.log("\n2. Creating sandbox...");
   const sandbox = await manager.create({
+    source: { type: "git" },
     repoUrl,
     gitToken: token,
     timeoutMs: 600_000,
+    ports: [2468],
   });
   console.log(`   Sandbox ID: ${sandbox.sandboxId}`);
 
@@ -101,25 +105,59 @@ async function main() {
     await git.createBranch(branchName, "main");
     const baseSha = await git.resolveRef("origin/main");
 
-    console.log("\n4. Running agent...");
-    const agent = AgentRegistry.create(agentType, commands);
-    const result = await agent.execute(prompt, { apiKey });
+    console.log("\n4. Installing Sandbox Agent...");
+    const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
+    await bootstrap.install();
+
+    const sessionEnv = buildSessionEnv(agentType, apiKey, {
+      GITHUB_TOKEN: token,
+    });
+
+    await bootstrap.installAgent(agentType, sessionEnv);
+
+    console.log("\n5. Starting Sandbox Agent server...");
+    const serverUrl = await bootstrap.start(2468, sessionEnv);
+    console.log(`   Server URL: ${serverUrl}`);
+
+    const client = await SandboxAgentClient.connect(serverUrl);
+
+    console.log("\n6. Running agent session...");
+    const session = await client.createSession({
+      agent: agentType,
+      mode: agentType === "codex" ? "full-access" : "bypassPermissions",
+      cwd: SandboxManager.PROJECT_DIR,
+    });
+    console.log(`   Session ID: ${session.id}`);
+
+    const result = await client.executePrompt(session, prompt, {
+      onEvent: (event) => {
+        const payload = event.payload as Record<string, unknown>;
+        if (payload?.type) {
+          console.log(`   [${event.sender}] ${payload.type}`);
+        }
+      },
+    });
+
+    await client.destroySession(session.id);
+    await client.dispose();
 
     console.log(`   Success: ${result.success}`);
-    console.log(`   Changes detected: ${result.changesDetected}`);
     if (result.error) console.log(`   Error: ${result.error}`);
 
-    if (!result.changesDetected) {
+    // Check for changes via git
+    await git.ensureBranch(branchName);
+    const changes = await git.checkChanges(baseSha);
+
+    if (!changes.changed) {
       console.log("\nNo changes made. Skipping PR creation.");
       console.log("\n--- DONE (no changes) ---");
       return;
     }
 
-    console.log("\n5. Checking changes...");
-    const changes = await git.checkChanges(baseSha);
+    console.log("\n7. Checking changes...");
     console.log(`   ${changes.diffSummary}`);
 
-    console.log("\n6. Committing and pushing...");
+    console.log("\n8. Committing and pushing...");
     const gitResult = await git.commitAndPush(branchName, `fix: ${prompt.slice(0, 50)}`, baseSha);
     console.log(`   Commit: ${gitResult.commitSha}`);
     console.log(`   Pushed: ${gitResult.pushed}`);
@@ -130,14 +168,14 @@ async function main() {
       return;
     }
 
-    console.log("\n7. Creating PR...");
+    console.log("\n9. Creating PR...");
     const pr = await createPullRequest({
       owner,
       repo,
       head: branchName,
       base: "main",
       title: `[Polaris] ${prompt.slice(0, 60)}`,
-      body: `Automated PR by Polaris using ${agentType} agent.\n\n${changes.diffSummary}`,
+      body: `Automated PR by Polaris using ${agentType} agent (via Sandbox Agent).\n\n${changes.diffSummary}`,
     });
     console.log(`   PR #${pr.number}: ${pr.url}`);
 

@@ -1,17 +1,24 @@
-import { task, wait, logger, metadata } from "@trigger.dev/sdk/v3";
+import { task, wait, streams, logger, metadata } from "@trigger.dev/sdk/v3";
 import type {
   CodingTaskPayload,
   LegacyCodingTaskPayload,
   AutomationCodingTaskPayload,
   AgentType,
 } from "@/lib/orchestration/types";
-import { patchTaskStatus } from "@/lib/orchestration/status";
+import { patchTaskStatus, getTaskStatus } from "@/lib/orchestration/status";
 import { buildAgentPrompt } from "@/lib/orchestration/prompts";
 import { getInstallationToken, mintInstallationToken } from "@/lib/integrations/github";
 import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
 import { GitOperations } from "@/lib/sandbox/GitOperations";
-import { AgentRegistry } from "@/lib/agents/AgentRegistry";
+import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap";
+import {
+  SandboxAgentClient,
+  type SandboxAgentEvent,
+} from "@/lib/sandbox-agent/SandboxAgentClient";
+import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
+import { createPersistDriver } from "@/lib/sandbox-agent/persist";
+import { resolveSnapshotSource } from "@/lib/sandbox/snapshots/queries";
 import { ensureSlackThread } from "./ensure-slack-thread";
 import { notifySlack } from "./notify-slack";
 import { createPr } from "./create-pr";
@@ -85,6 +92,7 @@ async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
     prompt: creds.prompt,
     agentType: creds.agentType as AgentType,
     agentApiKey: creds.agentApiKey,
+    agentMode: creds.agentMode,
     githubInstallationId: creds.githubInstallationId,
     maxDurationSeconds: creds.maxDurationSeconds,
     allowPush: creds.allowPush,
@@ -102,6 +110,19 @@ export const codingTask = task({
       stage: "cancelled",
       progress: 1,
     });
+    // Clean up sandbox — the finally block won't run on cancellation
+    const status = getTaskStatus();
+    if (status.sandboxId) {
+      await sandboxManager.destroyById(status.sandboxId);
+    }
+  },
+
+  onFailure: async () => {
+    // Clean up sandbox when task is killed by maxDuration, crash, etc.
+    const status = getTaskStatus();
+    if (status.sandboxId) {
+      await sandboxManager.destroyById(status.sandboxId);
+    }
   },
 
   run: async (payload: CodingTaskPayload, { ctx }) => {
@@ -112,6 +133,7 @@ export const codingTask = task({
     let title: string;
     let prompt: string;
     let agentType: AgentType;
+    let agentMode: string | undefined;
     let agentApiKey: string | undefined;
     let gitToken: string;
     let maxDurationMs = 600_000;
@@ -146,6 +168,7 @@ export const codingTask = task({
       title = ctx.title;
       prompt = ctx.prompt;
       agentType = ctx.agentType;
+      agentMode = ctx.agentMode ?? undefined;
       agentApiKey = ctx.agentApiKey;
       allowPush = ctx.allowPush;
       allowPrCreate = ctx.allowPrCreate;
@@ -267,12 +290,17 @@ export const codingTask = task({
 
     patchTaskStatus({ stage: "provisioning_sandbox", progress: 0.1 });
 
-    logger.info("Creating sandbox", { repoUrl, baseBranch });
+    // Resolve snapshot for faster startup
+    const source = await resolveSnapshotSource(agentType);
+
+    logger.info("Creating sandbox", { repoUrl, baseBranch, source: source.type });
     const sandbox = await sandboxManager.create({
+      source,
       repoUrl,
       gitToken,
       baseBranch,
       timeoutMs: maxDurationMs,
+      ports: [2468],
     });
     logger.info("Sandbox created", { sandboxId: sandbox.sandboxId });
 
@@ -324,15 +352,94 @@ export const codingTask = task({
         promptLength: agentPrompt.length,
       });
 
-      const agent = AgentRegistry.create(agentType, commands);
-      const agentResult = await agent.execute(agentPrompt, {
-        apiKey: agentApiKey!,
+      // ── Bootstrap Sandbox Agent server (skip install when using snapshot) ──
+      const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
+
+      const sessionEnv = buildSessionEnv(agentType, agentApiKey!, {
+        ...(gitToken ? { GITHUB_TOKEN: gitToken } : {}),
       });
+
+      if (source.type === "git") {
+        await bootstrap.install();
+        await bootstrap.installAgent(agentType, sessionEnv);
+      }
+
+      const serverUrl = await bootstrap.start(2468, sessionEnv);
+      logger.info("Sandbox Agent server started", { serverUrl });
+
+      // Connect SDK with Postgres persistence for event replay
+      const persist = createPersistDriver();
+      const client = await SandboxAgentClient.connect({
+        baseUrl: serverUrl,
+        persist,
+      });
+
+      // Default modes: codex needs "full-access", claude needs "bypassPermissions"
+      const defaultMode =
+        agentType === "codex" ? "full-access" : "bypassPermissions";
+
+      const session = await client.createSession({
+        agent: agentType,
+        model: undefined, // TODO: pass from automation config
+        mode: agentMode ?? defaultMode,
+        cwd: SandboxManager.PROJECT_DIR,
+      });
+      logger.info("Agent session created", { sessionId: session.id });
+
+      // Link the session to the automation run for event replay
+      if (automationRunId) {
+        const { updateAutomationRun } = await import(
+          "@/lib/automations/actions"
+        );
+        await updateAutomationRun(automationRunId, {
+          agentSessionId: session.id,
+        });
+      }
+      metadata.set("agentSessionId", session.id);
+
+      // Event stream bridge — forwards onEvent callbacks to output stream
+      let eventForwarder: ((event: SandboxAgentEvent) => void) | null = null;
+      const streamControl = { resolve: () => {} };
+      const streamDone = new Promise<void>((r) => {
+        streamControl.resolve = r;
+      });
+
+      const { waitUntilComplete: waitForEventStream } = streams.writer(
+        "events",
+        {
+          execute: async ({ write }) => {
+            eventForwarder = (event) => write(event);
+            await streamDone;
+          },
+        },
+      );
+
+      const agentResult = await client.executePrompt(session, agentPrompt, {
+        timeoutMs: maxDurationMs - 60_000, // Reserve 60s for post-agent git ops
+        onEvent: (event) => {
+          eventForwarder?.(event);
+
+          // Log event types for debugging
+          const payload = event.payload as Record<string, unknown>;
+          if (payload?.type) {
+            logger.debug("Agent event", {
+              type: payload.type,
+              sender: event.sender,
+            });
+          }
+        },
+      });
+
+      streamControl.resolve();
+      await waitForEventStream();
+
+      await client.destroySession(session.id);
+      await client.dispose();
 
       logger.info("Agent finished", {
         success: agentResult.success,
-        changesDetected: agentResult.changesDetected,
         error: agentResult.error,
+        stopReason: agentResult.stopReason,
       });
 
       // Store agent output in metadata for debugging (visible via MCP)

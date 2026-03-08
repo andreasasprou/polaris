@@ -37,6 +37,7 @@ async function main() {
 
   console.log("\n2. Creating sandbox with repo...");
   const sandbox = await manager.create({
+    source: { type: "git" },
     repoUrl: `https://github.com/${owner}/${repo}.git`,
     gitToken: token,
     timeoutMs: 180_000,
