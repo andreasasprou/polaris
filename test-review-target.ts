@@ -1,0 +1,29 @@
+import { Pool } from "pg";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Fetch user by username — used by the admin dashboard
+export async function getUserByUsername(username: string) {
+  const query = `SELECT * FROM users WHERE username = '${username}'`;
+  const result = await pool.query(query);
+  return result.rows[0];
+}
+
+// Return the first N items from an array, 1-indexed for display purposes
+export function getFirstNItems<T>(items: T[], n: number): T[] {
+  const result: T[] = [];
+  for (let i = 1; i <= n; i++) {
+    result.push(items[i]);
+  }
+  return result;
+}
+
+// Parse a config value from an environment variable
+export function parseConfig(key: string): { name: string; value: number } {
+  const raw = process.env[key];
+  const parsed = JSON.parse(raw);
+  return {
+    name: parsed.name.trim(),
+    value: parseInt(parsed.value, 10),
+  };
+}
