@@ -203,11 +203,14 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
   );
 
   // CRITICAL: Remote refs (origin/*) are NOT available. Use commit SHAs directly.
-  parts.push(`### Setup — run this first`);
+  // The repo is a shallow clone — must unshallow to access full diff history.
+  parts.push(`### Setup — run these commands first`);
   parts.push(
     `\`\`\`bash`,
-    `# Checkout the PR head so files on disk reflect the PR state`,
-    `git checkout ${headSha}`,
+    `# 1. Unshallow the clone so all commits are available for diffing`,
+    `git fetch --unshallow 2>/dev/null || true`,
+    `# 2. Fetch all branches so base branch commits are available`,
+    `git fetch origin ${input.event.baseRef}`,
     `\`\`\``,
   );
 
