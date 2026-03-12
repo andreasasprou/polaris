@@ -113,6 +113,7 @@ export const interactiveSessionTask = task({
     const recordTurnCompleted = async (
       turnRequestId: string,
       result: { output?: string; lastMessage?: string },
+      timing?: { durationMs: number; promptLength: number; source: string },
     ) => {
       currentTurnRequestId = null;
       // Prefer lastMessage (final agent response after last tool call)
@@ -121,6 +122,7 @@ export const interactiveSessionTask = task({
       const finalMsg = result.lastMessage ?? result.output;
       await completeTurn(turnRequestId, sessionId, {
         finalMessage: finalMsg?.slice(0, 50_000),
+        metadata: timing ?? undefined,
       });
       metadata.set(`turnResult:${turnRequestId}`, JSON.stringify({
         status: "completed",
@@ -497,13 +499,18 @@ export const interactiveSessionTask = task({
       });
 
       emitPromptEvent(prompt);
+      const promptStart = Date.now();
       const initialResult = await client.executePrompt(activeSession, prompt, {
         timeoutMs: 600_000,
         signal: healthMonitor.signal,
         onEvent: processEvent,
       });
 
-      await recordTurnCompleted(initialRequestId, initialResult);
+      await recordTurnCompleted(initialRequestId, initialResult, {
+        durationMs: Date.now() - promptStart,
+        promptLength: prompt.length,
+        source: payloadRequestId ? "automation" : "user",
+      });
       logger.info("Prompt completed");
 
       // ── HITL + stop handler via .on() ──
@@ -581,13 +588,18 @@ export const interactiveSessionTask = task({
           await setRuntime({ status: "running" });
 
           emitPromptEvent(msg.prompt);
+          const warmPromptStart = Date.now();
           const warmExecResult = await client.executePrompt(activeSession, msg.prompt, {
             timeoutMs: 600_000,
             signal: healthMonitor.signal,
             onEvent: processEvent,
           });
 
-          await recordTurnCompleted(warmRequestId, warmExecResult);
+          await recordTurnCompleted(warmRequestId, warmExecResult, {
+            durationMs: Date.now() - warmPromptStart,
+            promptLength: msg.prompt.length,
+            source: msg.requestId ? "automation" : "user",
+          });
           logger.info("Follow-up prompt completed");
 
           // Check if stop was received during executePrompt
@@ -669,13 +681,18 @@ export const interactiveSessionTask = task({
           await setRuntime({ status: "running" });
 
           emitPromptEvent(msg.prompt);
+          const suspendPromptStart = Date.now();
           const suspendExecResult = await client.executePrompt(activeSession, msg.prompt, {
             timeoutMs: 600_000,
             signal: healthMonitor.signal,
             onEvent: processEvent,
           });
 
-          await recordTurnCompleted(suspendRequestId, suspendExecResult);
+          await recordTurnCompleted(suspendRequestId, suspendExecResult, {
+            durationMs: Date.now() - suspendPromptStart,
+            promptLength: msg.prompt.length,
+            source: msg.requestId ? "automation" : "user",
+          });
           logger.info("Follow-up prompt completed (post-suspend)");
 
           // Check if stop was received during executePrompt

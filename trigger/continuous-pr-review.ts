@@ -2,6 +2,7 @@ import { task, logger, runs } from "@trigger.dev/sdk/v3";
 import type { NormalizedPrReviewEvent } from "@/lib/reviews/types";
 import { resolveAgentConfig } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import { createStepTimer } from "@/lib/metrics/step-timer";
 
 export type ContinuousPrReviewPayload = {
   orgId: string;
@@ -27,6 +28,8 @@ export const continuousPrReviewTask = task({
       normalizedEvent: event,
     } = payload;
 
+    const timer = createStepTimer();
+
     const {
       getAutomationSession,
       updateAutomationSession,
@@ -39,21 +42,25 @@ export const continuousPrReviewTask = task({
     const { findAutomationById } = await import("@/lib/automations/queries");
 
     // ── 1. Load automation + session ──
-    const automation = await findAutomationById(automationId);
-    if (!automation) throw new Error(`Automation ${automationId} not found`);
-
-    let automationSession = await getAutomationSession(automationSessionId);
-    if (!automationSession) throw new Error(`AutomationSession ${automationSessionId} not found`);
+    const [automation, automationSession] = await timer.time("load_entities", async () => {
+      const a = await findAutomationById(automationId);
+      if (!a) throw new Error(`Automation ${automationId} not found`);
+      const s = await getAutomationSession(automationSessionId);
+      if (!s) throw new Error(`AutomationSession ${automationSessionId} not found`);
+      return [a, s] as const;
+    });
 
     const config = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
     const sessionMetadata = automationSession.metadata as import("@/lib/reviews/types").AutomationSessionMetadata;
 
     // ── 2. Acquire lock ──
-    const lockAcquired = await tryAcquireAutomationSessionLock({
-      automationSessionId,
-      runId: automationRunId,
-      ttlMs: 10 * 60 * 1000, // 10 min
-    });
+    const lockAcquired = await timer.time("acquire_lock", () =>
+      tryAcquireAutomationSessionLock({
+        automationSessionId,
+        runId: automationRunId,
+        ttlMs: 10 * 60 * 1000, // 10 min
+      }),
+    );
 
     if (!lockAcquired) {
       // Queue this request for later
@@ -68,20 +75,27 @@ export const continuousPrReviewTask = task({
         commentId: event.commentId,
         deliveryId: payload.deliveryId,
       });
-      await updateAutomationRun(automationRunId, { status: "cancelled", summary: "Queued — lock held by another review" });
+      await updateAutomationRun(automationRunId, {
+        status: "cancelled",
+        summary: "Queued — lock held by another review",
+        metrics: timer.finalize(),
+      });
       return { ok: true, queued: true };
     }
 
     try {
       // ── 3. Apply filters ──
-      const { shouldReviewPR } = await import("@/lib/reviews/filters");
-      const filterResult = shouldReviewPR(event, config);
+      const filterResult = await timer.time("apply_filters", async () => {
+        const { shouldReviewPR } = await import("@/lib/reviews/filters");
+        return shouldReviewPR(event, config);
+      });
       if (!filterResult.review) {
         logger.info("Skipped by filters", { reason: filterResult.reason });
         await updateAutomationRun(automationRunId, {
           status: "completed",
           summary: `Skipped: ${filterResult.reason}`,
           completedAt: new Date(),
+          metrics: timer.finalize(),
         });
         return { ok: true, skipped: true, reason: filterResult.reason };
       }
@@ -91,103 +105,116 @@ export const continuousPrReviewTask = task({
         await import("@/lib/reviews/github");
 
       let checkRunId: string | undefined;
-      try {
-        const check = await createPendingCheck({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          headSha: event.headSha,
-          checkName: config.checkName,
-        });
-        checkRunId = check.checkRunId;
-        await updateAutomationRun(automationRunId, {
-          githubCheckRunId: checkRunId,
-          status: "running",
-          startedAt: new Date(),
-        });
-      } catch (err) {
-        logger.warn("Failed to create check run — continuing without it", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        await updateAutomationRun(automationRunId, {
-          status: "running",
-          startedAt: new Date(),
-        });
-      }
-
-      // ── 5. Gather metadata (agent explores the code itself) ──
-      const octokit = await getReviewOctokit(installationId);
-      const { fetchPRFileList } = await import("@/lib/reviews/diff");
-      const { loadRepoGuidelines } = await import("@/lib/reviews/guidelines");
-      const { classifyFiles, filterIgnoredPaths } = await import("@/lib/reviews/classification");
-
-      // Determine review scope
-      let reviewScope: "full" | "incremental" | "since" | "reset" = "full";
-      let fromSha: string | undefined;
-      const toSha = event.headSha;
-
-      if (event.manualCommand) {
-        reviewScope = event.manualCommand.mode;
-        if (event.manualCommand.mode === "since" && event.manualCommand.sinceSha) {
-          fromSha = event.manualCommand.sinceSha;
-        }
-      } else if (sessionMetadata.lastReviewedSha) {
-        // Check if lastReviewedSha is still an ancestor (not force-pushed away)
-        const ancestorCheck = await isAncestor({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          baseSha: sessionMetadata.lastReviewedSha,
-          headSha: toSha,
-        });
-
-        if (ancestorCheck) {
-          reviewScope = "incremental";
-          fromSha = sessionMetadata.lastReviewedSha;
-        } else {
-          // Force push detected — full review with advisory
-          reviewScope = "full";
-          logger.info("Force push detected — falling back to full review", {
-            lastReviewedSha: sessionMetadata.lastReviewedSha,
-            headSha: toSha,
+      await timer.time("create_check", async () => {
+        try {
+          const check = await createPendingCheck({
+            installationId,
+            owner: event.owner,
+            repo: event.repo,
+            headSha: event.headSha,
+            checkName: config.checkName,
+          });
+          checkRunId = check.checkRunId;
+          await updateAutomationRun(automationRunId, {
+            githubCheckRunId: checkRunId,
+            status: "running",
+            startedAt: new Date(),
+          });
+        } catch (err) {
+          logger.warn("Failed to create check run — continuing without it", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          await updateAutomationRun(automationRunId, {
+            status: "running",
+            startedAt: new Date(),
           });
         }
-      }
+      });
 
-      const reviewSequence = (sessionMetadata.reviewCount ?? 0) + 1;
+      // ── 5. Gather metadata (agent explores the code itself) ──
+      const { filteredFiles, fileClassifications, guidelines, reviewScope, fromSha, toSha, reviewSequence } =
+        await timer.time("gather_metadata", async () => {
+          const octokit = await getReviewOctokit(installationId);
+          const { fetchPRFileList } = await import("@/lib/reviews/diff");
+          const { loadRepoGuidelines } = await import("@/lib/reviews/guidelines");
+          const { classifyFiles, filterIgnoredPaths } = await import("@/lib/reviews/classification");
 
-      // Fetch lightweight file list + guidelines (no diff content — agent explores itself)
-      const [allFiles, guidelines] = await Promise.all([
-        fetchPRFileList(octokit, event.owner, event.repo, event.prNumber, {
-          maxFiles: config.maxPromptFiles,
-        }),
-        loadRepoGuidelines(
-          octokit,
-          event.owner,
-          event.repo,
-          toSha,
-          [], // pass empty — agent will discover relevant files
-          { maxBytes: config.maxGuidelinesBytes },
-        ),
-      ]);
+          // Determine review scope
+          let scope: "full" | "incremental" | "since" | "reset" = "full";
+          let from: string | undefined;
+          const to = event.headSha;
 
-      // Filter ignored paths + classify
-      const filteredFiles = filterIgnoredPaths(allFiles, config.ignorePaths ?? []);
-      const fileClassifications = classifyFiles(filteredFiles, config);
+          if (event.manualCommand) {
+            scope = event.manualCommand.mode;
+            if (event.manualCommand.mode === "since" && event.manualCommand.sinceSha) {
+              from = event.manualCommand.sinceSha;
+            }
+          } else if (sessionMetadata.lastReviewedSha) {
+            const ancestorCheck = await isAncestor({
+              installationId,
+              owner: event.owner,
+              repo: event.repo,
+              baseSha: sessionMetadata.lastReviewedSha,
+              headSha: to,
+            });
+
+            if (ancestorCheck) {
+              scope = "incremental";
+              from = sessionMetadata.lastReviewedSha;
+            } else {
+              scope = "full";
+              logger.info("Force push detected — falling back to full review", {
+                lastReviewedSha: sessionMetadata.lastReviewedSha,
+                headSha: to,
+              });
+            }
+          }
+
+          const seq = (sessionMetadata.reviewCount ?? 0) + 1;
+
+          const [allFiles, guidelines_] = await Promise.all([
+            fetchPRFileList(octokit, event.owner, event.repo, event.prNumber, {
+              maxFiles: config.maxPromptFiles,
+            }),
+            loadRepoGuidelines(
+              octokit,
+              event.owner,
+              event.repo,
+              to,
+              [],
+              { maxBytes: config.maxGuidelinesBytes },
+            ),
+          ]);
+
+          const filtered = filterIgnoredPaths(allFiles, config.ignorePaths ?? []);
+          const classifications = classifyFiles(filtered, config);
+
+          return {
+            filteredFiles: filtered,
+            fileClassifications: classifications,
+            guidelines: guidelines_,
+            reviewScope: scope,
+            fromSha: from,
+            toSha: to,
+            reviewSequence: seq,
+          };
+        });
 
       // ── 6. Build prompt ──
-      const { buildReviewPrompt } = await import("@/lib/reviews/prompt-builder");
-      const reviewPrompt = buildReviewPrompt({
-        event,
-        files: filteredFiles,
-        fileClassifications,
-        guidelines,
-        config,
-        previousState: sessionMetadata.reviewState ?? null,
-        reviewScope,
-        reviewSequence,
-        fromSha,
-        toSha,
+      const reviewPrompt = await timer.time("build_prompt", async () => {
+        const { buildReviewPrompt } = await import("@/lib/reviews/prompt-builder");
+        return buildReviewPrompt({
+          event,
+          files: filteredFiles,
+          fileClassifications,
+          guidelines,
+          config,
+          previousState: sessionMetadata.reviewState ?? null,
+          reviewScope,
+          reviewSequence,
+          fromSha,
+          toSha,
+        });
       });
 
       // Update automation run with scope info
@@ -199,52 +226,49 @@ export const continuousPrReviewTask = task({
       });
 
       // ── 7. Dispatch prompt to interactive session ──
-      const { dispatchPromptToSession } = await import("@/lib/sessions/prompt-dispatch");
-      const requestId = `review-${automationRunId}`;
-      let targetSessionId = automationSession.interactiveSessionId;
+      const { dispatchResult, targetSessionId } = await timer.time("dispatch_prompt", async () => {
+        const { dispatchPromptToSession } = await import("@/lib/sessions/prompt-dispatch");
+        const requestId_ = `review-${automationRunId}`;
+        let target = automationSession.interactiveSessionId;
 
-      // Handle "reset" — create new interactive session
-      if (reviewScope === "reset") {
-        const { createInteractiveSession } = await import("@/lib/sessions/actions");
+        // Handle "reset" — create new interactive session
+        if (reviewScope === "reset") {
+          const { createInteractiveSession } = await import("@/lib/sessions/actions");
+          const newSession = await createInteractiveSession({
+            organizationId: orgId,
+            createdBy: "automation",
+            agentType: automation.agentType ?? "claude",
+            agentSecretId: automation.agentSecretId ?? undefined,
+            repositoryId: automation.repositoryId!,
+            prompt: reviewPrompt,
+          });
+          target = newSession.id;
 
-        const newSession = await createInteractiveSession({
-          organizationId: orgId,
-          createdBy: "automation",
-          agentType: automation.agentType ?? "claude",
-          agentSecretId: automation.agentSecretId ?? undefined,
-          repositoryId: automation.repositoryId!,
-          prompt: reviewPrompt,
+          const { swapAutomationSessionInteractiveSession } = await import("@/lib/automations/actions");
+          await swapAutomationSessionInteractiveSession(automationSessionId, newSession.id);
+        }
+
+        const agentType = (automation.agentType ?? "claude") as AgentType;
+        const effortLevel = (automation.modelParams as Record<string, unknown>)?.effortLevel as string | undefined;
+        const reviewAgentConfig = resolveAgentConfig({
+          agentType,
+          modeIntent: "read-only",
+          model: automation.model ?? undefined,
+          effortLevel,
         });
 
-        targetSessionId = newSession.id;
+        const result = await dispatchPromptToSession({
+          sessionId: target,
+          orgId,
+          prompt: reviewPrompt,
+          requestId: requestId_,
+          source: "automation",
+          model: reviewAgentConfig.model,
+          effortLevel,
+          branch: event.headRef,
+        });
 
-        // Swap the interactive session on the automation session
-        const { swapAutomationSessionInteractiveSession } = await import("@/lib/automations/actions");
-        await swapAutomationSessionInteractiveSession(automationSessionId, newSession.id);
-      }
-
-      // Resolve read-only agent config for code review
-      const agentType = (automation.agentType ?? "claude") as AgentType;
-      const effortLevel = (automation.modelParams as Record<string, unknown>)?.effortLevel as string | undefined;
-      const reviewConfig = resolveAgentConfig({
-        agentType,
-        modeIntent: "read-only",
-        model: automation.model ?? undefined,
-        effortLevel,
-      });
-
-      // TODO: Use modeIntent: "read-only" once .claude/settings.json allowedTools format
-      // is verified with Claude Code CLI. For now, use autonomous/bypassPermissions so
-      // the agent can run git fetch/diff freely.
-      const dispatchResult = await dispatchPromptToSession({
-        sessionId: targetSessionId,
-        orgId,
-        prompt: reviewPrompt,
-        requestId,
-        source: "automation",
-        model: reviewConfig.model,
-        effortLevel,
-        branch: event.headRef,
+        return { dispatchResult: result, targetSessionId: target };
       });
 
       if (dispatchResult.tier === "unavailable") {
@@ -255,12 +279,17 @@ export const continuousPrReviewTask = task({
         interactiveSessionId: targetSessionId,
       });
 
+      timer.setMeta("dispatch_tier", dispatchResult.tier);
+
       // ── 8. Wait for turn completion ──
+      const requestId = `review-${automationRunId}`;
+      const waitStart = Date.now();
       const turnResult = await waitForTurnCompletion(
         targetSessionId,
         requestId,
         { timeoutMs: 8 * 60 * 1000, pollIntervalMs: 5000 },
       );
+      timer.record("wait_for_turn", Date.now() - waitStart);
 
       if (turnResult.status !== "completed") {
         const errorMsg = turnResult.error ?? "Turn did not complete successfully";
@@ -276,56 +305,64 @@ export const continuousPrReviewTask = task({
           }).catch(() => {});
         }
 
+        timer.setMeta("error", errorMsg);
         await updateAutomationRun(automationRunId, {
           status: "failed",
           error: errorMsg,
           completedAt: new Date(),
+          metrics: timer.finalize(),
         });
 
         return { ok: false, error: errorMsg };
       }
 
       // ── 9. Parse agent output ──
-      const { parseReviewOutput } = await import("@/lib/reviews/output-parser");
-      const agentOutput = turnResult.output ?? "";
-      const parsed = agentOutput ? parseReviewOutput(agentOutput) : null;
+      const { parsed, agentOutput } = await timer.time("parse_output", async () => {
+        const { parseReviewOutput } = await import("@/lib/reviews/output-parser");
+        const output = turnResult.output ?? "";
+        return {
+          parsed: output ? parseReviewOutput(output) : null,
+          agentOutput: output,
+        };
+      });
 
       // ── 10. Mark previous comment stale ──
       if (sessionMetadata.lastCommentId) {
-        try {
-          const { renderStaleComment } = await import("@/lib/reviews/comment-renderer");
-          // We don't have the old body, so we'll just mark it with a note
-          await markCommentStale({
-            installationId,
-            owner: event.owner,
-            repo: event.repo,
-            commentId: sessionMetadata.lastCommentId,
-            newBody: renderStaleComment(
-              "*(original review content)*",
-              reviewSequence,
-            ),
-          });
-        } catch (err) {
-          logger.warn("Failed to mark previous comment stale", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+        await timer.time("mark_stale", async () => {
+          try {
+            const { renderStaleComment } = await import("@/lib/reviews/comment-renderer");
+            await markCommentStale({
+              installationId,
+              owner: event.owner,
+              repo: event.repo,
+              commentId: sessionMetadata.lastCommentId!,
+              newBody: renderStaleComment(
+                "*(original review content)*",
+                reviewSequence,
+              ),
+            });
+          } catch (err) {
+            logger.warn("Failed to mark previous comment stale", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
       }
 
       // ── 11. Post review comment ──
-      let commentId: string | undefined;
-      if (parsed) {
-        const { renderReviewComment } = await import("@/lib/reviews/comment-renderer");
-        const commentBody = renderReviewComment(parsed, reviewSequence);
-        const result = await postReviewComment({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          prNumber: event.prNumber,
-          body: commentBody,
-        });
-        commentId = result.commentId;
-      } else {
+      const commentId = await timer.time("post_comment", async () => {
+        if (parsed) {
+          const { renderReviewComment } = await import("@/lib/reviews/comment-renderer");
+          const commentBody = renderReviewComment(parsed, reviewSequence);
+          const result = await postReviewComment({
+            installationId,
+            owner: event.owner,
+            repo: event.repo,
+            prNumber: event.prNumber,
+            body: commentBody,
+          });
+          return result.commentId;
+        }
         // Unparseable output — post raw with warning
         const result = await postReviewComment({
           installationId,
@@ -334,55 +371,66 @@ export const continuousPrReviewTask = task({
           prNumber: event.prNumber,
           body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>⚠️ Could not parse structured output. Raw review shown above.</sub>`,
         });
-        commentId = result.commentId;
-      }
+        return result.commentId;
+      });
 
       // ── 12. Update state ──
-      // Only advance lastReviewedSha if parse succeeded
-      const newMetadata: import("@/lib/reviews/types").AutomationSessionMetadata = {
-        ...sessionMetadata,
-        headSha: toSha,
-        reviewCount: reviewSequence,
-        lastCommentId: commentId ?? sessionMetadata.lastCommentId,
-        lastCompletedRunId: automationRunId,
-        ...(parsed
-          ? {
-              lastReviewedSha: toSha,
-              reviewState: parsed.reviewState,
-            }
-          : {}),
-      };
+      await timer.time("update_session", async () => {
+        const newMetadata: import("@/lib/reviews/types").AutomationSessionMetadata = {
+          ...sessionMetadata,
+          headSha: toSha,
+          reviewCount: reviewSequence,
+          lastCommentId: commentId ?? sessionMetadata.lastCommentId,
+          lastCompletedRunId: automationRunId,
+          ...(parsed
+            ? {
+                lastReviewedSha: toSha,
+                reviewState: parsed.reviewState,
+              }
+            : {}),
+        };
 
-      await updateAutomationSession(automationSessionId, {
-        metadata: newMetadata,
+        await updateAutomationSession(automationSessionId, {
+          metadata: newMetadata,
+        });
       });
 
       // ── 13. Complete GitHub check ──
-      if (checkRunId && parsed) {
-        await completeCheck({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          checkRunId,
-          verdict: parsed.verdict,
-          summary: parsed.summary,
-        }).catch((err: unknown) => {
-          logger.warn("Failed to complete check", {
-            error: err instanceof Error ? err.message : String(err),
+      await timer.time("complete_check", async () => {
+        if (checkRunId && parsed) {
+          await completeCheck({
+            installationId,
+            owner: event.owner,
+            repo: event.repo,
+            checkRunId,
+            verdict: parsed.verdict,
+            summary: parsed.summary,
+          }).catch((err: unknown) => {
+            logger.warn("Failed to complete check", {
+              error: err instanceof Error ? err.message : String(err),
+            });
           });
-        });
-      } else if (checkRunId) {
-        await completeCheck({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          checkRunId,
-          verdict: "ATTENTION",
-          summary: "Review completed but output could not be parsed.",
-        }).catch(() => {});
-      }
+        } else if (checkRunId) {
+          await completeCheck({
+            installationId,
+            owner: event.owner,
+            repo: event.repo,
+            checkRunId,
+            verdict: "ATTENTION",
+            summary: "Review completed but output could not be parsed.",
+          }).catch(() => {});
+        }
+      });
 
-      // ── 14. Complete automation run ──
+      // ── 14. Record metrics + complete automation run ──
+      timer.count("file_count", filteredFiles.length);
+      timer.count("finding_count", parsed?.findings?.length ?? 0);
+      timer.setMeta("review_scope", reviewScope);
+      timer.setMeta("review_sequence", reviewSequence);
+      timer.setMeta("prompt_length", reviewPrompt.length);
+      timer.setMeta("verdict", parsed?.verdict ?? null);
+      timer.setMeta("agent_output_length", agentOutput.length);
+
       await updateAutomationRun(automationRunId, {
         status: "completed",
         summary: parsed?.summary ?? "Review completed",
@@ -390,6 +438,7 @@ export const continuousPrReviewTask = task({
         severityCounts: parsed?.severityCounts,
         githubCommentId: commentId,
         completedAt: new Date(),
+        metrics: timer.finalize(),
       });
 
       return {
@@ -411,9 +460,6 @@ export const continuousPrReviewTask = task({
         logger.info("Processing queued review request", {
           headSha: pending.headSha,
         });
-        // Re-trigger ourselves with the pending request
-        // This is handled by the router on the next iteration
-        // For now, log it — the router will pick it up on next webhook
       }
     }
   },

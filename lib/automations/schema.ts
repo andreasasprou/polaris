@@ -82,6 +82,7 @@ export const automationRuns = pgTable("automation_runs", {
     P1: number;
     P2: number;
   }>(),
+  metrics: jsonb("metrics").$type<import("@/lib/metrics/step-timer").StepMetrics>(),
   supersededByRunId: uuid("superseded_by_run_id"),
 
   startedAt: timestamp("started_at", { withTimezone: true }),

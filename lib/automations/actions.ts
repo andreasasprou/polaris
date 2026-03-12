@@ -116,6 +116,7 @@ export async function updateAutomationRun(
     githubCommentId: string;
     verdict: string;
     severityCounts: { P0: number; P1: number; P2: number };
+    metrics: import("@/lib/metrics/step-timer").StepMetrics;
     supersededByRunId: string;
   }>,
 ) {
