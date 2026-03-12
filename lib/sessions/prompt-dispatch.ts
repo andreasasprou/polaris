@@ -52,6 +52,8 @@ export async function dispatchPromptToSession(input: {
   effortLevel?: string;
   /** Override the branch to clone/checkout (e.g. PR head branch for reviews). */
   branch?: string;
+  /** Semantic mode intent — determines agent permissions scope. */
+  modeIntent?: "autonomous" | "read-only" | "interactive";
 }): Promise<DispatchResult> {
   const { sessionId, orgId, prompt } = input;
   const requestId = input.requestId ?? randomUUID();
@@ -175,6 +177,7 @@ export async function dispatchPromptToSession(input: {
             modeOverride: input.modeOverride,
             model: input.model,
             effortLevel: input.effortLevel,
+            modeIntent: input.modeIntent,
           },
           { tags: [`session:${sessionId}`] },
         );

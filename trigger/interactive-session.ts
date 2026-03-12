@@ -48,6 +48,8 @@ export type InteractiveSessionPayload = {
   model?: string;
   /** Effort / thought level (e.g. "low", "medium", "high", "xhigh"). */
   effortLevel?: string;
+  /** Semantic mode intent — determines permissions scope. Defaults to "autonomous". */
+  modeIntent?: "autonomous" | "read-only" | "interactive";
 };
 
 const sandboxManager = new SandboxManager();
@@ -309,7 +311,7 @@ export const interactiveSessionTask = task({
 
       const resolved = resolveAgentConfig({
         agentType,
-        modeIntent: "autonomous",
+        modeIntent: payload.modeIntent ?? "autonomous",
         modeOverride: payload.modeOverride,
         model: payload.model,
         effortLevel: payload.effortLevel,

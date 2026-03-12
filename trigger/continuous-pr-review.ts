@@ -243,6 +243,7 @@ export const continuousPrReviewTask = task({
         model: reviewConfig.model,
         effortLevel,
         branch: event.headRef,
+        modeIntent: "read-only",
       });
 
       if (dispatchResult.tier === "unavailable") {

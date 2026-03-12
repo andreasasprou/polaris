@@ -71,7 +71,7 @@ export class SandboxManager {
     const branch = config.baseBranch ?? "main";
     const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
     const result = await commands.runShell(
-      `git clone --depth 1 --branch ${branch} ${config.repoUrl} ${SandboxManager.PROJECT_DIR}`,
+      `git clone --branch ${branch} ${config.repoUrl} ${SandboxManager.PROJECT_DIR}`,
       { cwd: "/" },
     );
     if (result.exitCode !== 0) {
