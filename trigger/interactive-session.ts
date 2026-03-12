@@ -501,7 +501,7 @@ export const interactiveSessionTask = task({
       emitPromptEvent(prompt);
       const promptStart = Date.now();
       const initialResult = await client.executePrompt(activeSession, prompt, {
-        timeoutMs: 600_000,
+        timeoutMs: 1_200_000,
         signal: healthMonitor.signal,
         onEvent: processEvent,
       });
@@ -590,7 +590,7 @@ export const interactiveSessionTask = task({
           emitPromptEvent(msg.prompt);
           const warmPromptStart = Date.now();
           const warmExecResult = await client.executePrompt(activeSession, msg.prompt, {
-            timeoutMs: 600_000,
+            timeoutMs: 1_200_000,
             signal: healthMonitor.signal,
             onEvent: processEvent,
           });
@@ -683,7 +683,7 @@ export const interactiveSessionTask = task({
           emitPromptEvent(msg.prompt);
           const suspendPromptStart = Date.now();
           const suspendExecResult = await client.executePrompt(activeSession, msg.prompt, {
-            timeoutMs: 600_000,
+            timeoutMs: 1_200_000,
             signal: healthMonitor.signal,
             onEvent: processEvent,
           });
