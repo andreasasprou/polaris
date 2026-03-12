@@ -16,7 +16,7 @@ export type ContinuousPrReviewPayload = {
 
 export const continuousPrReviewTask = task({
   id: "continuous-pr-review",
-  maxDuration: 600, // 10 min max per review cycle
+  maxDuration: 1800, // 30 min max per review cycle
 
   run: async (payload: ContinuousPrReviewPayload) => {
     const {
@@ -58,7 +58,7 @@ export const continuousPrReviewTask = task({
       tryAcquireAutomationSessionLock({
         automationSessionId,
         runId: automationRunId,
-        ttlMs: 10 * 60 * 1000, // 10 min
+        ttlMs: 30 * 60 * 1000, // 30 min
       }),
     );
 
@@ -287,7 +287,7 @@ export const continuousPrReviewTask = task({
       const turnResult = await waitForTurnCompletion(
         targetSessionId,
         requestId,
-        { timeoutMs: 8 * 60 * 1000, pollIntervalMs: 5000 },
+        { timeoutMs: 25 * 60 * 1000, pollIntervalMs: 5000 },
       );
       timer.record("wait_for_turn", Date.now() - waitStart);
 
