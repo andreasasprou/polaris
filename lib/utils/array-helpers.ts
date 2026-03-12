@@ -20,3 +20,4 @@ export function chunk<T>(arr: T[], size: number): T[][] {
 export function flatten<T>(arr: T[][]): T[] {
   return arr.reduce((acc, val) => acc.concat(val), []);
 }
+// updated
