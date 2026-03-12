@@ -9,10 +9,10 @@ export async function getUserByUsername(username: string) {
   return result.rows[0];
 }
 
-// Return the first N items from an array, 1-indexed for display purposes
+// Return the first N items from an array
 export function getFirstNItems<T>(items: T[], n: number): T[] {
   const result: T[] = [];
-  for (let i = 1; i <= n; i++) {
+  for (let i = 0; i < n; i++) {
     result.push(items[i]);
   }
   return result;
