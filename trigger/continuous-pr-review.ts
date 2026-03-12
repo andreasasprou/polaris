@@ -258,7 +258,7 @@ export const continuousPrReviewTask = task({
       const turnResult = await waitForTurnCompletion(
         targetSessionId,
         requestId,
-        { timeoutMs: 5 * 60 * 1000, pollIntervalMs: 3000 },
+        { timeoutMs: 8 * 60 * 1000, pollIntervalMs: 5000 },
       );
 
       if (turnResult.status !== "completed") {
