@@ -233,17 +233,18 @@ export const continuousPrReviewTask = task({
         effortLevel,
       });
 
+      // TODO: Use modeIntent: "read-only" once .claude/settings.json allowedTools format
+      // is verified with Claude Code CLI. For now, use autonomous/bypassPermissions so
+      // the agent can run git fetch/diff freely.
       const dispatchResult = await dispatchPromptToSession({
         sessionId: targetSessionId,
         orgId,
         prompt: reviewPrompt,
         requestId,
         source: "automation",
-        modeOverride: reviewConfig.mode,
         model: reviewConfig.model,
         effortLevel,
         branch: event.headRef,
-        modeIntent: "read-only",
       });
 
       if (dispatchResult.tier === "unavailable") {
