@@ -242,6 +242,7 @@ export const continuousPrReviewTask = task({
         modeOverride: reviewConfig.mode,
         model: reviewConfig.model,
         effortLevel,
+        branch: event.headRef,
       });
 
       if (dispatchResult.tier === "unavailable") {

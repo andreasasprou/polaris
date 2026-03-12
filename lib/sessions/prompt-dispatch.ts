@@ -50,6 +50,8 @@ export async function dispatchPromptToSession(input: {
   model?: string;
   /** Effort / thought level (e.g. "low", "medium", "high"). */
   effortLevel?: string;
+  /** Override the branch to clone/checkout (e.g. PR head branch for reviews). */
+  branch?: string;
 }): Promise<DispatchResult> {
   const { sessionId, orgId, prompt } = input;
   const requestId = input.requestId ?? randomUUID();
@@ -161,7 +163,7 @@ export async function dispatchPromptToSession(input: {
             agentApiKey: creds.agentApiKey,
             repositoryOwner: creds.repositoryOwner,
             repositoryName: creds.repositoryName,
-            defaultBranch: creds.defaultBranch,
+            defaultBranch: input.branch ?? creds.defaultBranch,
             githubInstallationId: creds.githubInstallationId,
             prompt,
             resumeSdkSessionId: session.sdkSessionId ?? undefined,
