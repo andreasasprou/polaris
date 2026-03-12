@@ -42,11 +42,15 @@ export default async function EditAutomationPage({
           prompt: automation.prompt,
           agentType: automation.agentType,
           model: automation.model ?? "",
+          agentMode: automation.agentMode ?? "",
           repositoryId: automation.repositoryId ?? "",
           agentSecretId: automation.agentSecretId ?? "",
           maxDurationSeconds: automation.maxDurationSeconds,
           allowPush: automation.allowPush,
           allowPrCreate: automation.allowPrCreate,
+          mode: automation.mode,
+          modelParams: automation.modelParams ?? {},
+          prReviewConfig: (automation.prReviewConfig ?? {}) as Record<string, unknown>,
         }}
       />
     </div>

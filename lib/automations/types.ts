@@ -1,3 +1,5 @@
+export type { AutomationMode, PRReviewConfig } from "@/lib/reviews/types";
+
 export type TriggerType = "github" | "slack" | "schedule" | "webhook" | "sentry";
 
 export type GitHubTriggerConfig = {

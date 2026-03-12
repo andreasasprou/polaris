@@ -21,13 +21,24 @@ export function matchesGitHubTrigger(
     return false;
   });
 
-  if (!eventMatch) return false;
-
-  // Check branch filter if specified
-  if (config.branches && config.branches.length > 0 && ref) {
-    const branch = ref.replace("refs/heads/", "");
-    return config.branches.includes(branch);
+  if (eventMatch) {
+    // Check branch filter if specified
+    if (config.branches && config.branches.length > 0 && ref) {
+      const branch = ref.replace("refs/heads/", "");
+      return config.branches.includes(branch);
+    }
+    return true;
   }
 
-  return true;
+  // For continuous automations that listen to pull_request events,
+  // also match issue_comment.created (for /review commands on PRs).
+  // The router will filter to actual /review commands downstream.
+  if (eventType === "issue_comment" && action === "created") {
+    const hasPrEvents = config.events.some(
+      (e) => e === "pull_request" || e.startsWith("pull_request."),
+    );
+    if (hasPrEvents) return true;
+  }
+
+  return false;
 }

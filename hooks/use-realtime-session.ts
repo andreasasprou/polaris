@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRealtimeRunWithStreams } from "@trigger.dev/react-hooks";
 import { consolidateEvents, type ChatItem, type ConsolidatedResult } from "@/lib/sandbox-agent/event-types";
 import type { SandboxAgentEvent } from "@/lib/sandbox-agent/SandboxAgentClient";
@@ -53,7 +54,12 @@ export function useRealtimeSession({
   });
 
   const rawEvents = (streams?.events ?? []) as SandboxAgentEvent[];
-  const { items, turnInProgress } = consolidateEvents(rawEvents);
+
+  // Sort by eventIndex — the realtime stream does not guarantee ordering
+  const { items, turnInProgress } = useMemo(() => {
+    const sorted = [...rawEvents].sort((a, b) => a.eventIndex - b.eventIndex);
+    return consolidateEvents(sorted);
+  }, [rawEvents]);
 
   const meta = run?.metadata as Record<string, string> | undefined;
 

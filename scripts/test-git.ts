@@ -51,7 +51,6 @@ async function main() {
     console.log("\n3. Configuring git...");
     await git.configure({
       repoUrl: `https://github.com/${owner}/${repo}.git`,
-      gitToken: token,
     });
 
     console.log("\n4. Creating branch...");

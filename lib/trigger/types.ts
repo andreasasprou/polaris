@@ -2,7 +2,7 @@ import type { SandboxAgentEvent } from "@/lib/sandbox-agent/SandboxAgentClient";
 
 /** Messages sent from frontend/API into the interactive session task. */
 export type SessionMessage =
-  | { action: "prompt"; prompt: string }
+  | { action: "prompt"; prompt: string; nonce: string; requestId?: string }
   | { action: "stop" }
   | { action: "permission_reply"; permissionId: string; reply: string }
   | { action: "question_reply"; questionId: string; answers: string[][] }

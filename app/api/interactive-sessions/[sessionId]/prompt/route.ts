@@ -1,26 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { tasks } from "@trigger.dev/sdk/v3";
-import { and, eq, inArray } from "drizzle-orm";
-import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
-import { getInteractiveSession } from "@/lib/sessions/actions";
-import { interactiveSessions } from "@/lib/sessions/schema";
-import { SandboxManager } from "@/lib/sandbox/SandboxManager";
-import { sessionMessages } from "@/lib/trigger/streams";
-import type { interactiveSessionTask } from "@/trigger/interactive-session";
-import type { AgentType } from "@/lib/sandbox-agent/types";
-
-const sandboxManager = new SandboxManager();
-
-const RESUMABLE_STATUSES = ["idle", "stopped", "completed"];
+import { dispatchPromptToSession } from "@/lib/sessions/prompt-dispatch";
 
 /**
  * POST /api/interactive-sessions/:sessionId/prompt — send a message.
  *
- * Three-tier routing:
- * 1. Hot (task running): send via Trigger.dev input stream — instant.
- * 2. Warm (task ended, sandbox alive): reconnect to existing sandbox — ~2-3s.
- * 3. Cold (sandbox dead): create new sandbox with replay — ~15-20s.
+ * Thin HTTP wrapper over dispatchPromptToSession(). All routing logic
+ * (hot/warm/suspended/hibernate/cold) lives in prompt-dispatch.ts.
  */
 export async function POST(
   req: NextRequest,
@@ -28,12 +14,6 @@ export async function POST(
 ) {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
-
-  const session = await getInteractiveSession(sessionId);
-
-  if (!session || session.organizationId !== orgId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
 
   const body = await req.json();
   const { prompt } = body;
@@ -45,144 +25,60 @@ export async function POST(
     );
   }
 
-  // ── Tier 1: Hot — active session with running task ──
-  if (session.status === "active" && session.triggerRunId) {
-    await sessionMessages.send(session.triggerRunId, {
-      action: "prompt",
-      prompt,
-    });
+  const result = await dispatchPromptToSession({
+    sessionId,
+    orgId,
+    prompt,
+    source: "user",
+  });
 
-    return NextResponse.json({ ok: true });
+  if (result.tier === "unavailable") {
+    const status = result.error.includes("not found")
+      ? 404
+      : result.error.includes("already resuming")
+        ? 409
+        : result.error.includes("being saved")
+          ? 425
+          : 400;
+
+    const headers: Record<string, string> = {};
+    if (result.retryAfterMs) {
+      headers["Retry-After"] = String(Math.ceil(result.retryAfterMs / 1000));
+    }
+
+    return NextResponse.json({ error: result.error }, { status, headers });
   }
 
-  // ── Tier 2/3: Resumable session — probe sandbox, then trigger task ──
-  if (
-    RESUMABLE_STATUSES.includes(session.status) &&
-    session.sdkSessionId
-  ) {
-    // Optimistic lock: atomically transition to "creating" to prevent races
-    const updated = await db
-      .update(interactiveSessions)
-      .set({ status: "creating", error: null, endedAt: null })
-      .where(
-        and(
-          eq(interactiveSessions.id, sessionId),
-          inArray(interactiveSessions.status, RESUMABLE_STATUSES),
-        ),
-      )
-      .returning();
-
-    if (updated.length === 0) {
-      return NextResponse.json(
-        { error: "Session is already resuming" },
-        { status: 409 },
-      );
-    }
-
-    // Resolve credentials for the new task run
-    let agentApiKey: string | undefined;
-
-    if (session.agentSecretId) {
-      const { getDecryptedSecret } = await import("@/lib/secrets/queries");
-      agentApiKey = await getDecryptedSecret(session.agentSecretId) ?? undefined;
-    }
-
-    if (!agentApiKey) {
-      const agentType = session.agentType;
-      agentApiKey =
-        agentType === "codex"
-          ? process.env.OPENAI_API_KEY
-          : (process.env.ANTHROPIC_API_KEY ??
-            process.env.CLAUDE_CODE_OAUTH_TOKEN);
-    }
-
-    if (!agentApiKey) {
-      return NextResponse.json(
-        { error: "No API key available to resume session" },
-        { status: 400 },
-      );
-    }
-
-    // Resolve repository details
-    let repositoryOwner: string | undefined;
-    let repositoryName: string | undefined;
-    let defaultBranch: string | undefined;
-    let githubInstallationId: number | undefined;
-
-    if (session.repositoryId) {
-      const { findRepositoryById, findGithubInstallationById } = await import(
-        "@/lib/integrations/queries"
-      );
-      const repo = await findRepositoryById(session.repositoryId);
-      if (repo) {
-        repositoryOwner = repo.owner;
-        repositoryName = repo.name;
-        defaultBranch = repo.defaultBranch;
-        const installation = await findGithubInstallationById(
-          repo.githubInstallationId,
-        );
-        if (installation) {
-          githubInstallationId = installation.installationId;
-        }
-      }
-    }
-
-    if (!repositoryOwner || !repositoryName || !githubInstallationId) {
-      return NextResponse.json(
-        { error: "Could not resolve repository for resume" },
-        { status: 400 },
-      );
-    }
-
-    // Probe sandbox: is it still alive? (warm vs cold)
-    let warmResumeSandboxId: string | undefined;
-    let warmResumeSandboxBaseUrl: string | undefined;
-
-    if (session.sandboxId) {
-      const alive = await sandboxManager.reconnect(session.sandboxId);
-      if (alive) {
-        warmResumeSandboxId = session.sandboxId;
-        warmResumeSandboxBaseUrl = session.sandboxBaseUrl ?? undefined;
-      }
-    }
-
-    // Trigger a new task with appropriate resume mode
-    await tasks.trigger<typeof interactiveSessionTask>(
-      "interactive-session",
-      {
-        sessionId,
-        orgId,
-        agentType: session.agentType as AgentType,
-        agentApiKey,
-        repositoryOwner,
-        repositoryName,
-        defaultBranch,
-        githubInstallationId,
-        prompt,
-        resumeSdkSessionId: session.sdkSessionId,
-        warmResumeSandboxId,
-        warmResumeSandboxBaseUrl,
-      },
-      { tags: [`session:${sessionId}`] },
-    );
-
-    return NextResponse.json({
-      ok: true,
-      resumed: true,
-      warm: !!warmResumeSandboxId,
-    });
+  // Map dispatch result to the existing JSON response shape
+  switch (result.tier) {
+    case "hot":
+      return NextResponse.json({ ok: true });
+    case "warm":
+      return NextResponse.json({ ok: true, warm: true });
+    case "suspended":
+      return NextResponse.json({ ok: true, suspended: true });
+    case "hibernate":
+      return NextResponse.json({
+        ok: true,
+        resumed: true,
+        tier: "hibernate",
+        triggerRunId: result.triggerRunId,
+        accessToken: result.accessToken,
+      });
+    case "cold":
+      return NextResponse.json({
+        ok: true,
+        resumed: true,
+        warm: false,
+        triggerRunId: result.triggerRunId,
+        accessToken: result.accessToken,
+      });
+    case "fresh":
+      return NextResponse.json({
+        ok: true,
+        resumed: false,
+        triggerRunId: result.triggerRunId,
+        accessToken: result.accessToken,
+      });
   }
-
-  // ── Creating or failed: can't send ──
-  if (session.status === "creating") {
-    return NextResponse.json(
-      { error: "Session is still starting up, please wait" },
-      { status: 400 },
-    );
-  }
-
-  return NextResponse.json(
-    { error: `Session is ${session.status}, cannot send prompt` },
-    { status: 400 },
-  );
 }

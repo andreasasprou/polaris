@@ -40,3 +40,4 @@ next-env.d.ts
 # trigger.dev
 .trigger/
 .vercel
+.claude/worktrees/

@@ -18,7 +18,6 @@ export class GitOperations {
     name?: string;
     email?: string;
     repoUrl?: string;
-    gitToken?: string;
   }): Promise<void> {
     const name = opts?.name ?? "Polaris Agent";
     const email = opts?.email ?? "polaris-agent@noreply.github.com";
@@ -26,16 +25,13 @@ export class GitOperations {
     await this.commands.runInProject("git", ["config", "user.name", name]);
     await this.commands.runInProject("git", ["config", "user.email", email]);
 
-    // Set authenticated remote URL so push works
-    if (opts?.repoUrl && opts?.gitToken) {
-      const url = new URL(opts.repoUrl);
-      url.username = "x-access-token";
-      url.password = opts.gitToken;
+    // Set remote URL (no credentials — networkPolicy injects auth headers)
+    if (opts?.repoUrl) {
       await this.commands.runInProject("git", [
         "remote",
         "set-url",
         "origin",
-        url.toString(),
+        opts.repoUrl,
       ]);
       // Fetch remote refs so origin/<branch> is available for createBranch
       await this.commands.runInProject("git", ["fetch", "origin"]);

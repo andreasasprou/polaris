@@ -8,6 +8,34 @@
       "when": 1772968432964,
       "tag": "0000_ancient_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773053395589,
+      "tag": "0001_sweet_thunderbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773057960562,
+      "tag": "0002_absurd_edwin_jarvis",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1773221762542,
+      "tag": "0003_handy_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1773252895184,
+      "tag": "0004_yummy_violations",
+      "breakpoints": true
     }
   ]
 }

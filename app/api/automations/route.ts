@@ -37,12 +37,16 @@ export async function POST(req: NextRequest) {
     prompt: body.prompt,
     agentType: body.agentType,
     model: body.model,
+    agentMode: body.agentMode,
     repositoryId: body.repositoryId,
     agentSecretId: body.agentSecretId,
     maxDurationSeconds: body.maxDurationSeconds,
     maxConcurrentRuns: body.maxConcurrentRuns,
     allowPush: body.allowPush,
     allowPrCreate: body.allowPrCreate,
+    mode: body.mode,
+    modelParams: body.modelParams,
+    prReviewConfig: body.prReviewConfig,
   });
 
   return NextResponse.json({ automation }, { status: 201 });

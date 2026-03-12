@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
+import { resolveSessionCredentials } from "@/lib/sessions/prompt-dispatch";
 import type { interactiveSessionTask } from "@/trigger/interactive-session";
 
 /**
@@ -46,66 +47,24 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Resolve credentials
-  let agentApiKey: string | undefined;
-  let repositoryOwner: string | undefined;
-  let repositoryName: string | undefined;
-  let defaultBranch: string | undefined;
-  let githubInstallationId: number | undefined;
-
-  if (agentSecretId) {
-    const { getDecryptedSecret } = await import("@/lib/secrets/queries");
-    const decrypted = await getDecryptedSecret(agentSecretId);
-    if (decrypted) {
-      agentApiKey = decrypted;
-    }
-  }
-
-  // Fallback to env vars
-  if (!agentApiKey) {
-    agentApiKey =
-      agentType === "codex"
-        ? process.env.OPENAI_API_KEY
-        : (process.env.ANTHROPIC_API_KEY ??
-          process.env.CLAUDE_CODE_OAUTH_TOKEN);
-  }
-
-  if (!agentApiKey) {
+  // Resolve credentials via shared helper
+  let creds;
+  try {
+    creds = await resolveSessionCredentials({
+      agentType: agentType ?? "claude",
+      agentSecretId: agentSecretId ?? null,
+      repositoryId,
+    });
+  } catch (err) {
     return NextResponse.json(
-      { error: "No API key available for the selected agent" },
+      { error: err instanceof Error ? err.message : "Could not resolve credentials" },
       { status: 400 },
     );
   }
 
-  if (repositoryId) {
-    const { findRepositoryById } = await import(
-      "@/lib/integrations/queries"
-    );
-    const repo = await findRepositoryById(repositoryId);
-    if (repo) {
-      repositoryOwner = repo.owner;
-      repositoryName = repo.name;
-      defaultBranch = repo.defaultBranch;
-
-      // Get numeric installation ID
-      const { findGithubInstallationById } = await import(
-        "@/lib/integrations/queries"
-      );
-      const installation = await findGithubInstallationById(
-        repo.githubInstallationId,
-      );
-      if (installation) {
-        githubInstallationId = installation.installationId;
-      }
-    }
-  }
-
-  if (!repositoryOwner || !repositoryName || !githubInstallationId) {
-    return NextResponse.json(
-      { error: "Could not resolve repository details" },
-      { status: 400 },
-    );
-  }
+  // Resolve org-level sandbox env vars
+  const { getDecryptedEnvVars } = await import("@/lib/sandbox-env/queries");
+  const extraEnv = await getDecryptedEnvVars(orgId);
 
   // Create DB record
   const interactiveSession = await createInteractiveSession({
@@ -124,12 +83,13 @@ export async function POST(req: NextRequest) {
       sessionId: interactiveSession.id,
       orgId,
       agentType: agentType ?? "claude",
-      agentApiKey,
-      repositoryOwner,
-      repositoryName,
-      defaultBranch,
-      githubInstallationId,
+      agentApiKey: creds.agentApiKey,
+      repositoryOwner: creds.repositoryOwner,
+      repositoryName: creds.repositoryName,
+      defaultBranch: creds.defaultBranch,
+      githubInstallationId: creds.githubInstallationId,
       prompt,
+      extraEnv: Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
     },
     { tags: [`session:${interactiveSession.id}`] },
   );

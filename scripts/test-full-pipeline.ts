@@ -101,7 +101,7 @@ async function main() {
 
   try {
     console.log("\n3. Setting up git branch...");
-    await git.configure({ repoUrl, gitToken: token });
+    await git.configure({ repoUrl });
     await git.createBranch(branchName, "main");
     const baseSha = await git.resolveRef("origin/main");
 

@@ -1,7 +1,7 @@
 import { defineConfig } from "@trigger.dev/sdk/v3";
 
 export default defineConfig({
-  project: "proj_oqqhbqagsmckcrxgpscx",
+  project: "proj_tdyomraxfkgbanzbnxyv",
   runtime: "node",
   logLevel: "log",
   maxDuration: 3600,
@@ -16,6 +16,6 @@ export default defineConfig({
   },
   dirs: ["./trigger"],
   build: {
-    external: ["@vercel/sandbox", "sandbox-agent", "@sandbox-agent/persist-postgres"],
+    external: ["@vercel/sandbox", "sandbox-agent", "@sandbox-agent/persist-postgres", "acp-http-client"],
   },
 });

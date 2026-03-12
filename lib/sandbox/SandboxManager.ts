@@ -1,8 +1,25 @@
-import { Sandbox } from "@vercel/sandbox";
+import { Sandbox, type NetworkPolicy } from "@vercel/sandbox";
 import { SandboxCommands } from "./SandboxCommands";
 import type { SandboxConfig } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
+
+/**
+ * Build a networkPolicy that injects GitHub auth on outbound requests to *.github.com.
+ * Uses Basic auth format (x-access-token:<token>) because git HTTPS requires it —
+ * Bearer tokens only work for the GitHub REST/GraphQL API, not git protocol.
+ */
+function buildGitNetworkPolicy(gitToken: string): NetworkPolicy {
+  const basicAuth = Buffer.from(`x-access-token:${gitToken}`).toString("base64");
+  const rule = [{ transform: [{ headers: { Authorization: `Basic ${basicAuth}` } }] }];
+  return {
+    allow: {
+      "github.com": rule,
+      "*.github.com": rule,
+      "*": [], // allow all other traffic (npm, pip, etc.)
+    },
+  };
+}
 
 export class SandboxManager {
   static readonly PROJECT_DIR = "/vercel/sandbox";
@@ -17,10 +34,9 @@ export class SandboxManager {
       projectId: process.env.VERCEL_PROJECT_ID,
       timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       ports: config.ports,
-      env: {
-        ...(config.gitToken ? { GITHUB_TOKEN: config.gitToken } : {}),
-        ...config.env,
-      },
+      env: config.env,
+      // Inject GitHub auth at the network level — sandbox never sees raw token
+      networkPolicy: buildGitNetworkPolicy(config.gitToken),
     };
 
     if (source.type === "snapshot") {
@@ -33,7 +49,7 @@ export class SandboxManager {
       return sandbox;
     }
 
-    // Git source — existing behavior
+    // Git source — platform-level clone uses source.password (never enters sandbox)
     return Sandbox.create({
       ...sharedOpts,
       runtime: "node24",
@@ -51,14 +67,11 @@ export class SandboxManager {
     sandbox: Sandbox,
     config: SandboxConfig,
   ): Promise<void> {
-    const authedUrl = config.repoUrl.replace(
-      "https://",
-      `https://x-access-token:${config.gitToken}@`,
-    );
+    // networkPolicy injects Authorization header — no token in URL
     const branch = config.baseBranch ?? "main";
     const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
     const result = await commands.runShell(
-      `git clone --depth 1 --branch ${branch} ${authedUrl} ${SandboxManager.PROJECT_DIR}`,
+      `git clone --depth 1 --branch ${branch} ${config.repoUrl} ${SandboxManager.PROJECT_DIR}`,
       { cwd: "/" },
     );
     if (result.exitCode !== 0) {
@@ -118,6 +131,89 @@ export class SandboxManager {
       await sandbox.stop();
     } catch {
       // Best-effort — sandbox may already be stopped
+    }
+  }
+
+  /**
+   * Snapshot a running sandbox. This stops the sandbox automatically.
+   * Returns the snapshot metadata or null if snapshotting failed.
+   */
+  async snapshot(
+    sandbox: Sandbox,
+  ): Promise<{ snapshotId: string; sizeBytes?: number } | null> {
+    try {
+      const result = await sandbox.snapshot();
+      return {
+        snapshotId: result.snapshotId,
+        sizeBytes: result.sizeBytes,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Create a sandbox from a hibernation snapshot.
+   */
+  async createFromSnapshot(config: {
+    snapshotId: string;
+    gitToken: string;
+    timeoutMs?: number;
+    ports?: number[];
+    env?: Record<string, string>;
+  }): Promise<Sandbox> {
+    return Sandbox.create({
+      token: process.env.VERCEL_TOKEN,
+      teamId: process.env.VERCEL_TEAM_ID,
+      projectId: process.env.VERCEL_PROJECT_ID,
+      timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      ports: config.ports,
+      env: config.env,
+      networkPolicy: buildGitNetworkPolicy(config.gitToken),
+      source: { type: "snapshot", snapshotId: config.snapshotId },
+    });
+  }
+
+  /**
+   * Update the GitHub token injected via networkPolicy.
+   * Used on warm/suspend resume to refresh expired installation tokens.
+   */
+  async updateGitToken(sandbox: Sandbox, gitToken: string): Promise<void> {
+    await sandbox.updateNetworkPolicy(buildGitNetworkPolicy(gitToken));
+  }
+
+  /**
+   * Check if a sandbox-agent server is healthy at the given URL.
+   */
+  async isServerHealthy(serverUrl: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${serverUrl}/v1/health`);
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Run credential scrubbing commands inside a sandbox before snapshotting.
+   * Git token is injected via networkPolicy (never in sandbox), so only
+   * agent auth files need cleanup.
+   */
+  async scrubCredentials(sandbox: Sandbox): Promise<boolean> {
+    const commands = [
+      // Remove OpenCode auth artifacts
+      "rm -f ~/.local/share/opencode/auth.json ~/.local/share/opencode/mcp-auth.json 2>/dev/null || true",
+      // Remove Codex auth
+      "rm -f ~/.codex/auth.json 2>/dev/null || true",
+    ];
+
+    try {
+      for (const cmd of commands) {
+        await sandbox.runCommand({ cmd: "sh", args: ["-c", cmd] });
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 }

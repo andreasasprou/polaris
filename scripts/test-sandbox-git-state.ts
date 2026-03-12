@@ -35,7 +35,7 @@ async function main() {
     console.log("log:", r3.stdout);
 
     console.log("\n=== configure + createBranch ===");
-    await git.configure({ repoUrl, gitToken: token });
+    await git.configure({ repoUrl });
     await git.createBranch("agent/diag-test", "main");
     const baseSha = await git.resolveRef("origin/main");
 

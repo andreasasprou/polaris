@@ -1,10 +1,15 @@
-import { pgTable, uuid, text, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, bigint, uniqueIndex, index, jsonb } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
 
 /**
  * Interactive agent sessions — manual, multi-turn sessions started by users.
  * Separate from automation_runs (which are triggered by automations).
+ *
+ * Status lifecycle:
+ *   creating → active → warm → suspended → hibernating → hibernated → resuming → active
+ *   Any state → stopped | failed
  */
 export const interactiveSessions = pgTable("interactive_sessions", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -17,12 +22,18 @@ export const interactiveSessions = pgTable("interactive_sessions", {
   repositoryId: uuid("repository_id").references(() => repositories.id),
   prompt: text("prompt").notNull(),
 
-  // Runtime state
-  status: text("status").default("creating").notNull(), // creating | active | completed | failed | stopped
-  sdkSessionId: text("sdk_session_id"), // sandbox-agent SDK session ID (links to sandbox_agent.sessions)
+  // Runtime state (legacy — will migrate to runtimes table in Phase 4)
+  status: text("status").default("creating").notNull(),
+  sdkSessionId: text("sdk_session_id"),
   sandboxId: text("sandbox_id"),
-  sandboxBaseUrl: text("sandbox_base_url"), // For forwarding prompts/approvals
-  triggerRunId: text("trigger_run_id"), // Trigger.dev run ID
+  sandboxBaseUrl: text("sandbox_base_url"),
+  triggerRunId: text("trigger_run_id"),
+
+  // Session continuation
+  nativeAgentSessionId: text("native_agent_session_id"),
+  cwd: text("cwd"),
+  latestCheckpointId: uuid("latest_checkpoint_id"),
+  // FK to interactive_session_checkpoints added after that table is created (circular dep)
 
   // Results
   summary: text("summary"),
@@ -34,3 +45,103 @@ export const interactiveSessions = pgTable("interactive_sessions", {
     .defaultNow()
     .notNull(),
 });
+
+/**
+ * One row per sandbox lifecycle within a conversation.
+ * Tracks sandbox/task/server state separately from the logical session.
+ */
+export const interactiveSessionRuntimes = pgTable(
+  "interactive_session_runtimes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => interactiveSessions.id),
+    sandboxId: text("sandbox_id"),
+    sandboxBaseUrl: text("sandbox_base_url"),
+    triggerRunId: text("trigger_run_id"),
+    sdkSessionId: text("sdk_session_id"),
+    restoreSource: text("restore_source").notNull(), // 'base_snapshot' | 'hibernate_snapshot' | 'warm_reconnect' | 'fresh'
+    restoreSnapshotId: text("restore_snapshot_id"),
+    status: text("status").default("creating").notNull(), // creating | running | warm | suspended | stopped | failed
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (table) => [
+    // Enforce: only one live runtime per session
+    uniqueIndex("idx_one_live_runtime_per_session")
+      .on(table.sessionId)
+      .where(sql`status IN ('creating', 'running', 'warm', 'suspended')`),
+  ],
+);
+
+/**
+ * Hibernation snapshots — one row per Vercel sandbox snapshot.
+ */
+export const interactiveSessionCheckpoints = pgTable(
+  "interactive_session_checkpoints",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => interactiveSessions.id),
+    runtimeId: uuid("runtime_id").references(
+      () => interactiveSessionRuntimes.id,
+    ),
+    snapshotId: text("snapshot_id").notNull(),
+    baseCommitSha: text("base_commit_sha"),
+    lastEventIndex: integer("last_event_index"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+);
+
+/**
+ * Turn-level tracking for interactive sessions.
+ * Each prompt→response cycle is one turn.
+ * Enables the continuous-pr-review orchestrator to wait for turn completion
+ * and extract the final assistant message.
+ */
+export const interactiveSessionTurns = pgTable(
+  "interactive_session_turns",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => interactiveSessions.id, { onDelete: "cascade" }),
+    runtimeId: uuid("runtime_id").references(
+      () => interactiveSessionRuntimes.id,
+      { onDelete: "set null" },
+    ),
+    requestId: text("request_id").notNull(),
+    source: text("source").notNull(), // 'user' | 'automation'
+    status: text("status").default("pending").notNull(), // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+    prompt: text("prompt").notNull(),
+    finalMessage: text("final_message"),
+    error: text("error"),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_interactive_session_turn_request").on(
+      table.sessionId,
+      table.requestId,
+    ),
+    index("idx_interactive_session_turn_status").on(
+      table.sessionId,
+      table.status,
+    ),
+  ],
+);

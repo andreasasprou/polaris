@@ -26,6 +26,9 @@ importers:
       '@vercel/sandbox':
         specifier: ^1.8.0
         version: 1.8.0
+      acp-http-client:
+        specifier: 0.3.0
+        version: 0.3.0(zod@4.3.6)
       better-auth:
         specifier: ^1.5.4
         version: 1.5.4(c4f44898c02bbc981cfad0f8686d7e67)
@@ -44,6 +47,9 @@ importers:
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.4)
+      minimatch:
+        specifier: ^10.2.4
+        version: 10.2.4
       next:
         specifier: 16.1.6
         version: 16.1.6(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -99,6 +105,9 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4.1.18
         version: 4.2.1
+      '@types/minimatch':
+        specifier: ^6.0.0
+        version: 6.0.0
       '@types/node':
         specifier: ^25.1.0
         version: 25.3.5
@@ -2767,6 +2776,10 @@ packages:
 
   '@types/mdast@4.0.4':
     resolution: {integrity: sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==}
+
+  '@types/minimatch@6.0.0':
+    resolution: {integrity: sha512-zmPitbQ8+6zNutpwgcQuLcsEpn/Cj54Kbn7L5pX0Os5kdWplB7xPgEh/g+SWOB/qmows2gpuCaPyduq8ZZRnxA==}
+    deprecated: This is a stub types definition. minimatch provides its own type definitions, so you do not need this installed.
 
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
@@ -7992,7 +8005,7 @@ snapshots:
       eventsource: 3.0.7
       eventsource-parser: 3.0.6
       express: 5.2.1(supports-color@10.2.2)
-      express-rate-limit: 8.3.0(express@5.2.1)
+      express-rate-limit: 8.3.0(express@5.2.1(supports-color@10.2.2))
       hono: 4.12.5
       jose: 6.2.0
       json-schema-typed: 8.0.2
@@ -9521,6 +9534,10 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
 
+  '@types/minimatch@6.0.0':
+    dependencies:
+      minimatch: 10.2.4
+
   '@types/ms@2.1.0': {}
 
   '@types/node@22.19.15':
@@ -11035,7 +11052,7 @@ snapshots:
 
   expand-template@2.0.3: {}
 
-  express-rate-limit@8.3.0(express@5.2.1):
+  express-rate-limit@8.3.0(express@5.2.1(supports-color@10.2.2)):
     dependencies:
       express: 5.2.1(supports-color@10.2.2)
       ip-address: 10.1.0

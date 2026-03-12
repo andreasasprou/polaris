@@ -5,3 +5,4 @@ export * from "@/lib/automations/schema";
 export * from "@/lib/sessions/schema";
 export * from "@/lib/routing/schema";
 export * from "@/lib/sandbox/snapshots/schema";
+export * from "@/lib/sandbox-env/schema";

@@ -16,6 +16,8 @@ type UseSessionEventsOptions = {
   sessionId: string | null;
   /** Whether to open an SSE connection for live streaming. */
   live?: boolean;
+  /** Poll for new events at this interval (ms). Useful when SSE is not available. */
+  pollingIntervalMs?: number;
 };
 
 type UseSessionEventsReturn = {
@@ -34,6 +36,7 @@ type UseSessionEventsReturn = {
 export function useSessionEvents({
   sessionId,
   live = false,
+  pollingIntervalMs,
 }: UseSessionEventsOptions): UseSessionEventsReturn {
   const [rawEvents, setRawEvents] = useState<RawEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +69,22 @@ export function useSessionEvents({
       });
   }, [sessionId]);
 
+  // Poll for updates
+  useEffect(() => {
+    if (!sessionId || !pollingIntervalMs) return;
+
+    const interval = setInterval(() => {
+      fetch(`/api/sessions/${sessionId}/events?limit=500`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.items) setRawEvents(data.items);
+        })
+        .catch(() => {});
+    }, pollingIntervalMs);
+
+    return () => clearInterval(interval);
+  }, [sessionId, pollingIntervalMs]);
+
   // SSE for live streaming
   useEffect(() => {
     if (!sessionId || !live) return;
@@ -82,7 +101,10 @@ export function useSessionEvents({
       setRawEvents((prev) => {
         // Dedupe by id
         if (prev.some((p) => p.id === event.id)) return prev;
-        return [...prev, event];
+        // Insert in eventIndex order to maintain correct sequence
+        const next = [...prev, event];
+        next.sort((a, b) => a.eventIndex - b.eventIndex);
+        return next;
       });
     });
 

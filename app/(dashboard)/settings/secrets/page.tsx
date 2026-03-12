@@ -1,6 +1,20 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircleIcon } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Secret = {
   id: string;
@@ -60,7 +74,7 @@ export default function SecretsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="flex max-w-2xl flex-col gap-6">
       <div>
         <h1 className="text-2xl font-medium">API Keys</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -69,88 +83,88 @@ export default function SecretsPage() {
       </div>
 
       {error && (
-        <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertCircleIcon />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
-      <form onSubmit={handleCreate} className="space-y-4 rounded-lg border border-border p-4">
-        <h2 className="font-medium text-sm">Add API key</h2>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div>
-            <label htmlFor="provider" className="block text-sm font-medium">
-              Provider
-            </label>
-            <select
-              id="provider"
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="label" className="block text-sm font-medium">
-              Label
-            </label>
-            <input
-              id="label"
-              type="text"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="prod"
-              required
-              className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
-            />
-          </div>
-          <div>
-            <label htmlFor="value" className="block text-sm font-medium">
-              API key
-            </label>
-            <input
-              id="value"
-              type="password"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              placeholder="sk-..."
-              required
-              className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground"
-            />
-          </div>
-        </div>
-        <button
-          type="submit"
-          disabled={loading}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {loading ? "Adding..." : "Add key"}
-        </button>
-      </form>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">Add API key</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="provider">Provider</Label>
+                <Select value={provider} onValueChange={setProvider}>
+                  <SelectTrigger id="provider">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="anthropic">Anthropic</SelectItem>
+                      <SelectItem value="openai">OpenAI</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="label">Label</Label>
+                <Input
+                  id="label"
+                  type="text"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  placeholder="prod"
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="value">API key</Label>
+                <Input
+                  id="value"
+                  type="password"
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder="sk-..."
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <Button type="submit" disabled={loading}>
+                {loading ? "Adding..." : "Add key"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       {secrets.length > 0 && (
-        <div className="space-y-2">
+        <div className="flex flex-col gap-2">
           {secrets.map((secret) => (
-            <div
-              key={secret.id}
-              className="flex items-center justify-between rounded-lg border border-border p-3"
-            >
-              <div>
-                <p className="text-sm font-medium">
-                  {secret.provider} — {secret.label}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Added {new Date(secret.createdAt).toLocaleDateString()}
-                </p>
-              </div>
-              <button
-                onClick={() => handleRevoke(secret.id)}
-                className="text-sm text-destructive hover:underline"
-              >
-                Revoke
-              </button>
-            </div>
+            <Card key={secret.id}>
+              <CardContent className="flex items-center justify-between py-3">
+                <div>
+                  <p className="text-sm font-medium">
+                    {secret.provider} — {secret.label}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Added {new Date(secret.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRevoke(secret.id)}
+                  className="text-destructive hover:text-destructive"
+                >
+                  Revoke
+                </Button>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}

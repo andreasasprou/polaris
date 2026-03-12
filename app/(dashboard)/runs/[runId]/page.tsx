@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircleIcon } from "lucide-react";
+import { StatusBadge } from "@/components/status-badge";
 import { SessionChat } from "@/components/sessions/session-chat";
+import { useSessionChat } from "@/hooks/use-session-chat";
 
 type Run = {
   id: string;
@@ -20,24 +25,6 @@ type Run = {
   completedAt: string | null;
   createdAt: string;
 };
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    pending: "bg-yellow-100 text-yellow-800",
-    running: "bg-blue-100 text-blue-800",
-    succeeded: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
-    cancelled: "bg-gray-100 text-gray-800",
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-800"}`}
-    >
-      {status}
-    </span>
-  );
-}
 
 export default function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
@@ -63,7 +50,7 @@ export default function RunDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div className="flex items-center gap-3">
         <Link
           href="/runs"
@@ -78,66 +65,77 @@ export default function RunDetailPage() {
         <StatusBadge status={run.status} />
       </div>
 
-      {/* Run metadata */}
       <div className="grid gap-4 sm:grid-cols-4">
-        <div className="rounded-lg border border-border p-3">
-          <p className="text-xs text-muted-foreground">Source</p>
-          <p className="mt-0.5 font-medium">{run.source}</p>
-        </div>
-        <div className="rounded-lg border border-border p-3">
-          <p className="text-xs text-muted-foreground">Branch</p>
-          <p className="mt-0.5 font-mono text-sm">
-            {run.branchName ?? "\u2014"}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border p-3">
-          <p className="text-xs text-muted-foreground">PR</p>
-          {run.prUrl ? (
-            <a
-              href={run.prUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-0.5 block text-blue-600 hover:underline"
-            >
-              View PR
-            </a>
-          ) : (
-            <p className="mt-0.5 text-muted-foreground">{"\u2014"}</p>
-          )}
-        </div>
-        <div className="rounded-lg border border-border p-3">
-          <p className="text-xs text-muted-foreground">Created</p>
-          <p className="mt-0.5 text-sm">
-            {new Date(run.createdAt).toLocaleString()}
-          </p>
-        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Source</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-medium">{run.source}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Branch</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-mono text-sm">{run.branchName ?? "\u2014"}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">PR</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {run.prUrl ? (
+              <a
+                href={run.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                View PR
+              </a>
+            ) : (
+              <p className="text-muted-foreground">{"\u2014"}</p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Created</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm">{new Date(run.createdAt).toLocaleString()}</p>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Summary / Error */}
       {run.summary && (
-        <div className="rounded-lg border border-border p-4">
-          <p className="text-xs font-medium text-muted-foreground">Summary</p>
-          <pre className="mt-1 whitespace-pre-wrap text-sm">{run.summary}</pre>
-        </div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="whitespace-pre-wrap text-sm">{run.summary}</pre>
+          </CardContent>
+        </Card>
       )}
 
       {run.error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-          <p className="text-xs font-medium text-red-700">Error</p>
-          <pre className="mt-1 whitespace-pre-wrap text-sm text-red-800">
-            {run.error}
-          </pre>
-        </div>
+        <Alert variant="destructive">
+          <AlertCircleIcon />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>
+            <pre className="whitespace-pre-wrap text-sm">{run.error}</pre>
+          </AlertDescription>
+        </Alert>
       )}
 
-      {/* Agent Session Chat */}
       <div>
         <h2 className="mb-3 text-lg font-medium">Agent Session</h2>
         {run.agentSessionId ? (
-          <SessionChat
-            mode="history"
-            sdkSessionId={run.agentSessionId}
-          />
+          <RunSessionChat sdkSessionId={run.agentSessionId} />
         ) : (
           <p className="text-sm text-muted-foreground">
             No agent session linked to this run.
@@ -145,5 +143,23 @@ export default function RunDetailPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function RunSessionChat({ sdkSessionId }: { sdkSessionId: string }) {
+  const chat = useSessionChat({
+    sdkSessionId,
+    triggerRunId: null,
+    accessToken: null,
+    terminal: true, // Runs page only shows completed runs
+  });
+
+  return (
+    <SessionChat
+      items={chat.items}
+      turnInProgress={chat.turnInProgress}
+      loading={chat.loading}
+      error={chat.error}
+    />
   );
 }

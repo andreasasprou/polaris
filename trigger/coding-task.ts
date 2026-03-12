@@ -11,6 +11,7 @@ import { getInstallationToken, mintInstallationToken } from "@/lib/integrations/
 import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
 import { GitOperations } from "@/lib/sandbox/GitOperations";
+import { SandboxHealthMonitor } from "@/lib/sandbox/SandboxHealthMonitor";
 import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap";
 import {
   SandboxAgentClient,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/sandbox-agent/SandboxAgentClient";
 import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import { createPersistDriver } from "@/lib/sandbox-agent/persist";
+import { resolveAgentConfig, applyFilesystemConfig } from "@/lib/sandbox-agent/agent-profiles";
 import { resolveSnapshotSource } from "@/lib/sandbox/snapshots/queries";
 import { ensureSlackThread } from "./ensure-slack-thread";
 import { notifySlack } from "./notify-slack";
@@ -93,6 +95,8 @@ async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
     agentType: creds.agentType as AgentType,
     agentApiKey: creds.agentApiKey,
     agentMode: creds.agentMode,
+    model: creds.model,
+    modelParams: creds.modelParams,
     githubInstallationId: creds.githubInstallationId,
     maxDurationSeconds: creds.maxDurationSeconds,
     allowPush: creds.allowPush,
@@ -134,6 +138,8 @@ export const codingTask = task({
     let prompt: string;
     let agentType: AgentType;
     let agentMode: string | undefined;
+    let model: string | undefined;
+    let modelParams: Record<string, unknown> = {};
     let agentApiKey: string | undefined;
     let gitToken: string;
     let maxDurationMs = 600_000;
@@ -169,6 +175,8 @@ export const codingTask = task({
       prompt = ctx.prompt;
       agentType = ctx.agentType;
       agentMode = ctx.agentMode ?? undefined;
+      model = ctx.model ?? undefined;
+      modelParams = ctx.modelParams ?? {};
       agentApiKey = ctx.agentApiKey;
       allowPush = ctx.allowPush;
       allowPrCreate = ctx.allowPrCreate;
@@ -312,7 +320,7 @@ export const codingTask = task({
     try {
       // ── Setup git branch ──
       logger.info("Configuring git");
-      await git.configure({ repoUrl, gitToken });
+      await git.configure({ repoUrl });
       const branchName =
         (legacyPayload?.branchName) ?? `agent/${Date.now()}`;
 
@@ -355,9 +363,7 @@ export const codingTask = task({
       // ── Bootstrap Sandbox Agent server (skip install when using snapshot) ──
       const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
 
-      const sessionEnv = buildSessionEnv(agentType, agentApiKey!, {
-        ...(gitToken ? { GITHUB_TOKEN: gitToken } : {}),
-      });
+      const sessionEnv = buildSessionEnv(agentType, agentApiKey!);
 
       if (source.type === "git") {
         await bootstrap.install();
@@ -374,14 +380,28 @@ export const codingTask = task({
         persist,
       });
 
-      // Default modes: codex needs "full-access", claude needs "bypassPermissions"
-      const defaultMode =
-        agentType === "codex" ? "full-access" : "bypassPermissions";
+      const resolved = resolveAgentConfig({
+        agentType,
+        modeIntent: "autonomous",
+        modeOverride: agentMode,
+        model,
+        effortLevel: (modelParams as Record<string, unknown>)?.effortLevel as string | undefined,
+      });
+
+      // Write filesystem config (e.g. .claude/settings.json) if needed
+      if (resolved.filesystemConfig) {
+        await applyFilesystemConfig(
+          (cmd, opts) => commands.runShell(cmd, opts),
+          SandboxManager.PROJECT_DIR,
+          resolved.filesystemConfig,
+        );
+      }
 
       const session = await client.createSession({
-        agent: agentType,
-        model: undefined, // TODO: pass from automation config
-        mode: agentMode ?? defaultMode,
+        agent: resolved.agent,
+        model: resolved.model,
+        mode: resolved.mode,
+        thoughtLevel: resolved.thoughtLevel,
         cwd: SandboxManager.PROJECT_DIR,
       });
       logger.info("Agent session created", { sessionId: session.id });
@@ -414,8 +434,12 @@ export const codingTask = task({
         },
       );
 
+      const healthMonitor = new SandboxHealthMonitor(serverUrl);
+      healthMonitor.start();
+
       const agentResult = await client.executePrompt(session, agentPrompt, {
         timeoutMs: maxDurationMs - 60_000, // Reserve 60s for post-agent git ops
+        signal: healthMonitor.signal,
         onEvent: (event) => {
           eventForwarder?.(event);
 
@@ -430,6 +454,7 @@ export const codingTask = task({
         },
       });
 
+      healthMonitor.stop();
       streamControl.resolve();
       await waitForEventStream();
 

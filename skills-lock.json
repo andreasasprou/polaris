@@ -10,6 +10,11 @@
       "source": "rivet-dev/skills",
       "sourceType": "github",
       "computedHash": "3e34e583e6c1a5cb3e64d70fe6bd971f4ddff5147e62de59526913d4ad9a7d74"
+    },
+    "shadcn": {
+      "source": "shadcn/ui",
+      "sourceType": "github",
+      "computedHash": "91c02eb706f046fb9d6a061efbb96496e4be751b5b14c283cf82baaa50f3a985"
     }
   }
 }

@@ -10,6 +10,8 @@ export type AgentConfig = {
 export type AgentResult = {
   success: boolean;
   output: string;
+  /** The last agent message (after final tool call). Useful for review output. */
+  lastMessage?: string;
   errorOutput?: string;
   changesDetected: boolean;
   error?: string;

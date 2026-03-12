@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback, createContext, useContext } from "react";
+import { useEffect, useState, useCallback, useMemo, createContext, useContext } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useInputStreamSend } from "@trigger.dev/react-hooks";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertCircleIcon, ChevronLeftIcon } from "lucide-react";
+import { StatusBadge } from "@/components/status-badge";
 import { SessionChat } from "@/components/sessions/session-chat";
-import { useRealtimeSession } from "@/hooks/use-realtime-session";
+import { ChatInput, type Attachment } from "@/components/sessions/chat-input";
+import { UserMessage } from "@/components/sessions/user-message";
+import { useSessionChat } from "@/hooks/use-session-chat";
 import { createSessionAccessToken } from "@/lib/trigger/access-tokens";
 import { sessionMessages } from "@/lib/trigger/streams";
+import { getStatusConfig } from "@/lib/sessions/status";
 import type { SessionMessage } from "@/lib/trigger/types";
 
 type InteractiveSession = {
@@ -24,6 +31,66 @@ type InteractiveSession = {
   endedAt: string | null;
 };
 
+// ── Helpers ──
+
+/** Send a prompt via the API route with retry for 425 (hibernating). */
+async function sendPromptViaApi(
+  sessionId: string,
+  text: string,
+): Promise<{ ok: boolean; triggerRunId?: string; accessToken?: string }> {
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await fetch(
+      `/api/interactive-sessions/${sessionId}/prompt`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: text }),
+      },
+    );
+
+    if (res.status === 425) {
+      const retryAfter = parseInt(res.headers.get("Retry-After") ?? "5", 10);
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      continue;
+    }
+
+    if (!res.ok) {
+      const data = await res.json();
+      console.error("Failed to send:", data.error);
+      return { ok: false };
+    }
+
+    const data = await res.json();
+    return {
+      ok: true,
+      triggerRunId: data.triggerRunId,
+      accessToken: data.accessToken,
+    };
+  }
+  console.error("Failed to send after retries (session hibernating)");
+  return { ok: false };
+}
+
+async function fetchSession(sessionId: string): Promise<InteractiveSession | null> {
+  try {
+    const r = await fetch(`/api/interactive-sessions/${sessionId}`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data?.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function stopSession(sessionId: string): Promise<void> {
+  try {
+    await fetch(`/api/interactive-sessions/${sessionId}`, { method: "DELETE" });
+  } catch { /* ignore */ }
+}
+
+const TRIGGER_TERMINAL_STATES = ["CANCELED", "FAILED", "COMPLETED", "CRASHED", "SYSTEM_FAILURE", "TIMED_OUT"];
+
 // ── HITL Action Context ──
 
 export type HitlActions = {
@@ -38,367 +105,247 @@ export function useHitlActions(): HitlActions | null {
   return useContext(HitlContext);
 }
 
-// ── Components ──
+// ── Chat Input ──
 
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    creating: "bg-yellow-100 text-yellow-800",
-    active: "bg-green-100 text-green-800",
-    idle: "bg-blue-100 text-blue-800",
-    completed: "bg-gray-100 text-gray-800",
-    failed: "bg-red-100 text-red-800",
-    stopped: "bg-blue-100 text-blue-800",
-  };
-
-  const labels: Record<string, string> = {
-    idle: "paused",
-    stopped: "paused",
-    completed: "paused",
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-800"}`}
-    >
-      {labels[status] ?? status}
-    </span>
-  );
-}
-
-/**
- * Chat input that uses `useInputStreamSend` for active sessions.
- * Only mounted when triggerRunId + accessToken are available,
- * since the hook requires a valid token at call time.
- */
-function ActiveChatInput({
+function SessionChatInput({
   sessionId,
   triggerRunId,
   accessToken,
   status,
   turnInProgress,
-  onResumeTriggered,
+  onRefresh,
+  onPendingPrompt,
+  onResumeRun,
+  onStop,
   children,
 }: {
   sessionId: string;
-  triggerRunId: string;
-  accessToken: string;
+  triggerRunId?: string | null;
+  accessToken?: string | null;
   status: string;
   turnInProgress: boolean;
-  onResumeTriggered: () => void;
+  onRefresh: () => void;
+  onPendingPrompt?: (text: string) => void;
+  onResumeRun?: (triggerRunId: string, accessToken: string) => void;
+  onStop: () => void;
   children: React.ReactNode;
 }) {
-  const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
+  const config = getStatusConfig(status);
 
+  // Stream send — always called (hooks can't be conditional), but disabled
+  // when triggerRunId/accessToken are unavailable to avoid auth errors.
+  const hasStreamAccess = !!triggerRunId && !!accessToken;
   const {
     send,
     isLoading: isSending,
     isReady,
   } = useInputStreamSend<SessionMessage>(
     sessionMessages.id,
-    triggerRunId,
-    { accessToken },
+    triggerRunId ?? "",
+    { accessToken: accessToken ?? "", enabled: hasStreamAccess },
   );
 
-  const isResumable = status === "idle" || status === "stopped" || status === "completed";
-  const isActive = status === "active";
-  const canSend = (isActive && !turnInProgress) || isResumable;
+  const hasStream = hasStreamAccess && isReady;
+  const canSend = config.canSend && (!config.hasLiveProcess || !turnInProgress);
+  const isBusy = sending || isSending;
 
-  // HITL actions via input stream
-  const hitlActions: HitlActions = {
+  // HITL actions via input stream (no-op when stream unavailable)
+  const hitlActions: HitlActions = useMemo(() => ({
     replyPermission: (permissionId, reply) => {
-      if (isReady) {
-        send({ action: "permission_reply", permissionId, reply });
-      }
+      if (hasStream) send({ action: "permission_reply", permissionId, reply });
     },
     replyQuestion: (questionId, answers) => {
-      if (isReady) {
-        send({ action: "question_reply", questionId, answers });
-      }
+      if (hasStream) send({ action: "question_reply", questionId, answers });
     },
     rejectQuestion: (questionId) => {
-      if (isReady) {
-        send({ action: "question_reject", questionId });
-      }
+      if (hasStream) send({ action: "question_reject", questionId });
     },
-  };
+  }), [hasStream, send]);
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    if (!prompt.trim() || sending || isSending) return;
+  const handleSubmit = useCallback(
+    async (text: string, _attachments: Attachment[]) => {
+      if (!text.trim() || isBusy) return;
 
-    // Active session: prefer direct input stream, fall back to API route
-    if (isActive) {
-      if (isReady) {
-        send({ action: "prompt", prompt: prompt.trim() });
-        setPrompt("");
+      onPendingPrompt?.(text.trim());
+
+      // Route: direct stream send when process is alive and stream ready, else API
+      if (config.sendPath === "stream" && hasStream) {
+        send({ action: "prompt", prompt: text.trim(), nonce: crypto.randomUUID() });
       } else {
-        // Input stream not ready yet — send via API route as fallback
         setSending(true);
         try {
-          const res = await fetch(
-            `/api/interactive-sessions/${sessionId}/prompt`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ prompt: prompt.trim() }),
-            },
-          );
-          if (!res.ok) {
-            const data = await res.json();
-            console.error("Failed to send:", data.error);
-          } else {
-            setPrompt("");
+          const result = await sendPromptViaApi(sessionId, text.trim());
+          if (result.ok) {
+            // If the API returned a new run (resume), update immediately
+            if (result.triggerRunId && result.accessToken) {
+              onResumeRun?.(result.triggerRunId, result.accessToken);
+            } else if (!config.hasLiveProcess) {
+              onRefresh();
+            }
           }
         } finally {
           setSending(false);
         }
       }
-      return;
-    }
-
-    if (isResumable) {
-      setSending(true);
-      try {
-        const res = await fetch(
-          `/api/interactive-sessions/${sessionId}/prompt`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt }),
-          },
-        );
-
-        if (!res.ok) {
-          const data = await res.json();
-          console.error("Failed to send:", data.error);
-        } else {
-          setPrompt("");
-          onResumeTriggered();
-        }
-      } finally {
-        setSending(false);
-      }
-    }
-  }
-
-  const isBusy = sending || isSending;
+    },
+    [config.sendPath, config.hasLiveProcess, hasStream, isBusy, send, sessionId, onRefresh, onPendingPrompt, onResumeRun],
+  );
 
   const placeholder = !canSend
     ? turnInProgress
       ? "Agent is working..."
-      : status === "creating"
+      : !config.isTerminal
         ? "Starting up..."
         : "Session failed"
-    : isResumable
-      ? "Send a message to resume..."
-      : "Send a message...";
+    : config.hasLiveProcess
+      ? "Send a message..."
+      : "Send a message to resume...";
 
   return (
     <HitlContext.Provider value={hitlActions}>
       {children}
-      <div className="border-t border-border pt-4">
-        <form onSubmit={handleSend} className="flex gap-2">
-          <input
-            type="text"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={placeholder}
-            disabled={!canSend || isBusy}
-            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={!canSend || isBusy || !prompt.trim()}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {isBusy ? (isResumable ? "Resuming..." : "Sending...") : "Send"}
-          </button>
-        </form>
+      <div className="shrink-0 px-1 pb-4 pt-3">
+        <ChatInput
+          onSubmit={handleSubmit}
+          onStop={onStop}
+          placeholder={placeholder}
+          disabled={!canSend || isBusy}
+          loading={isBusy}
+          working={turnInProgress && config.hasLiveProcess}
+        />
       </div>
     </HitlContext.Provider>
   );
 }
 
-/**
- * Fallback chat input for sessions without an active trigger run
- * (stopped/completed sessions that need resume via API route).
- */
-function FallbackChatInput({
-  sessionId,
-  status,
-  onResumeTriggered,
-}: {
-  sessionId: string;
-  status: string;
-  onResumeTriggered: () => void;
-}) {
-  const [prompt, setPrompt] = useState("");
-  const [sending, setSending] = useState(false);
-
-  const isResumable = status === "idle" || status === "stopped" || status === "completed";
-  const canSend = isResumable;
-
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    if (!prompt.trim() || sending) return;
-
-    setSending(true);
-    try {
-      const res = await fetch(
-        `/api/interactive-sessions/${sessionId}/prompt`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        },
-      );
-
-      if (!res.ok) {
-        const data = await res.json();
-        console.error("Failed to send:", data.error);
-      } else {
-        setPrompt("");
-        onResumeTriggered();
-      }
-    } finally {
-      setSending(false);
-    }
-  }
-
-  const placeholder = !canSend
-    ? status === "creating"
-      ? "Starting up..."
-      : "Session failed"
-    : "Send a message to resume...";
-
-  return (
-    <form onSubmit={handleSend} className="flex gap-2">
-      <input
-        type="text"
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder={placeholder}
-        disabled={!canSend || sending}
-        className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground disabled:opacity-50"
-      />
-      <button
-        type="submit"
-        disabled={!canSend || sending || !prompt.trim()}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-      >
-        {sending ? "Resuming..." : "Send"}
-      </button>
-    </form>
-  );
-}
+// ── Page ──
 
 export default function SessionDetailPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const [session, setSession] = useState<InteractiveSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPromptRaw] = useState<string | null>(null);
+
+  const config = getStatusConfig(session?.status ?? "failed");
 
   // Fetch session from DB on mount
   useEffect(() => {
-    fetch(`/api/interactive-sessions/${sessionId}`)
-      .then((r) => {
-        if (!r.ok) return null;
-        return r.json();
-      })
-      .then((data) => {
-        setSession(data?.session ?? null);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    fetchSession(sessionId).then((s) => {
+      setSession(s);
+      setLoading(false);
+    });
   }, [sessionId]);
 
-  // Obtain scoped access token when session has a triggerRunId.
-  // Re-mint when triggerRunId changes (e.g. after resume creates a new run).
+  // Obtain scoped access token on page load when session has a triggerRunId.
+  // On resume, the prompt API returns the token directly — this effect is
+  // only for initial page load / refresh.
   const triggerRunId = session?.triggerRunId ?? null;
   useEffect(() => {
-    if (!triggerRunId) return;
-
-    // Clear stale token immediately so we don't use it for the wrong run
-    setAccessToken(null);
-
+    if (!triggerRunId || accessToken) return;
     createSessionAccessToken(sessionId)
       .then(setAccessToken)
       .catch((err) => {
         console.error("Failed to create access token:", err);
       });
-  }, [sessionId, triggerRunId]);
+  }, [sessionId, triggerRunId, accessToken]);
 
-  // Realtime subscription for live sessions
-  const isLive =
-    session?.status === "active" || session?.status === "creating";
-  const realtime = useRealtimeSession({
-    triggerRunId: isLive ? (session?.triggerRunId ?? null) : null,
-    accessToken: isLive ? accessToken : null,
+  // Unified chat hook — merges DB history + realtime current turn
+  const chat = useSessionChat({
+    sdkSessionId: session?.sdkSessionId ?? null,
+    triggerRunId: config.isLive ? triggerRunId : null,
+    accessToken: config.isLive ? accessToken : null,
+    terminal: config.isTerminal,
   });
 
-  // Sync realtime status back to local session state
+  const setPendingPrompt = useCallback((text: string | null) => {
+    setPendingPromptRaw(text);
+  }, []);
+
+  // Sync realtime session status back to local state
+  const sessionStatus = session?.status;
   useEffect(() => {
-    if (realtime.sessionStatus && session) {
-      if (realtime.sessionStatus !== session.status) {
+    if (chat.sessionStatus && sessionStatus !== undefined) {
+      if (chat.sessionStatus !== sessionStatus) {
         setSession((prev) =>
-          prev ? { ...prev, status: realtime.sessionStatus! } : prev,
+          prev ? { ...prev, status: chat.sessionStatus! } : prev,
         );
       }
     }
-  }, [realtime.sessionStatus, session]);
+  }, [chat.sessionStatus, sessionStatus]);
 
-  // Detect when the Trigger.dev run terminates (cancelled, failed, etc.)
-  // and re-fetch session from DB to get the true status
+  // Refetch session from API (used after terminal state)
+  const refreshSession = useCallback(() => {
+    fetchSession(sessionId).then((s) => {
+      if (s) setSession(s);
+    });
+  }, [sessionId]);
+
+  const handleStop = useCallback(() => {
+    stopSession(session?.id ?? sessionId);
+  }, [session?.id, sessionId]);
+
+  // Detect when the Trigger.dev run terminates — refresh session to get final state
   useEffect(() => {
-    const terminalStates = ["CANCELED", "FAILED", "COMPLETED", "CRASHED", "SYSTEM_FAILURE", "TIMED_OUT"];
-    if (realtime.status && terminalStates.includes(realtime.status)) {
-      fetch(`/api/interactive-sessions/${sessionId}`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((data) => {
-          if (data?.session) setSession(data.session);
-        })
-        .catch(() => {});
+    if (chat.runStatus && TRIGGER_TERMINAL_STATES.includes(chat.runStatus)) {
+      refreshSession();
     }
-  }, [realtime.status, sessionId]);
+  }, [chat.runStatus, refreshSession]);
 
-  // Poll while session is "creating" to detect when triggerRunId is set
-  // and status transitions to "active". Covers both initial creation and resume.
+  // Handle resume: prompt API returned a new triggerRunId + accessToken
+  const handleResumeRun = useCallback(
+    (newRunId: string, newAccessToken: string) => {
+      setSession((prev) =>
+        prev
+          ? { ...prev, triggerRunId: newRunId, status: "creating" }
+          : prev,
+      );
+      setAccessToken(newAccessToken);
+    },
+    [],
+  );
+
+  // Poll session status as a universal safety net.
+  // Fast polling (2s) for provisioning states without realtime (creating, hibernating).
+  // Slow polling (30s) for live states where realtime is primary but may fail.
+  // Stops when the session reaches a terminal state or a stable non-polling state.
+  const pollIntervalMs = config.pollIntervalMs;
+
   useEffect(() => {
-    if (session?.status !== "creating") return;
+    if (!pollIntervalMs) return;
 
     const poll = setInterval(async () => {
-      try {
-        const r = await fetch(`/api/interactive-sessions/${sessionId}`);
-        if (!r.ok) return;
-        const d = await r.json();
-        if (d.session) {
-          setSession(d.session);
-          if (d.session.status !== "creating") {
-            clearInterval(poll);
-          }
+      const s = await fetchSession(sessionId);
+      if (s) {
+        setSession(s);
+        // Stop polling if new status doesn't need it
+        if (getStatusConfig(s.status).pollIntervalMs === 0) {
+          clearInterval(poll);
         }
-      } catch { /* ignore */ }
-    }, 2000);
+      }
+    }, pollIntervalMs);
 
-    const timeout = setTimeout(() => clearInterval(poll), 120_000);
+    // Safety cap — don't poll forever (2 hours max)
+    const timeout = setTimeout(() => clearInterval(poll), 2 * 60 * 60_000);
     return () => {
       clearInterval(poll);
       clearTimeout(timeout);
     };
-  }, [session?.status, sessionId]);
+  }, [pollIntervalMs, sessionId]);
 
-  // After resume: trigger the creating poll by setting status
-  const handleResumeTriggered = useCallback(() => {
-    // The "creating" status is already set by the API route.
-    // Re-fetch session to pick it up and trigger the poll above.
-    fetch(`/api/interactive-sessions/${sessionId}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data?.session) setSession(data.session);
-      })
-      .catch(() => {});
-  }, [sessionId]);
+  // Clear optimistic prompt once the real event appears in the stream.
+  // The pending prompt persists through status transitions (stopped → creating → active)
+  // and is only removed when the realtime stream delivers the actual prompt event.
+  useEffect(() => {
+    if (!pendingPrompt) return;
+    const alreadyInItems = chat.items.some(
+      (item) => item.type === "user_prompt" && item.text === pendingPrompt,
+    );
+    if (alreadyInItems) {
+      setPendingPromptRaw(null);
+    }
+  }, [pendingPrompt, chat.items]);
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
@@ -408,131 +355,78 @@ export default function SessionDetailPage() {
     return <p className="text-sm text-muted-foreground">Session not found.</p>;
   }
 
-  const isActive = session.status === "active";
-  const isCreating = session.status === "creating";
-  const hasRealtimeAccess = !!session.triggerRunId && !!accessToken;
-
-  // Use live stream once it has events; otherwise fall back to history to avoid layout shift
-  const liveHasEvents = realtime.items.length > 0;
-  const canShowLive = !!(session.triggerRunId && accessToken && (isActive || isCreating));
-
-  // Chat content to render — always show history first, append live events below
-  let chatContent: React.ReactNode;
-  if (session.sdkSessionId) {
-    // Session has history — always show it
-    chatContent = (
-      <>
-        <SessionChat mode="history" sdkSessionId={session.sdkSessionId} />
-        {canShowLive && liveHasEvents && (
-          <SessionChat
-            mode="live"
-            triggerRunId={session.triggerRunId!}
-            accessToken={accessToken!}
-            skipInitialPrompt
-          />
-        )}
-        {canShowLive && !liveHasEvents && (
-          <div className="flex items-center gap-2 py-3">
-            <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              {realtime.setupStep ?? "Resuming session..."}
-            </span>
-          </div>
-        )}
-      </>
-    );
-  } else if (canShowLive) {
-    // Fresh session — no history yet, show live only
-    chatContent = (
-      <SessionChat
-        mode="live"
-        triggerRunId={session.triggerRunId!}
-        accessToken={accessToken!}
-      />
-    );
-  } else if (isCreating) {
-    chatContent = (
-      <div className="flex flex-col items-center gap-3 py-16">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-        <p className="text-sm text-muted-foreground">
-          {realtime.setupStep ?? "Provisioning sandbox..."}
-        </p>
-      </div>
-    );
-  } else {
-    chatContent = (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No session data available.
-      </p>
-    );
-  }
-
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col px-6 pt-6">
       {/* Header */}
-      <div className="flex items-center gap-3 pb-4">
+      <div className="flex items-center gap-3 border-b border-border px-1 pb-3">
         <Link
           href="/sessions"
-          className="text-sm text-muted-foreground hover:underline"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
+          <ChevronLeftIcon className="size-4" />
           Sessions
         </Link>
-        <span className="text-muted-foreground">/</span>
-        <h1 className="text-xl font-medium">{session.agentType}</h1>
-        <StatusBadge status={session.status} />
-        {isCreating && (
-          <span className="text-sm text-muted-foreground">
-            {realtime.setupStep ?? "Setting up sandbox..."}
+        <span className="text-muted-foreground/50">/</span>
+        <div className="flex items-center gap-2">
+          <h1 className="text-sm font-semibold capitalize">{session.agentType}</h1>
+          <StatusBadge status={session.status} />
+        </div>
+        {chat.setupStep && (
+          <span className="text-xs text-muted-foreground">
+            {chat.setupStep}
           </span>
         )}
-        {isActive && (
-          <button
-            onClick={async () => {
-              await fetch(`/api/interactive-sessions/${session.id}`, {
-                method: "DELETE",
-              });
-            }}
-            className="ml-auto rounded-md border border-red-200 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-          >
-            Stop
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {config.canStop && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground hover:text-destructive"
+              onClick={handleStop}
+            >
+              Stop
+            </Button>
+          )}
+        </div>
       </div>
 
       {session.error && session.status === "failed" && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3">
-          <p className="text-sm text-red-700">{session.error}</p>
-        </div>
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircleIcon />
+          <AlertDescription>{session.error}</AlertDescription>
+        </Alert>
       )}
 
-      {/* Chat area + Input — wrapped in HITL context when active */}
-      {hasRealtimeAccess ? (
-        <ActiveChatInput
-          sessionId={session.id}
-          triggerRunId={session.triggerRunId!}
-          accessToken={accessToken!}
-          status={session.status}
-          turnInProgress={realtime.turnInProgress}
-          onResumeTriggered={handleResumeTriggered}
-        >
-          <div className="min-h-0 flex-1 overflow-auto pb-4">
-            {chatContent}
-          </div>
-        </ActiveChatInput>
-      ) : (
-        <>
-          <div className="min-h-0 flex-1 overflow-auto pb-4">
-            {chatContent}
-          </div>
-          <div className="border-t border-border pt-4">
-            <FallbackChatInput
-              sessionId={session.id}
-              status={session.status}
-              onResumeTriggered={handleResumeTriggered}
-            />
-          </div>
-        </>
-      )}
+      {/* Chat area + Input */}
+      <SessionChatInput
+        sessionId={session.id}
+        triggerRunId={session.triggerRunId}
+        accessToken={accessToken}
+        status={session.status}
+        turnInProgress={chat.turnInProgress}
+        onRefresh={refreshSession}
+        onPendingPrompt={setPendingPrompt}
+        onResumeRun={handleResumeRun}
+        onStop={handleStop}
+      >
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <SessionChat
+            items={chat.items}
+            turnInProgress={chat.turnInProgress}
+            loading={chat.loading}
+            error={chat.error}
+          />
+          {pendingPrompt && <UserMessage text={pendingPrompt} />}
+          {chat.setupStep && (
+            <div className="flex items-center gap-2 py-3">
+              <div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+              <span className="text-xs text-muted-foreground">
+                {chat.setupStep}
+              </span>
+            </div>
+          )}
+        </div>
+      </SessionChatInput>
     </div>
   );
 }

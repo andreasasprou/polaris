@@ -31,6 +31,31 @@ export class SandboxAgentBootstrap {
         `Failed to install sandbox-agent: ${result.stderr}`,
       );
     }
+
+    await this.installGitHubCLI();
+  }
+
+  /**
+   * Install the GitHub CLI (`gh`) binary.
+   * Idempotent — skips if already installed.
+   * Non-fatal — logs a warning on failure since gh is nice-to-have.
+   */
+  private async installGitHubCLI(): Promise<void> {
+    const result = await this.commands.runShell(
+      `(type gh > /dev/null 2>&1) || {
+        GH_VERSION="2.67.0"
+        curl -fsSL "https://github.com/cli/cli/releases/download/v\${GH_VERSION}/gh_\${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz \
+        && tar -xzf /tmp/gh.tar.gz -C /tmp \
+        && mv "/tmp/gh_\${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
+        && chmod +x /usr/local/bin/gh \
+        && rm -rf /tmp/gh.tar.gz /tmp/gh_*
+      }`,
+      { cwd: "/" },
+    );
+
+    if (result.exitCode !== 0) {
+      console.warn(`Failed to install gh CLI: ${result.stderr}`);
+    }
   }
 
   /**
@@ -48,6 +73,32 @@ export class SandboxAgentBootstrap {
         `Failed to install agent ${agentType}: ${result.stderr}`,
       );
     }
+  }
+
+  /**
+   * Provision credential files in the sandbox from special env vars.
+   * E.g. CODEX_AUTH_JSON_B64 → ~/.codex/auth.json for ChatGPT OAuth.
+   * Returns a cleaned env with consumed vars removed.
+   */
+  async provisionCredentialFiles(
+    env: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    const cleaned = { ...env };
+
+    // CODEX_AUTH_JSON_B64 → ~/.codex/auth.json
+    if (cleaned.CODEX_AUTH_JSON_B64) {
+      const content = Buffer.from(cleaned.CODEX_AUTH_JSON_B64, "base64");
+      await this.sandbox.writeFiles([
+        { path: "/root/.codex/auth.json", content },
+      ]);
+      await this.commands.runShell(
+        "chmod 600 $HOME/.codex/auth.json",
+        { cwd: "/" },
+      );
+      delete cleaned.CODEX_AUTH_JSON_B64;
+    }
+
+    return cleaned;
   }
 
   /**

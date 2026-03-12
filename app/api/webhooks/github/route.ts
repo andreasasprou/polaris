@@ -8,38 +8,56 @@ export async function POST(req: NextRequest) {
   const deliveryId = req.headers.get("x-github-delivery");
   const eventType = req.headers.get("x-github-event");
 
+  console.log(`[webhook] Received ${eventType}${deliveryId ? ` (${deliveryId})` : ""}`);
+
   if (!signature || !deliveryId || !eventType) {
+    console.log("[webhook] Missing required headers, rejecting");
     return NextResponse.json({ error: "Missing headers" }, { status: 400 });
   }
 
   // Verify webhook signature
   try {
     if (!verifyWebhookSignature(payload, signature)) {
+      console.log("[webhook] Invalid signature");
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
-  } catch {
+  } catch (err) {
+    console.error("[webhook] Signature verification error:", err);
     return NextResponse.json({ error: "Signature verification failed" }, { status: 500 });
   }
 
   const body = JSON.parse(payload) as Record<string, unknown>;
   const installationId = (body.installation as { id?: number } | undefined)?.id;
-
-  if (!installationId) {
-    // Some events don't have an installation — ignore them
-    return NextResponse.json({ ok: true });
-  }
-
   const action = typeof body.action === "string" ? body.action : undefined;
   const ref = typeof body.ref === "string" ? body.ref : undefined;
 
-  const triggered = await routeGitHubEvent({
-    installationId,
-    deliveryId,
+  console.log("[webhook] Parsed:", {
     eventType,
     action,
     ref,
-    payload: body,
+    installationId,
+    deliveryId,
   });
 
-  return NextResponse.json({ ok: true, triggered });
+  if (!installationId) {
+    console.log("[webhook] No installation ID, skipping");
+    return NextResponse.json({ ok: true });
+  }
+
+  try {
+    const triggered = await routeGitHubEvent({
+      installationId,
+      deliveryId,
+      eventType,
+      action,
+      ref,
+      payload: body,
+    });
+
+    console.log(`[webhook] Routed: ${triggered} automation(s) triggered`);
+    return NextResponse.json({ ok: true, triggered });
+  } catch (err) {
+    console.error("[webhook] Routing error:", err);
+    return NextResponse.json({ error: "Internal routing error" }, { status: 500 });
+  }
 }

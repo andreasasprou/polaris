@@ -1,8 +1,9 @@
 import Link from "next/link";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function SettingsPage() {
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-medium">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -10,15 +11,26 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 max-w-2xl">
-        <Link
-          href="/settings/secrets"
-          className="block rounded-lg border border-border p-4 hover:bg-accent/50 transition-colors"
-        >
-          <h3 className="font-medium">API Keys</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Manage your AI provider API keys.
-          </p>
+      <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
+        <Link href="/settings/secrets" className="block transition-colors hover:opacity-80">
+          <Card>
+            <CardHeader>
+              <CardTitle>API Keys</CardTitle>
+              <CardDescription>
+                Manage your AI provider API keys.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link href="/settings/environment" className="block transition-colors hover:opacity-80">
+          <Card>
+            <CardHeader>
+              <CardTitle>Environment Variables</CardTitle>
+              <CardDescription>
+                Variables injected into all sandbox sessions.
+              </CardDescription>
+            </CardHeader>
+          </Card>
         </Link>
       </div>
     </div>

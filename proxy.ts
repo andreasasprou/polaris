@@ -7,18 +7,10 @@ export function proxy(request: NextRequest) {
   const sessionCookie = getSessionCookie(request);
   const { pathname } = request.nextUrl;
 
-
   // Protect authenticated routes
   if (protectedPaths.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     if (!sessionCookie) {
       return NextResponse.redirect(new URL("/login", request.url));
-    }
-  }
-
-  // Redirect authenticated users away from login
-  if (pathname === "/login") {
-    if (sessionCookie) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   }
 
@@ -32,6 +24,5 @@ export const config = {
     "/integrations/:path*",
     "/settings/:path*",
     "/onboarding/:path*",
-    "/login",
   ],
 };

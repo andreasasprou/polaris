@@ -3,6 +3,16 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { Card } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { StatusBadge } from "@/components/status-badge";
 
 type Run = {
   id: string;
@@ -17,24 +27,6 @@ type Run = {
   completedAt: string | null;
   createdAt: string;
 };
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    pending: "bg-yellow-100 text-yellow-800",
-    running: "bg-blue-100 text-blue-800",
-    succeeded: "bg-green-100 text-green-800",
-    failed: "bg-red-100 text-red-800",
-    cancelled: "bg-gray-100 text-gray-800",
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${colors[status] ?? "bg-gray-100 text-gray-800"}`}
-    >
-      {status}
-    </span>
-  );
-}
 
 function formatDuration(start: string | null, end: string | null): string {
   if (!start) return "—";
@@ -60,7 +52,7 @@ export default function AutomationRunsPage() {
   }, [id]);
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div className="flex items-center gap-3">
         <Link
           href={`/automations/${id}`}
@@ -77,53 +69,53 @@ export default function AutomationRunsPage() {
       ) : runs.length === 0 ? (
         <p className="text-sm text-muted-foreground">No runs yet for this automation.</p>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border bg-muted/50">
-              <tr>
-                <th className="px-4 py-2 text-left font-medium">Status</th>
-                <th className="px-4 py-2 text-left font-medium">Source</th>
-                <th className="px-4 py-2 text-left font-medium">Duration</th>
-                <th className="px-4 py-2 text-left font-medium">PR</th>
-                <th className="px-4 py-2 text-left font-medium">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Status</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Duration</TableHead>
+                <TableHead>PR</TableHead>
+                <TableHead>Created</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {runs.map((run) => (
-                <tr key={run.id} className="hover:bg-muted/30">
-                  <td className="px-4 py-2">
+                <TableRow key={run.id}>
+                  <TableCell>
                     <Link href={`/runs/${run.id}`} className="hover:underline">
                       <StatusBadge status={run.status} />
                     </Link>
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {run.source}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {formatDuration(run.startedAt, run.completedAt)}
-                  </td>
-                  <td className="px-4 py-2">
+                  </TableCell>
+                  <TableCell>
                     {run.prUrl ? (
                       <a
                         href={run.prUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline"
+                        className="text-primary hover:underline"
                       >
                         PR
                       </a>
                     ) : (
                       <span className="text-muted-foreground">—</span>
                     )}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
                     {new Date(run.createdAt).toLocaleString()}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+          </Table>
+        </Card>
       )}
     </div>
   );

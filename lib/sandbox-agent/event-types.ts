@@ -317,6 +317,7 @@ export type ConsolidatedResult = {
  */
 export function consolidateEvents(
   events: Array<{ payload: Record<string, unknown> }>,
+  options?: { terminal?: boolean },
 ): ConsolidatedResult {
   const items: ChatItem[] = [];
   let currentThought = "";
@@ -344,6 +345,24 @@ export function consolidateEvents(
     currentMessage = "";
   }
 
+  /** Mark all in-flight items as interrupted and close the current turn. */
+  function closeInterruptedTurn() {
+    flushThought();
+    flushMessage();
+    for (const tc of toolCalls.values()) {
+      if (tc.status !== "completed" && tc.status !== "error") {
+        tc.status = "interrupted";
+      }
+    }
+    for (const perm of permissions.values()) {
+      if (perm.status === "pending") perm.status = "rejected";
+    }
+    for (const q of questions.values()) {
+      if (q.status === "pending") q.status = "rejected";
+    }
+    turnInProgress = false;
+  }
+
   let lastPromptText: string | null = null;
   // When a duplicate prompt is detected, skip all events until the next
   // different prompt — this suppresses the duplicate response cycle too.
@@ -368,6 +387,12 @@ export function consolidateEvents(
 
     switch (parsed.type) {
       case "prompt":
+        // Filter replay preamble — sandbox-agent replays session history as a
+        // prompt containing "Previous session history is replayed below" followed
+        // by raw JSON-RPC payloads. This is internal context, not a real user message.
+        if (parsed.text.startsWith("Previous session history is replayed below")) {
+          break;
+        }
         flushThought();
         flushMessage();
         items.push({ type: "user_prompt", text: parsed.text });
@@ -471,6 +496,11 @@ export function consolidateEvents(
       }
 
       case "turn_started":
+        // If a previous turn was still in progress, it was interrupted
+        // (e.g., session timed out mid-turn, then resumed with a new turn).
+        if (turnInProgress) {
+          closeInterruptedTurn();
+        }
         turnInProgress = true;
         break;
 
@@ -499,6 +529,10 @@ export function consolidateEvents(
         break;
 
       case "session_created":
+        // A new session means any in-progress turn from before was interrupted.
+        if (turnInProgress) {
+          closeInterruptedTurn();
+        }
         items.push({ type: "status", label: "Session created" });
         break;
 
@@ -519,6 +553,12 @@ export function consolidateEvents(
 
   flushThought();
   flushMessage();
+
+  // When the session is terminal (failed/stopped), any in-flight state is stale.
+  // Force turn to complete and mark pending items as interrupted.
+  if (options?.terminal && turnInProgress) {
+    closeInterruptedTurn();
+  }
 
   return { items, turnInProgress };
 }

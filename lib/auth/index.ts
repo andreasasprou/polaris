@@ -6,6 +6,14 @@ import { db } from "@/lib/db";
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
+  emailAndPassword: {
+    enabled: true,
+  },
+  trustedOrigins: [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://*.vercel.app",
+  ],
   socialProviders: {
     github: {
       clientId: process.env.GITHUB_CLIENT_ID!,
