@@ -23,16 +23,8 @@ export async function fetchPRDiff(
   const maxBytes = opts?.maxBytes ?? 200_000;
   const maxFiles = opts?.maxFiles ?? 150;
 
-  // Fetch diff (raw format)
-  const { data: rawDiff } = await octokit.rest.pulls.get({
-    owner,
-    repo,
-    pull_number: prNumber,
-    mediaType: { format: "diff" },
-  });
-
-  // Fetch file list
-  const allFiles: string[] = [];
+  // Fetch file list (always works, even for huge PRs)
+  const allFiles: Array<{ filename: string; patch?: string; status: string; additions: number; deletions: number }> = [];
   let page = 1;
   while (allFiles.length < maxFiles) {
     const { data: fileList } = await octokit.rest.pulls.listFiles({
@@ -43,25 +35,102 @@ export async function fetchPRDiff(
       page,
     });
     if (fileList.length === 0) break;
-    allFiles.push(...fileList.map((f) => f.filename));
+    allFiles.push(...fileList.map((f) => ({
+      filename: f.filename,
+      patch: f.patch,
+      status: f.status ?? "modified",
+      additions: f.additions,
+      deletions: f.deletions,
+    })));
     if (fileList.length < 100) break;
     page++;
   }
 
-  let diff = rawDiff as unknown as string;
+  let diff: string;
   let truncated = false;
+
+  // Try fetching the full raw diff first
+  try {
+    const { data: rawDiff } = await octokit.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: prNumber,
+      mediaType: { format: "diff" },
+    });
+    diff = rawDiff as unknown as string;
+  } catch (err) {
+    // GitHub returns 422 "diff too large" for PRs over 20k lines.
+    // Fall back to reconstructing a diff from per-file patches (listFiles).
+    console.log(`[diff] Full diff too large for PR #${prNumber}, reconstructing from file patches`);
+    diff = reconstructDiffFromPatches(allFiles);
+    truncated = true;
+  }
 
   if (diff.length > maxBytes) {
     diff = diff.slice(0, maxBytes);
     truncated = true;
   }
 
-  const files = allFiles.slice(0, maxFiles);
+  const files = allFiles.slice(0, maxFiles).map((f) => f.filename);
   if (allFiles.length > maxFiles) {
     truncated = true;
   }
 
   return { diff, files, truncated };
+}
+
+/**
+ * Reconstruct a unified diff from per-file patches returned by listFiles.
+ * GitHub's listFiles endpoint returns individual file patches even when
+ * the full diff exceeds the 20k line limit.
+ */
+function reconstructDiffFromPatches(
+  files: Array<{ filename: string; patch?: string; status: string; additions: number; deletions: number }>,
+): string {
+  const parts: string[] = [];
+  for (const file of files) {
+    if (file.patch) {
+      parts.push(`diff --git a/${file.filename} b/${file.filename}`);
+      parts.push(file.patch);
+    } else {
+      // Binary files or files too large for individual patches
+      parts.push(`diff --git a/${file.filename} b/${file.filename}`);
+      parts.push(`(${file.status}: +${file.additions} -${file.deletions}, patch not available)`);
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Fetch just the file list for a PR (no diff content).
+ * Lightweight alternative to fetchPRDiff when the agent will explore the code itself.
+ */
+export async function fetchPRFileList(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  opts?: { maxFiles?: number },
+): Promise<string[]> {
+  const maxFiles = opts?.maxFiles ?? 150;
+  const files: string[] = [];
+  let page = 1;
+
+  while (files.length < maxFiles) {
+    const { data: fileList } = await octokit.rest.pulls.listFiles({
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+      page,
+    });
+    if (fileList.length === 0) break;
+    files.push(...fileList.map((f) => f.filename));
+    if (fileList.length < 100) break;
+    page++;
+  }
+
+  return files.slice(0, maxFiles);
 }
 
 /**

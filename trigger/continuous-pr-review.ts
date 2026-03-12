@@ -115,9 +115,9 @@ export const continuousPrReviewTask = task({
         });
       }
 
-      // ── 5. Fetch diff + guidelines ──
+      // ── 5. Gather metadata (agent explores the code itself) ──
       const octokit = await getReviewOctokit(installationId);
-      const { fetchPRDiff, fetchCommitRangeDiff } = await import("@/lib/reviews/diff");
+      const { fetchPRFileList } = await import("@/lib/reviews/diff");
       const { loadRepoGuidelines } = await import("@/lib/reviews/guidelines");
       const { classifyFiles, filterIgnoredPaths } = await import("@/lib/reviews/classification");
 
@@ -156,47 +156,29 @@ export const continuousPrReviewTask = task({
 
       const reviewSequence = (sessionMetadata.reviewCount ?? 0) + 1;
 
-      // Fetch diff
-      let diffResult;
-      if (reviewScope === "incremental" && fromSha) {
-        diffResult = await fetchCommitRangeDiff(
+      // Fetch lightweight file list + guidelines (no diff content — agent explores itself)
+      const [allFiles, guidelines] = await Promise.all([
+        fetchPRFileList(octokit, event.owner, event.repo, event.prNumber, {
+          maxFiles: config.maxPromptFiles,
+        }),
+        loadRepoGuidelines(
           octokit,
           event.owner,
           event.repo,
-          fromSha,
           toSha,
-          { maxBytes: config.maxPromptDiffBytes },
-        );
-      } else {
-        diffResult = await fetchPRDiff(
-          octokit,
-          event.owner,
-          event.repo,
-          event.prNumber,
-          { maxBytes: config.maxPromptDiffBytes, maxFiles: config.maxPromptFiles },
-        );
-      }
+          [], // pass empty — agent will discover relevant files
+          { maxBytes: config.maxGuidelinesBytes },
+        ),
+      ]);
 
-      // Filter ignored paths
-      const filteredFiles = filterIgnoredPaths(diffResult.files, config.ignorePaths ?? []);
-
-      // Classify files + load guidelines
+      // Filter ignored paths + classify
+      const filteredFiles = filterIgnoredPaths(allFiles, config.ignorePaths ?? []);
       const fileClassifications = classifyFiles(filteredFiles, config);
-      const guidelines = await loadRepoGuidelines(
-        octokit,
-        event.owner,
-        event.repo,
-        toSha,
-        filteredFiles,
-        { maxBytes: config.maxGuidelinesBytes },
-      );
 
       // ── 6. Build prompt ──
       const { buildReviewPrompt } = await import("@/lib/reviews/prompt-builder");
       const reviewPrompt = buildReviewPrompt({
         event,
-        diff: diffResult.diff,
-        diffTruncated: diffResult.truncated,
         files: filteredFiles,
         fileClassifications,
         guidelines,

@@ -8,8 +8,6 @@ import type { FileClassification } from "./classification";
 
 export interface BuildReviewPromptInput {
   event: NormalizedPrReviewEvent;
-  diff: string;
-  diffTruncated: boolean;
   files: string[];
   fileClassifications: Map<string, FileClassification>;
   guidelines: RepoGuidelines;
@@ -23,6 +21,10 @@ export interface BuildReviewPromptInput {
 
 /**
  * Build the review prompt that gets sent to the agent.
+ *
+ * The agent explores the code itself using git commands in the sandbox —
+ * no diff is stuffed into the prompt. The prompt provides metadata,
+ * instructions, and the output contract.
  */
 export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   const sections: string[] = [];
@@ -55,8 +57,8 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   // 7. Changed files with classification
   sections.push(formatFileList(input.files, input.fileClassifications));
 
-  // 8. Diff
-  sections.push(formatDiff(input.diff, input.diffTruncated));
+  // 8. Exploration instructions (replaces inline diff)
+  sections.push(formatExplorationInstructions(input));
 
   // 9. Previous state (for incremental)
   if (input.previousState && input.reviewScope !== "reset") {
@@ -191,14 +193,45 @@ function formatFileList(
   return `## Changed Files (${files.length})\n\n${lines.join("\n")}`;
 }
 
-function formatDiff(diff: string, truncated: boolean): string {
-  let header = "## Diff";
-  if (truncated) {
-    header +=
-      "\n\n> **Note:** The diff was truncated to fit the prompt budget. Some files may be omitted. Review the full PR for complete context.";
+function formatExplorationInstructions(input: BuildReviewPromptInput): string {
+  const parts: string[] = [`## How to Explore the Changes`];
+
+  parts.push(
+    `You have full access to the repository in this sandbox. Use git commands and file reads to explore the changes yourself. Do NOT ask for permission — your tools are pre-approved.`,
+  );
+
+  parts.push(`### Useful commands`);
+
+  if (input.reviewScope === "incremental" && input.fromSha) {
+    parts.push(
+      `- \`git diff ${input.fromSha} ${input.toSha}\` — show the incremental diff since last review`,
+      `- \`git diff ${input.fromSha} ${input.toSha} -- <file>\` — diff for a specific file`,
+      `- \`git log ${input.fromSha}..${input.toSha} --oneline\` — commits in this increment`,
+    );
+  } else {
+    parts.push(
+      `- \`git diff origin/${input.event.baseRef}...${input.toSha}\` — show the full PR diff`,
+      `- \`git diff origin/${input.event.baseRef}...${input.toSha} -- <file>\` — diff for a specific file`,
+      `- \`git log origin/${input.event.baseRef}..${input.toSha} --oneline\` — all PR commits`,
+    );
   }
 
-  return `${header}\n\n\`\`\`diff\n${diff}\n\`\`\``;
+  parts.push(
+    `- \`git show <sha>\` — view a specific commit`,
+    `- \`git diff origin/${input.event.baseRef}...${input.toSha} --stat\` — summary of changes per file`,
+    `- Read any file directly to understand surrounding context`,
+  );
+
+  parts.push(
+    `\n### Review strategy`,
+    `1. Start with \`git diff --stat\` to understand the scope`,
+    `2. Read the full diff or review file-by-file for focused analysis`,
+    `3. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,
+    `4. Pay special attention to production-classified files`,
+    `5. Check for missing tests, error handling gaps, and security issues`,
+  );
+
+  return parts.join("\n");
 }
 
 function formatPreviousState(state: ReviewState): string {

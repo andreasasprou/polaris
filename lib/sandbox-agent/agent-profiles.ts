@@ -28,7 +28,7 @@ type AgentProfile = {
 
 // ── Per-agent profiles ──
 
-const READ_ONLY_TOOLS = ["Read", "Glob", "Grep"] as const;
+const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"] as const;
 
 const PROFILES: Record<AgentType, AgentProfile> = {
   claude: {
