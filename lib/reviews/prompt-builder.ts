@@ -194,41 +194,54 @@ function formatFileList(
 }
 
 function formatExplorationInstructions(input: BuildReviewPromptInput): string {
+  const baseSha = input.event.baseSha;
+  const headSha = input.toSha;
   const parts: string[] = [`## How to Explore the Changes`];
 
   parts.push(
     `You have full access to the repository in this sandbox. Use git commands and file reads to explore the changes yourself. Do NOT ask for permission — your tools are pre-approved.`,
   );
 
+  // CRITICAL: Remote refs (origin/*) are NOT available. Use commit SHAs directly.
+  parts.push(`### Setup — run this first`);
+  parts.push(
+    `\`\`\`bash`,
+    `# Checkout the PR head so files on disk reflect the PR state`,
+    `git checkout ${headSha}`,
+    `\`\`\``,
+  );
+
   parts.push(`### Useful commands`);
+  parts.push(`**Important:** Always use commit SHAs, not branch names or \`origin/...\` refs (remote refs are not available).`);
 
   if (input.reviewScope === "incremental" && input.fromSha) {
     parts.push(
-      `- \`git diff ${input.fromSha} ${input.toSha}\` — show the incremental diff since last review`,
-      `- \`git diff ${input.fromSha} ${input.toSha} -- <file>\` — diff for a specific file`,
-      `- \`git log ${input.fromSha}..${input.toSha} --oneline\` — commits in this increment`,
+      `- \`git diff ${input.fromSha} ${headSha}\` — show the incremental diff since last review`,
+      `- \`git diff ${input.fromSha} ${headSha} -- <file>\` — diff for a specific file`,
+      `- \`git log ${input.fromSha}..${headSha} --oneline\` — commits in this increment`,
     );
   } else {
     parts.push(
-      `- \`git diff origin/${input.event.baseRef}...${input.toSha}\` — show the full PR diff`,
-      `- \`git diff origin/${input.event.baseRef}...${input.toSha} -- <file>\` — diff for a specific file`,
-      `- \`git log origin/${input.event.baseRef}..${input.toSha} --oneline\` — all PR commits`,
+      `- \`git diff ${baseSha} ${headSha}\` — show the full PR diff`,
+      `- \`git diff ${baseSha} ${headSha} -- <file>\` — diff for a specific file`,
+      `- \`git log ${baseSha}..${headSha} --oneline\` — all PR commits`,
     );
   }
 
   parts.push(
     `- \`git show <sha>\` — view a specific commit`,
-    `- \`git diff origin/${input.event.baseRef}...${input.toSha} --stat\` — summary of changes per file`,
+    `- \`git diff ${baseSha} ${headSha} --stat\` — summary of changes per file`,
     `- Read any file directly to understand surrounding context`,
   );
 
   parts.push(
     `\n### Review strategy`,
-    `1. Start with \`git diff --stat\` to understand the scope`,
-    `2. Read the full diff or review file-by-file for focused analysis`,
-    `3. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,
-    `4. Pay special attention to production-classified files`,
-    `5. Check for missing tests, error handling gaps, and security issues`,
+    `1. Run the setup command above to checkout the PR head`,
+    `2. Start with \`git diff ${baseSha} ${headSha} --stat\` to understand the scope`,
+    `3. Read the full diff or review file-by-file for focused analysis`,
+    `4. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,
+    `5. Pay special attention to production-classified files`,
+    `6. Check for missing tests, error handling gaps, and security issues`,
   );
 
   return parts.join("\n");
