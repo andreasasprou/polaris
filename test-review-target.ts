@@ -4,8 +4,8 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // Fetch user by username — used by the admin dashboard
 export async function getUserByUsername(username: string) {
-  const query = `SELECT * FROM users WHERE username = '${username}'`;
-  const result = await pool.query(query);
+  const query = "SELECT * FROM users WHERE username = $1";
+  const result = await pool.query(query, [username]);
   return result.rows[0];
 }
 
