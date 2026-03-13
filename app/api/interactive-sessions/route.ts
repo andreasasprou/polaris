@@ -40,6 +40,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (prompt.length > 100_000) {
+    return NextResponse.json(
+      { error: "Prompt exceeds maximum length of 100,000 characters" },
+      { status: 400 },
+    );
+  }
+
   if (!repositoryId) {
     return NextResponse.json(
       { error: "repository is required" },

@@ -1,7 +1,7 @@
 import { findGithubInstallationByInstallationId } from "@/lib/integrations/queries";
 import { findEnabledAutomationsByTrigger } from "@/lib/automations/queries";
 import { createAutomationRun } from "@/lib/automations/actions";
-import { isDuplicate, recordDelivery } from "./dedupe";
+import { claimDelivery } from "./dedupe";
 import { matchesGitHubTrigger } from "./matchers";
 import type { GitHubTriggerConfig } from "@/lib/automations/types";
 import { tasks } from "@trigger.dev/sdk/v3";
@@ -20,12 +20,6 @@ export async function routeGitHubEvent(input: {
 }): Promise<number> {
   const dedupeKey = `github:${input.deliveryId}`;
 
-  // Check for duplicate delivery
-  if (await isDuplicate(dedupeKey)) {
-    console.log("[router] Duplicate delivery, skipping:", dedupeKey);
-    return 0;
-  }
-
   // Look up which org this installation belongs to
   const installation = await findGithubInstallationByInstallationId(input.installationId);
   if (!installation) {
@@ -34,6 +28,19 @@ export async function routeGitHubEvent(input: {
   }
 
   const orgId = installation.organizationId;
+
+  // Atomic dedupe: claim the delivery or bail if already processed
+  const claimed = await claimDelivery({
+    source: "github",
+    externalEventId: input.deliveryId,
+    sourceDeliveryId: input.deliveryId,
+    dedupeKey,
+    organizationId: orgId,
+  });
+  if (!claimed) {
+    console.log("[router] Duplicate delivery, skipping:", dedupeKey);
+    return 0;
+  }
 
   // Find matching enabled automations
   const candidates = await findEnabledAutomationsByTrigger(orgId, "github");
@@ -87,15 +94,6 @@ export async function routeGitHubEvent(input: {
       triggered++;
     }
   }
-
-  // Record the delivery for deduplication
-  await recordDelivery({
-    source: "github",
-    externalEventId: input.deliveryId,
-    sourceDeliveryId: input.deliveryId,
-    dedupeKey,
-    organizationId: orgId,
-  });
 
   return triggered;
 }

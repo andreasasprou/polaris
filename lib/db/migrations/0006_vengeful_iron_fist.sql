@@ -1,0 +1,4 @@
+ALTER TABLE "automation_runs" ADD CONSTRAINT "automation_runs_automation_session_id_automation_sessions_id_fk" FOREIGN KEY ("automation_session_id") REFERENCES "public"."automation_sessions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_automation_runs_org" ON "automation_runs" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "idx_automation_runs_automation_created" ON "automation_runs" USING btree ("automation_id","created_at");--> statement-breakpoint
+CREATE INDEX "idx_automations_org" ON "automations" USING btree ("organization_id");

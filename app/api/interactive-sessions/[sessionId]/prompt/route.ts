@@ -25,6 +25,13 @@ export async function POST(
     );
   }
 
+  if (prompt.length > 100_000) {
+    return NextResponse.json(
+      { error: "Prompt exceeds maximum length of 100,000 characters" },
+      { status: 400 },
+    );
+  }
+
   const result = await dispatchPromptToSession({
     sessionId,
     orgId,

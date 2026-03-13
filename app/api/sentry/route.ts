@@ -1,10 +1,49 @@
+import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { codingTask } from "@/trigger/coding-task";
 import type { CodingTaskPayload, AgentType } from "@/lib/orchestration/types";
 import { mapProjectToRepo } from "@/lib/integrations/sentry";
 
+function verifySentrySignature(
+  body: string,
+  signature: string | null,
+  secret: string,
+): boolean {
+  if (!signature) return false;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected),
+      Buffer.from(signature),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
-  const event = await req.json();
+  const secret = process.env.SENTRY_WEBHOOK_SECRET;
+  if (!secret) {
+    return NextResponse.json(
+      { error: "Sentry webhook not configured" },
+      { status: 500 },
+    );
+  }
+
+  const rawBody = await req.text();
+  const signature = req.headers.get("sentry-hook-signature");
+
+  if (!verifySentrySignature(rawBody, signature, secret)) {
+    return NextResponse.json(
+      { error: "Invalid signature" },
+      { status: 401 },
+    );
+  }
+
+  const event = JSON.parse(rawBody);
 
   const repo = mapProjectToRepo(
     event.data?.project_slug ?? event.project_slug,

@@ -1,35 +1,25 @@
-import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { eventDeliveries } from "./schema";
 
 /**
- * Check if an event has already been processed.
- * Returns true if this is a duplicate.
+ * Atomically claim an event delivery. Returns true if claimed (not a duplicate),
+ * false if the dedupeKey already exists. This replaces the old isDuplicate() +
+ * recordDelivery() pattern which had a TOCTOU race.
  */
-export async function isDuplicate(dedupeKey: string): Promise<boolean> {
-  const [existing] = await db
-    .select({ id: eventDeliveries.id })
-    .from(eventDeliveries)
-    .where(eq(eventDeliveries.dedupeKey, dedupeKey))
-    .limit(1);
-  return !!existing;
-}
-
-/**
- * Record that an event has been delivered.
- */
-export async function recordDelivery(input: {
+export async function claimDelivery(input: {
   source: string;
   externalEventId?: string;
   sourceDeliveryId?: string;
   dedupeKey: string;
   organizationId: string;
-}) {
-  await db
+}): Promise<boolean> {
+  const result = await db
     .insert(eventDeliveries)
     .values({
       ...input,
       processedAt: new Date(),
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: eventDeliveries.id });
+  return result.length > 0;
 }

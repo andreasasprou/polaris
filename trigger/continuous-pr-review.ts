@@ -1,4 +1,4 @@
-import { task, logger, runs } from "@trigger.dev/sdk/v3";
+import { task, tasks, logger, runs } from "@trigger.dev/sdk/v3";
 import type { NormalizedPrReviewEvent } from "@/lib/reviews/types";
 import { resolveAgentConfig } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
@@ -349,51 +349,64 @@ export const continuousPrReviewTask = task({
         });
       }
 
-      // ── 11. Post review comment ──
-      const commentId = await timer.time("post_comment", async () => {
-        if (parsed) {
-          const { renderReviewComment } = await import("@/lib/reviews/comment-renderer");
-          const commentBody = renderReviewComment(parsed, reviewSequence);
+      // ── 11. Update review state FIRST (survives comment post failure) ──
+      const newMetadata: import("@/lib/reviews/types").AutomationSessionMetadata = {
+        ...sessionMetadata,
+        headSha: toSha,
+        reviewCount: reviewSequence,
+        lastCompletedRunId: automationRunId,
+        ...(parsed
+          ? {
+              lastReviewedSha: toSha,
+              reviewState: parsed.reviewState,
+            }
+          : {}),
+      };
+
+      await timer.time("update_session", async () => {
+        await updateAutomationSession(automationSessionId, {
+          metadata: newMetadata,
+        });
+      });
+
+      // ── 12. Post review comment (non-fatal — state already saved) ──
+      let commentId: string | undefined;
+      try {
+        commentId = await timer.time("post_comment", async () => {
+          if (parsed) {
+            const { renderReviewComment } = await import("@/lib/reviews/comment-renderer");
+            const commentBody = renderReviewComment(parsed, reviewSequence);
+            const result = await postReviewComment({
+              installationId,
+              owner: event.owner,
+              repo: event.repo,
+              prNumber: event.prNumber,
+              body: commentBody,
+            });
+            return result.commentId;
+          }
+          // Unparseable output — post raw with warning
           const result = await postReviewComment({
             installationId,
             owner: event.owner,
             repo: event.repo,
             prNumber: event.prNumber,
-            body: commentBody,
+            body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>⚠️ Could not parse structured output. Raw review shown above.</sub>`,
           });
           return result.commentId;
-        }
-        // Unparseable output — post raw with warning
-        const result = await postReviewComment({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          prNumber: event.prNumber,
-          body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>⚠️ Could not parse structured output. Raw review shown above.</sub>`,
         });
-        return result.commentId;
-      });
+      } catch (err) {
+        logger.error("Failed to post review comment — state already saved", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
 
-      // ── 12. Update state ──
-      await timer.time("update_session", async () => {
-        const newMetadata: import("@/lib/reviews/types").AutomationSessionMetadata = {
-          ...sessionMetadata,
-          headSha: toSha,
-          reviewCount: reviewSequence,
-          lastCommentId: commentId ?? sessionMetadata.lastCommentId,
-          lastCompletedRunId: automationRunId,
-          ...(parsed
-            ? {
-                lastReviewedSha: toSha,
-                reviewState: parsed.reviewState,
-              }
-            : {}),
-        };
-
+      // Update comment ID if we got one
+      if (commentId) {
         await updateAutomationSession(automationSessionId, {
-          metadata: newMetadata,
+          metadata: { ...newMetadata, lastCommentId: commentId },
         });
-      });
+      }
 
       // ── 13. Complete GitHub check ──
       await timer.time("complete_check", async () => {
@@ -448,18 +461,54 @@ export const continuousPrReviewTask = task({
         commentId,
       };
     } finally {
-      // ── 15. Release lock ──
+      // ── 15. Clear pending request BEFORE releasing lock (prevents race) ──
+      const pending = await clearPendingReviewRequest(automationSessionId);
+
+      // ── 16. Release lock ──
       await releaseAutomationSessionLock({
         automationSessionId,
         runId: automationRunId,
       });
 
-      // ── 16. Check for pending review request ──
-      const pending = await clearPendingReviewRequest(automationSessionId);
+      // ── 17. Dispatch queued review (after lock release so it can acquire) ──
       if (pending) {
-        logger.info("Processing queued review request", {
+        logger.info("Dispatching queued review request", {
           headSha: pending.headSha,
         });
+        try {
+          const { createAutomationRun } = await import("@/lib/automations/actions");
+          const run = await createAutomationRun({
+            automationId,
+            organizationId: orgId,
+            source: "github",
+            externalEventId: pending.deliveryId,
+            automationSessionId,
+            interactiveSessionId: automationSession.interactiveSessionId,
+          });
+          await tasks.trigger("continuous-pr-review", {
+            orgId,
+            automationId,
+            automationSessionId,
+            automationRunId: run.id,
+            installationId,
+            deliveryId: pending.deliveryId ?? payload.deliveryId,
+            normalizedEvent: {
+              ...event,
+              headSha: pending.headSha,
+              action: pending.reason,
+              manualCommand: pending.mode !== "incremental"
+                ? { mode: pending.mode, sinceSha: pending.sinceSha }
+                : undefined,
+              commentId: pending.commentId,
+            },
+          } satisfies ContinuousPrReviewPayload, {
+            idempotencyKey: `run:${run.id}`,
+          });
+        } catch (err) {
+          logger.error("Failed to dispatch queued review", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     }
   },

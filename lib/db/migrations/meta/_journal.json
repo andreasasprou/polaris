@@ -43,6 +43,13 @@
       "when": 1773322808741,
       "tag": "0005_yellow_serpent_society",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1773386353163,
+      "tag": "0006_vengeful_iron_fist",
+      "breakpoints": true
     }
   ]
 }
