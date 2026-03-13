@@ -1,37 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { headers } from "next/headers";
+import { APIError } from "better-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { githubInstallations } from "@/lib/integrations/schema";
-
-function verifyState(state: string): { orgId: string | null; userId: string; nonce: string } | null {
-  try {
-    const parts = state.split(".");
-    if (parts.length !== 2) return null;
-
-    const [stateData, hmac] = parts;
-    const expectedHmac = crypto
-      .createHmac("sha256", process.env.BETTER_AUTH_SECRET!)
-      .update(stateData)
-      .digest("base64url");
-
-    if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expectedHmac))) {
-      return null;
-    }
-
-    const payload = JSON.parse(Buffer.from(stateData, "base64url").toString());
-
-    // Check expiry
-    if (payload.exp < Math.floor(Date.now() / 1000)) {
-      return null;
-    }
-
-    return payload;
-  } catch {
-    return null;
-  }
-}
+import { verifyState } from "@/lib/integrations/github-state";
 
 function getPrivateKey(): string {
   if (process.env.GITHUB_APP_PRIVATE_KEY_B64) {
@@ -117,10 +91,7 @@ export async function GET(req: NextRequest) {
         break;
       } catch (err: unknown) {
         const isSlugConflict =
-          err instanceof Error &&
-          "body" in err &&
-          typeof (err as Record<string, unknown>).body === "object" &&
-          ((err as Record<string, unknown>).body as Record<string, unknown>)?.code === "ORGANIZATION_ALREADY_EXISTS";
+          err instanceof APIError && err.body?.code === "ORGANIZATION_ALREADY_EXISTS";
         if (isSlugConflict && attempt < 2) {
           slug = `${toSlug(orgName)}-${crypto.randomBytes(3).toString("hex")}`;
           continue;
