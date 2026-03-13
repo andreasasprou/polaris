@@ -14,7 +14,6 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
     "@sandbox-agent/persist-postgres": "0.3.x",
-    "@slack/web-api": "^7.14.1",
     "@trigger.dev/react-hooks": "^4.4.2",
     "@trigger.dev/sdk": "^4.4.2",
     "@vercel/sandbox": "^1.8.0",

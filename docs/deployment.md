@@ -56,19 +56,6 @@ Polaris runs coding agents in Vercel Sandbox VMs. You need:
 2. Your **Team ID** (`team_xxx` — from Vercel dashboard URL)
 3. A **Project ID** (`prj_xxx` — create a project, any name, it's just for sandbox allocation)
 
-### Slack (optional)
-
-1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
-2. Add slash commands `/agent` and `/agent-followup` pointing to `https://<your-domain>/api/slack/commands`
-3. Bot token scopes: `chat:write`, `commands`
-4. Save **Bot Token** and **Signing Secret**
-
-### Sentry (optional)
-
-1. Create a webhook integration in your Sentry project
-2. Point to `https://<your-domain>/api/sentry`
-3. Save the **Webhook Secret**
-
 ## 2. Environment Variables
 
 Copy `.env.example` to `.env.local` and fill in all values:
@@ -91,13 +78,11 @@ cp .env.example .env.local
 | `VERCEL_TOKEN` | Yes | Vercel account settings |
 | `VERCEL_TEAM_ID` | Yes | Vercel dashboard |
 | `VERCEL_PROJECT_ID` | Yes | Vercel project settings |
-| `ANTHROPIC_API_KEY` | Yes* | console.anthropic.com |
-| `APP_BASE_URL` | Prod | Your deployment URL |
-| `SLACK_BOT_TOKEN` | No | Slack app settings |
-| `SLACK_SIGNING_SECRET` | No | Slack app settings |
-| `SENTRY_WEBHOOK_SECRET` | No | Sentry webhook settings |
+| `APP_BASE_URL` | Prod | Your deployment URL (e.g. `https://plrs.sh`) |
 
-\* At least one agent credential required. `ANTHROPIC_API_KEY` for Claude, `OPENAI_API_KEY` for Codex.
+> **Agent API keys** (Anthropic, OpenAI) are configured per-organization in **Settings → Secrets**, not as platform env vars. Each org manages its own credentials.
+
+> **Slack and Sentry integrations** are planned for a future release with full multi-tenant support (per-org OAuth flows).
 
 ## 3. Install & Build
 
@@ -159,34 +144,33 @@ Set `PORT` to customize.
 | `/` | Dashboard |
 | `/login` | User authentication |
 | `/api/webhooks/github` | GitHub webhook receiver |
-| `/api/slack/commands` | Slack slash commands |
-| `/api/sentry` | Sentry webhook receiver |
 | `/api/auth/*` | Better Auth endpoints |
 
 ## 7. Post-Deploy Verification
 
 1. **Login**: Visit `https://<your-domain>/login` — sign in with GitHub
 2. **Create org**: First user is prompted to create an organization
-3. **Install GitHub App**: Go to Settings → Integrations → Install GitHub App
-4. **Verify webhooks**: Push to a connected repo — check the Runs page for activity
-5. **Check Trigger.dev**: Open the Trigger.dev dashboard to see task executions
+3. **Add agent secret**: Go to Settings → Secrets → add your Anthropic or OpenAI API key
+4. **Install GitHub App**: Go to Settings → Integrations → Install GitHub App
+5. **Verify webhooks**: Push to a connected repo — check the Runs page for activity
+6. **Check Trigger.dev**: Open the Trigger.dev dashboard to see task executions
 
 ## Architecture Overview
 
 ```
-GitHub/Slack/Sentry webhooks
-        │
-        ▼
-   Next.js API routes (webhook verification + routing)
-        │
-        ▼
-   Trigger.dev tasks (orchestration + lifecycle)
-        │
-        ▼
-   Vercel Sandbox VMs (agent execution)
-        │
-        ▼
-   Git push → PR creation
+GitHub webhooks
+      │
+      ▼
+ Next.js API routes (webhook verification + routing)
+      │
+      ▼
+ Trigger.dev tasks (orchestration + lifecycle)
+      │
+      ▼
+ Vercel Sandbox VMs (agent execution)
+      │
+      ▼
+ Git push → PR creation
 ```
 
 - **PostgreSQL**: All state — sessions, runs, agent events, secrets (AES-256-GCM encrypted)

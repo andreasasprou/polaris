@@ -344,6 +344,7 @@ export async function mintRunAccessToken(runId: string): Promise<string> {
 
 /** Resolve agent API key + repository details for a session. */
 export async function resolveSessionCredentials(session: {
+  organizationId: string;
   agentType: string;
   agentSecretId: string | null;
   repositoryId: string | null;
@@ -351,21 +352,15 @@ export async function resolveSessionCredentials(session: {
   let agentApiKey: string | undefined;
 
   if (session.agentSecretId) {
-    const { getDecryptedSecret } = await import("@/lib/secrets/queries");
+    const { getDecryptedSecretForOrg } = await import("@/lib/secrets/queries");
     agentApiKey =
-      (await getDecryptedSecret(session.agentSecretId)) ?? undefined;
+      (await getDecryptedSecretForOrg(session.agentSecretId, session.organizationId)) ?? undefined;
   }
 
   if (!agentApiKey) {
-    agentApiKey =
-      session.agentType === "codex"
-        ? process.env.OPENAI_API_KEY
-        : (process.env.ANTHROPIC_API_KEY ??
-          process.env.CLAUDE_CODE_OAUTH_TOKEN);
-  }
-
-  if (!agentApiKey) {
-    throw new Error("No API key available to resume session");
+    throw new Error(
+      "No agent API key configured. Add one in Settings → Secrets.",
+    );
   }
 
   let repositoryOwner: string | undefined;

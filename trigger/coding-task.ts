@@ -1,13 +1,10 @@
-import { task, wait, streams, logger, metadata } from "@trigger.dev/sdk/v3";
+import { task, streams, logger, metadata } from "@trigger.dev/sdk/v3";
 import type {
-  CodingTaskPayload,
-  LegacyCodingTaskPayload,
   AutomationCodingTaskPayload,
   AgentType,
 } from "@/lib/orchestration/types";
 import { patchTaskStatus, getTaskStatus } from "@/lib/orchestration/status";
-import { buildAgentPrompt } from "@/lib/orchestration/prompts";
-import { getInstallationToken, mintInstallationToken } from "@/lib/integrations/github";
+import { mintInstallationToken } from "@/lib/integrations/github";
 import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
 import { GitOperations } from "@/lib/sandbox/GitOperations";
@@ -21,46 +18,7 @@ import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import { createPersistDriver } from "@/lib/sandbox-agent/persist";
 import { resolveAgentConfig, applyFilesystemConfig } from "@/lib/sandbox-agent/agent-profiles";
 import { resolveSnapshotSource } from "@/lib/sandbox/snapshots/queries";
-import { ensureSlackThread } from "./ensure-slack-thread";
-import { notifySlack } from "./notify-slack";
 import { createPr } from "./create-pr";
-
-function slackApprovalBlocks(runId: string, tokenId: string) {
-  const mk = (
-    text: string,
-    style: "primary" | "danger" | undefined,
-    accept: boolean,
-  ) => ({
-    type: "button" as const,
-    text: { type: "plain_text" as const, text },
-    style,
-    action_id: accept ? "approve_agent_action" : "reject_agent_action",
-    value: JSON.stringify({ runId, tokenId, accept }),
-  });
-
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: "Agent task is awaiting approval before execution.",
-      },
-    },
-    {
-      type: "actions",
-      elements: [
-        mk("Approve", "primary", true),
-        mk("Reject", "danger", false),
-      ],
-    },
-  ];
-}
-
-function isAutomationPayload(
-  p: CodingTaskPayload,
-): p is AutomationCodingTaskPayload {
-  return p.source === "automation";
-}
 
 /**
  * Resolve everything needed to run an automation task.
@@ -129,97 +87,37 @@ export const codingTask = task({
     }
   },
 
-  run: async (payload: CodingTaskPayload, { ctx }) => {
-    // ── Resolve context depending on payload type ──
-    let owner: string;
-    let repo: string;
-    let baseBranch: string;
-    let title: string;
-    let prompt: string;
-    let agentType: AgentType;
-    let agentMode: string | undefined;
-    let model: string | undefined;
-    let modelParams: Record<string, unknown> = {};
-    let agentApiKey: string | undefined;
-    let gitToken: string;
-    let maxDurationMs = 600_000;
-    let allowPush = true;
-    let allowPrCreate = true;
-    let automationRunId: string | undefined;
+  run: async (payload: AutomationCodingTaskPayload) => {
+    const { automationRunId } = payload;
 
-    // Slack context (only for legacy payloads)
-    let slackChannelId: string | undefined;
-    let slackThreadTs: string | undefined;
+    // Mark the run as running
+    const { updateAutomationRun } = await import("@/lib/automations/actions");
+    await updateAutomationRun(automationRunId, {
+      status: "running",
+      startedAt: new Date(),
+    });
 
-    // Sentry context (only for legacy payloads)
-    let legacyPayload: LegacyCodingTaskPayload | undefined;
+    const ctx = await resolveAutomationContext(payload);
+    const { owner, repo, baseBranch, title, prompt, agentType, allowPush, allowPrCreate } = ctx;
+    const agentMode = ctx.agentMode ?? undefined;
+    const model = ctx.model ?? undefined;
+    const modelParams = ctx.modelParams ?? {};
+    const agentApiKey = ctx.agentApiKey;
+    const maxDurationMs = ctx.maxDurationSeconds * 1000;
 
-    if (isAutomationPayload(payload)) {
-      // ── v3 Automation payload ──
-      automationRunId = payload.automationRunId;
-
-      // Mark the run as running
-      const { updateAutomationRun } = await import(
-        "@/lib/automations/actions"
-      );
-      await updateAutomationRun(automationRunId, {
-        status: "running",
-        startedAt: new Date(),
-      });
-
-      const ctx = await resolveAutomationContext(payload);
-      owner = ctx.owner;
-      repo = ctx.repo;
-      baseBranch = ctx.baseBranch;
-      title = ctx.title;
-      prompt = ctx.prompt;
-      agentType = ctx.agentType;
-      agentMode = ctx.agentMode ?? undefined;
-      model = ctx.model ?? undefined;
-      modelParams = ctx.modelParams ?? {};
-      agentApiKey = ctx.agentApiKey;
-      allowPush = ctx.allowPush;
-      allowPrCreate = ctx.allowPrCreate;
-      maxDurationMs = ctx.maxDurationSeconds * 1000;
-
-      // Mint a fresh GitHub token using the stored installation ID
-      logger.info("Minting installation token", {
-        installationId: ctx.githubInstallationId,
-        repo: `${owner}/${repo}`,
-      });
-      gitToken = await mintInstallationToken(
-        ctx.githubInstallationId,
-        [repo],
-        { contents: "write", pull_requests: "write" },
-      );
-    } else {
-      // ── Legacy v2 payload ──
-      legacyPayload = payload;
-      owner = payload.owner;
-      repo = payload.repo;
-      baseBranch = payload.baseBranch;
-      title = payload.title;
-      prompt = payload.prompt;
-      agentType =
-        payload.agentType ??
-        (process.env.DEFAULT_AGENT as AgentType) ??
-        "claude";
-      slackChannelId = payload.slack?.channelId;
-      slackThreadTs = payload.slack?.threadTs;
-
-      // Use env-based API key for legacy payloads
-      agentApiKey =
-        agentType === "claude"
-          ? (process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_CODE_OAUTH_TOKEN!)
-          : (process.env.OPENAI_API_KEY ?? process.env.CODEX_AUTH_JSON_B64!);
-
-      logger.info("Minting GitHub installation token", { owner, repo });
-      gitToken = await getInstallationToken(owner, repo);
-    }
+    // Mint a fresh GitHub token using the stored installation ID
+    logger.info("Minting installation token", {
+      installationId: ctx.githubInstallationId,
+      repo: `${owner}/${repo}`,
+    });
+    const gitToken = await mintInstallationToken(
+      ctx.githubInstallationId,
+      [repo],
+      { contents: "write", pull_requests: "write" },
+    );
 
     logger.info("Starting coding task", {
       repo: `${owner}/${repo}`,
-      source: payload.source,
       agentType,
       automationRunId,
     });
@@ -233,64 +131,11 @@ export const codingTask = task({
       agentType,
     });
 
-    // ── Ensure Slack thread (legacy only) ──
-    if (slackChannelId) {
-      logger.info("Ensuring Slack thread", { channelId: slackChannelId });
-      const ensured = await ensureSlackThread
-        .triggerAndWait({
-          channelId: slackChannelId,
-          existingThreadTs: slackThreadTs,
-          title,
-          repo: `${owner}/${repo}`,
-        })
-        .unwrap();
-
-      slackThreadTs = ensured.threadTs;
-      patchTaskStatus({ threadTs: slackThreadTs });
-    }
-
     patchTaskStatus({
       stage: "starting",
       progress: 0.05,
       summary: title,
     });
-
-    // ── Optional pre-execution approval (legacy sentry) ──
-    if (
-      legacyPayload?.source === "sentry" &&
-      process.env.REQUIRE_SENTRY_APPROVAL === "true"
-    ) {
-      logger.info("Awaiting Sentry approval");
-      patchTaskStatus({ stage: "awaiting_approval", progress: 0.08 });
-
-      const token = await wait.createToken({
-        timeout: "30m",
-        tags: [`run:${ctx.run.id}`],
-      });
-
-      if (slackChannelId && slackThreadTs) {
-        await notifySlack.triggerAndWait({
-          channelId: slackChannelId,
-          threadTs: slackThreadTs,
-          text: "Sentry-triggered task awaiting approval before execution.",
-          blocks: slackApprovalBlocks(ctx.run.id, token.id),
-        });
-      }
-
-      const decision = await wait.forToken<{
-        accept: boolean;
-        reason?: string;
-      }>(token);
-
-      if (!decision.ok) {
-        throw new Error("Approval timed out");
-      }
-
-      if (!decision.output.accept) {
-        patchTaskStatus({ stage: "cancelled", progress: 1 });
-        return { ok: false, reason: "Rejected in Slack" };
-      }
-    }
 
     // ── Create sandbox ──
     const repoUrl = `https://github.com/${owner}/${repo}.git`;
@@ -321,18 +166,9 @@ export const codingTask = task({
       // ── Setup git branch ──
       logger.info("Configuring git");
       await git.configure({ repoUrl });
-      const branchName =
-        (legacyPayload?.branchName) ?? `agent/${Date.now()}`;
-
-      if (legacyPayload?.mode === "continue" && legacyPayload.branchName) {
-        logger.info("Checking out existing branch", {
-          branch: legacyPayload.branchName,
-        });
-        await git.checkoutBranch(legacyPayload.branchName);
-      } else {
-        logger.info("Creating branch", { branch: branchName, base: baseBranch });
-        await git.createBranch(branchName, baseBranch);
-      }
+      const branchName = `agent/${Date.now()}`;
+      logger.info("Creating branch", { branch: branchName, base: baseBranch });
+      await git.createBranch(branchName, baseBranch);
 
       // Save base commit SHA before agent runs (agents may remove remote refs)
       const baseSha = await git.resolveRef(`origin/${baseBranch}`);
@@ -343,17 +179,7 @@ export const codingTask = task({
       // ── Execute agent ──
       patchTaskStatus({ stage: "running_agent", progress: 0.25 });
 
-      if (slackChannelId && slackThreadTs) {
-        await notifySlack.triggerAndWait({
-          channelId: slackChannelId,
-          threadTs: slackThreadTs,
-          text: `Running ${agentType} agent on ${owner}/${repo}...`,
-        });
-      }
-
-      const agentPrompt = legacyPayload
-        ? buildAgentPrompt({ ...legacyPayload, branchName })
-        : buildAutomationPrompt({ prompt, title, branchName });
+      const agentPrompt = buildAutomationPrompt({ prompt, title, branchName });
 
       logger.info("Executing agent", {
         agentType,
@@ -407,14 +233,9 @@ export const codingTask = task({
       logger.info("Agent session created", { sessionId: session.id });
 
       // Link the session to the automation run for event replay
-      if (automationRunId) {
-        const { updateAutomationRun } = await import(
-          "@/lib/automations/actions"
-        );
-        await updateAutomationRun(automationRunId, {
-          agentSessionId: session.id,
-        });
-      }
+      await updateAutomationRun(automationRunId, {
+        agentSessionId: session.id,
+      });
       metadata.set("agentSessionId", session.id);
 
       // Event stream bridge — forwards onEvent callbacks to output stream
@@ -536,19 +357,6 @@ export const codingTask = task({
         logger.info("Push disabled by automation policy — skipping");
       }
 
-      // ── Notify Slack (legacy only) ──
-      patchTaskStatus({ stage: "notifying", progress: 0.95 });
-
-      if (slackChannelId && slackThreadTs) {
-        await notifySlack.triggerAndWait({
-          channelId: slackChannelId,
-          threadTs: slackThreadTs,
-          text: prUrl
-            ? `Done. PR created: ${prUrl}`
-            : `Done. ${summary}`,
-        });
-      }
-
       // ── Mark success ──
       patchTaskStatus({
         stage: "succeeded",
@@ -557,19 +365,13 @@ export const codingTask = task({
         summary,
       });
 
-      // Update automation run if applicable
-      if (automationRunId) {
-        const { updateAutomationRun } = await import(
-          "@/lib/automations/actions"
-        );
-        await updateAutomationRun(automationRunId, {
-          status: "succeeded",
-          prUrl,
-          branchName,
-          summary,
-          completedAt: new Date(),
-        });
-      }
+      await updateAutomationRun(automationRunId, {
+        status: "succeeded",
+        prUrl,
+        branchName,
+        summary,
+        completedAt: new Date(),
+      });
 
       logger.info("Task completed", {
         prUrl,
@@ -580,7 +382,6 @@ export const codingTask = task({
       return {
         ok: true,
         branchName,
-        threadTs: slackThreadTs,
         prUrl,
         commitSha,
         agentType,
@@ -596,17 +397,11 @@ export const codingTask = task({
         error: { message },
       });
 
-      // Update automation run if applicable
-      if (automationRunId) {
-        const { updateAutomationRun } = await import(
-          "@/lib/automations/actions"
-        );
-        await updateAutomationRun(automationRunId, {
-          status: "failed",
-          error: message,
-          completedAt: new Date(),
-        });
-      }
+      await updateAutomationRun(automationRunId, {
+        status: "failed",
+        error: message,
+        completedAt: new Date(),
+      });
 
       throw error;
     } finally {

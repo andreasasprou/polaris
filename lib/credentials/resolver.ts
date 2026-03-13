@@ -1,6 +1,6 @@
 import { findAutomationById } from "@/lib/automations/queries";
 import { findRepositoryById } from "@/lib/integrations/queries";
-import { getDecryptedSecret } from "@/lib/secrets/queries";
+import { getDecryptedSecretForOrg, findSecretByIdAndOrg } from "@/lib/secrets/queries";
 import { db } from "@/lib/db";
 import { githubInstallations } from "@/lib/integrations/schema";
 import { eq } from "drizzle-orm";
@@ -33,28 +33,29 @@ export async function resolveCredentials(
   const automation = await findAutomationById(automationId);
   if (!automation) return null;
 
-  // Resolve the agent API key
+  const orgId = automation.organizationId;
+
+  // Resolve the agent API key — verify org ownership
   if (!automation.agentSecretId) return null;
-  const agentApiKey = await getDecryptedSecret(automation.agentSecretId);
+  const agentApiKey = await getDecryptedSecretForOrg(automation.agentSecretId, orgId);
   if (!agentApiKey) return null;
 
-  // Look up the secret to get the provider
-  const { findSecretById } = await import("@/lib/secrets/queries");
-  const secret = await findSecretById(automation.agentSecretId);
+  // Look up the secret to get the provider — already org-scoped
+  const secret = await findSecretByIdAndOrg(automation.agentSecretId, orgId);
   if (!secret) return null;
 
-  // Resolve repository
+  // Resolve repository — verify org ownership
   if (!automation.repositoryId) return null;
   const repo = await findRepositoryById(automation.repositoryId);
-  if (!repo) return null;
+  if (!repo || repo.organizationId !== orgId) return null;
 
-  // Look up the numeric GitHub installation ID
+  // Look up the numeric GitHub installation ID — verify org ownership
   const [installation] = await db
     .select()
     .from(githubInstallations)
     .where(eq(githubInstallations.id, repo.githubInstallationId))
     .limit(1);
-  if (!installation) return null;
+  if (!installation || installation.organizationId !== orgId) return null;
 
   return {
     agentApiKey,

@@ -1,30 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { getSessionWithOrg } from "@/lib/auth/session";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
 import { createSecret } from "@/lib/secrets/actions";
 
 export async function GET() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const { orgId } = await getSessionWithOrg();
 
-  if (!session?.session.activeOrganizationId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const secrets = await findSecretsByOrg(session.session.activeOrganizationId);
+  const secrets = await findSecretsByOrg(orgId);
   return NextResponse.json({ secrets });
 }
 
 export async function POST(req: NextRequest) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
-  if (!session?.session.activeOrganizationId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
 
@@ -36,7 +23,7 @@ export async function POST(req: NextRequest) {
   }
 
   const secret = await createSecret({
-    organizationId: session.session.activeOrganizationId,
+    organizationId: orgId,
     provider: body.provider,
     label: body.label,
     value: body.value,

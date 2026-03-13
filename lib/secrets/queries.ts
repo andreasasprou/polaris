@@ -37,3 +37,21 @@ export async function getDecryptedSecret(id: string): Promise<string | null> {
   if (!secret || secret.revokedAt) return null;
   return decrypt(secret.encryptedValue);
 }
+
+export async function findSecretByIdAndOrg(id: string, organizationId: string) {
+  const [row] = await db
+    .select()
+    .from(secrets)
+    .where(and(eq(secrets.id, id), eq(secrets.organizationId, organizationId)))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getDecryptedSecretForOrg(
+  id: string,
+  organizationId: string,
+): Promise<string | null> {
+  const secret = await findSecretByIdAndOrg(id, organizationId);
+  if (!secret || secret.revokedAt) return null;
+  return decrypt(secret.encryptedValue);
+}

@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
   let creds;
   try {
     creds = await resolveSessionCredentials({
+      organizationId: orgId,
       agentType: agentType ?? "claude",
       agentSecretId: agentSecretId ?? null,
       repositoryId,

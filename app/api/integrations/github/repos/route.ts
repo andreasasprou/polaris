@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
 import { App } from "octokit";
-import { auth } from "@/lib/auth";
+import { getSessionWithOrg } from "@/lib/auth/session";
 import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
 import { db } from "@/lib/db";
 import { repositories } from "@/lib/integrations/schema";
@@ -17,15 +16,8 @@ function getPrivateKey(): string {
 }
 
 export async function GET() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+  const { orgId } = await getSessionWithOrg();
 
-  if (!session?.session.activeOrganizationId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const orgId = session.session.activeOrganizationId;
   const installations = await findGithubInstallationsByOrg(orgId);
 
   if (installations.length === 0) {
