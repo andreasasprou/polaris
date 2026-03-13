@@ -94,17 +94,25 @@ pnpm build            # build Next.js app
 
 ## 4. Database Migration
 
-Apply the schema to your database:
+### First-time setup (local)
+
+For quick local iteration, push the schema directly:
 
 ```bash
 pnpm drizzle-kit push
 ```
 
-This creates all tables in a single operation. For production deployments where you want explicit migration files:
+### Production
+
+Migrations run automatically during `pnpm build` on Vercel production deploys (gated by `VERCEL_ENV=production`). The build script (`scripts/vercel-build.mjs`) runs `drizzle-kit migrate` before `next build`.
+
+To generate a new migration after schema changes:
 
 ```bash
-pnpm drizzle-kit migrate
+pnpm drizzle-kit generate
 ```
+
+Commit the generated SQL file in `lib/db/migrations/` — it will be applied on the next production deploy.
 
 The `sandbox_agent` schema (agent event persistence) is auto-created at runtime — no manual setup needed.
 
