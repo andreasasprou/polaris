@@ -1,5 +1,4 @@
 import { Sandbox, type NetworkPolicy } from "@vercel/sandbox";
-import { SandboxCommands } from "./SandboxCommands";
 import type { SandboxConfig } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
@@ -68,12 +67,13 @@ export class SandboxManager {
     config: SandboxConfig,
   ): Promise<void> {
     // networkPolicy injects Authorization header — no token in URL
+    // Use runCommand with explicit args to prevent shell injection via branch/repoUrl
     const branch = config.baseBranch ?? "main";
-    const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
-    const result = await commands.runShell(
-      `git clone --depth 1 --branch ${branch} ${config.repoUrl} ${SandboxManager.PROJECT_DIR}`,
-      { cwd: "/" },
-    );
+    const result = await sandbox.runCommand({
+      cmd: "git",
+      args: ["clone", "--depth", "1", "--branch", branch, config.repoUrl, SandboxManager.PROJECT_DIR],
+      cwd: "/",
+    });
     if (result.exitCode !== 0) {
       throw new Error(`Failed to clone repo: ${result.stderr}`);
     }

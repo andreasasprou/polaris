@@ -806,10 +806,19 @@ export const interactiveSessionTask = task({
         });
 
         // Step 3: DB transaction (checkpoint + session + runtime)
+        if (!runtimeId) {
+          logger.error("Cannot hibernate: runtimeId is missing");
+          await sandboxManager.destroy(sandbox);
+          await casSessionStatus(sessionId, ["hibernating"], "stopped", {
+            endedAt: new Date(),
+          });
+          return;
+        }
+
         try {
           await hibernateSession({
             sessionId,
-            runtimeId: runtimeId!,
+            runtimeId,
             snapshotId: snapshotResult.snapshotId,
             sizeBytes: snapshotResult.sizeBytes,
           });
