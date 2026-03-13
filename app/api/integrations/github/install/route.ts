@@ -12,15 +12,12 @@ export async function GET() {
     return NextResponse.redirect(new URL("/login", process.env.APP_BASE_URL ?? "http://localhost:3000"));
   }
 
-  const orgId = session.session.activeOrganizationId;
-  if (!orgId) {
-    return NextResponse.redirect(new URL("/onboarding", process.env.APP_BASE_URL ?? "http://localhost:3000"));
-  }
+  const orgId = session.session.activeOrganizationId ?? null;
 
   // Build signed state JWT-like payload
   const nonce = crypto.randomBytes(16).toString("hex");
   const payload = {
-    orgId,
+    orgId,  // may be null for new users without an org
     userId: session.user.id,
     nonce,
     exp: Math.floor(Date.now() / 1000) + 300, // 5 min

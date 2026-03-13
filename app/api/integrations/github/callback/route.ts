@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { githubInstallations } from "@/lib/integrations/schema";
 
-function verifyState(state: string): { orgId: string; userId: string; nonce: string } | null {
+function verifyState(state: string): { orgId: string | null; userId: string; nonce: string } | null {
   try {
     const parts = state.split(".");
     if (parts.length !== 2) return null;
@@ -43,6 +43,13 @@ function getPrivateKey(): string {
   throw new Error("Set GITHUB_APP_PRIVATE_KEY_B64 or GITHUB_APP_PRIVATE_KEY");
 }
 
+function toSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 export async function GET(req: NextRequest) {
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
   const installationId = req.nextUrl.searchParams.get("installation_id");
@@ -53,8 +60,9 @@ export async function GET(req: NextRequest) {
   }
 
   // Get current session
+  const reqHeaders = await headers();
   const session = await auth.api.getSession({
-    headers: await headers(),
+    headers: reqHeaders,
   }).catch(() => null);
 
   if (!session) {
@@ -62,21 +70,15 @@ export async function GET(req: NextRequest) {
   }
 
   // Try to verify signed state if present
-  let orgId = session.session.activeOrganizationId;
+  let orgId = session.session.activeOrganizationId ?? null;
   if (state) {
     const payload = verifyState(state);
     if (payload) {
-      // Use the org from the signed state
       orgId = payload.orgId;
     }
-    // If state verification fails, fall back to active org
   }
 
-  if (!orgId) {
-    return NextResponse.redirect(new URL("/onboarding?error=no_org", baseUrl));
-  }
-
-  // Get installation details from GitHub
+  // Get installation details from GitHub (moved before orgId check so we have accountLogin)
   const { App } = await import("octokit");
   const app = new App({
     appId: process.env.GITHUB_APP_ID!,
@@ -97,6 +99,42 @@ export async function GET(req: NextRequest) {
     // Non-critical — we can store the installation without account details
   }
 
+  // Auto-create org if user has none
+  let orgCreated = false;
+  if (!orgId) {
+    const orgName = accountLogin ?? session.user.name ?? "My Organization";
+    let slug = toSlug(orgName);
+
+    // Retry with random suffix on slug conflict
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const result = await auth.api.createOrganization({
+          body: { name: orgName, slug },
+          headers: reqHeaders,
+        });
+        orgId = result.id;
+        orgCreated = true;
+        break;
+      } catch (err: unknown) {
+        const isSlugConflict =
+          err instanceof Error &&
+          "body" in err &&
+          typeof (err as Record<string, unknown>).body === "object" &&
+          ((err as Record<string, unknown>).body as Record<string, unknown>)?.code === "ORGANIZATION_ALREADY_EXISTS";
+        if (isSlugConflict && attempt < 2) {
+          slug = `${toSlug(orgName)}-${crypto.randomBytes(3).toString("hex")}`;
+          continue;
+        }
+        // If not a slug conflict or exhausted retries, redirect with error
+        return NextResponse.redirect(new URL("/onboarding?error=org_creation_failed", baseUrl));
+      }
+    }
+  }
+
+  if (!orgId) {
+    return NextResponse.redirect(new URL("/onboarding?error=no_org", baseUrl));
+  }
+
   // Upsert the installation
   await db
     .insert(githubInstallations)
@@ -109,5 +147,8 @@ export async function GET(req: NextRequest) {
     })
     .onConflictDoNothing();
 
+  if (orgCreated) {
+    return NextResponse.redirect(new URL("/dashboard?success=org_created", baseUrl));
+  }
   return NextResponse.redirect(new URL("/integrations?success=github_installed", baseUrl));
 }

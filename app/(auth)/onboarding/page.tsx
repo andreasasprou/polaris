@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 
-type Step = "loading" | "create-org" | "install-github";
+type Step = "loading" | "choose" | "create-org" | "install-github";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -19,7 +19,6 @@ export default function OnboardingPage() {
       try {
         const orgs = await authClient.organization.list();
         if (orgs.data && orgs.data.length > 0) {
-          // User already has an org, set it active
           await authClient.organization.setActive({
             organizationId: orgs.data[0].id,
           });
@@ -27,9 +26,9 @@ export default function OnboardingPage() {
           return;
         }
       } catch {
-        // Failed to list orgs, fall through to create
+        // Failed to list orgs, fall through to choose
       }
-      setStep("create-org");
+      setStep("choose");
     }
     checkExistingOrgs();
   }, [router]);
@@ -55,11 +54,7 @@ export default function OnboardingPage() {
         return;
       }
 
-      // Set as active org
-      await authClient.organization.setActive({
-        organizationId: result.data!.id,
-      });
-
+      // setActive is handled automatically by createOrganization
       setStep("install-github");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -68,7 +63,7 @@ export default function OnboardingPage() {
     }
   }
 
-  async function handleInstallGitHub() {
+  function handleInstallGitHub() {
     window.location.href = "/api/integrations/github/install";
   }
 
@@ -90,6 +85,7 @@ export default function OnboardingPage() {
         <div className="text-center">
           <h1 className="text-2xl font-medium">Set up your workspace</h1>
           <p className="mt-2 text-sm text-muted-foreground">
+            {step === "choose" && "Get started by connecting your GitHub account or creating an organization manually."}
             {step === "create-org" && "Create your organization to get started."}
             {step === "install-github" && "Connect your GitHub repositories."}
           </p>
@@ -98,6 +94,25 @@ export default function OnboardingPage() {
         {error && (
           <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
             {error}
+          </div>
+        )}
+
+        {step === "choose" && (
+          <div className="space-y-4">
+            <button
+              onClick={handleInstallGitHub}
+              className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Connect GitHub
+            </button>
+            <div className="text-center">
+              <button
+                onClick={() => setStep("create-org")}
+                className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Create organization manually
+              </button>
+            </div>
           </div>
         )}
 
@@ -127,6 +142,15 @@ export default function OnboardingPage() {
             >
               {loading ? "Creating..." : "Create organization"}
             </button>
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setStep("choose")}
+                className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Back
+              </button>
+            </div>
           </form>
         )}
 

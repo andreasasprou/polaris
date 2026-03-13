@@ -11,9 +11,9 @@ import {
   SettingsIcon,
   LogOutIcon,
   ChevronsUpDownIcon,
-  SparklesIcon,
 } from "lucide-react"
 import { authClient } from "@/lib/auth/client"
+import { OrgSwitcher } from "./org-switcher"
 import {
   Sidebar,
   SidebarContent,
@@ -60,23 +60,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <Link href="/dashboard">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                  <SparklesIcon />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">Polaris</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    Autonomous Agent
-                  </span>
-                </div>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <OrgSwitcher />
       </SidebarHeader>
 
       <SidebarContent>
