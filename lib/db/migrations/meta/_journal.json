@@ -5,50 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1772968432964,
-      "tag": "0000_ancient_champions",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1773053395589,
-      "tag": "0001_sweet_thunderbird",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1773057960562,
-      "tag": "0002_absurd_edwin_jarvis",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1773221762542,
-      "tag": "0003_handy_bullseye",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1773252895184,
-      "tag": "0004_yummy_violations",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1773322808741,
-      "tag": "0005_yellow_serpent_society",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1773386353163,
-      "tag": "0006_vengeful_iron_fist",
+      "when": 1773386537669,
+      "tag": "0000_futuristic_wraith",
       "breakpoints": true
     }
   ]

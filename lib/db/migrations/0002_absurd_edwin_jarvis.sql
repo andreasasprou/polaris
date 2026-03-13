@@ -1,2 +1,0 @@
-DROP INDEX "idx_one_live_runtime_per_session";--> statement-breakpoint
-CREATE UNIQUE INDEX "idx_one_live_runtime_per_session" ON "interactive_session_runtimes" USING btree ("session_id") WHERE status IN ('creating', 'running', 'warm', 'suspended');
