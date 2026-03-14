@@ -263,8 +263,11 @@ export const continuousPrReviewTask = task({
           prompt: reviewPrompt,
           requestId: requestId_,
           source: "automation",
+          agentType,
           model: reviewAgentConfig.model,
+          modeOverride: reviewAgentConfig.mode,
           effortLevel,
+          modeIntent: "read-only",
           branch: event.headRef,
         });
 
