@@ -42,12 +42,14 @@ export class SandboxAgentBootstrap {
    */
   private async installGitHubCLI(): Promise<void> {
     const result = await this.commands.runShell(
-      `(type gh > /dev/null 2>&1) || {
+      `export PATH="$HOME/bin:$PATH"
+      (command -v gh > /dev/null 2>&1) || {
         GH_VERSION="2.67.0"
-        curl -fsSL "https://github.com/cli/cli/releases/download/v\${GH_VERSION}/gh_\${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz \
+        mkdir -p "$HOME/bin" \
+        && curl -fsSL "https://github.com/cli/cli/releases/download/v\${GH_VERSION}/gh_\${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz \
         && tar -xzf /tmp/gh.tar.gz -C /tmp \
-        && mv "/tmp/gh_\${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
-        && chmod +x /usr/local/bin/gh \
+        && mv "/tmp/gh_\${GH_VERSION}_linux_amd64/bin/gh" "$HOME/bin/gh" \
+        && chmod +x "$HOME/bin/gh" \
         && rm -rf /tmp/gh.tar.gz /tmp/gh_*
       }`,
       { cwd: "/" },
@@ -109,16 +111,13 @@ export class SandboxAgentBootstrap {
     port: number = DEFAULT_PORT,
     env: Record<string, string> = {},
   ): Promise<string> {
-    // Start server in detached mode
+    // Start server in detached mode, wrapping in a shell to ensure $HOME/bin
+    // (where gh CLI is installed) is on PATH for the server and child agents.
     await this.sandbox.runCommand({
-      cmd: "sandbox-agent",
+      cmd: "sh",
       args: [
-        "server",
-        "--no-token",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        String(port),
+        "-c",
+        `export PATH="$HOME/bin:$PATH" && exec sandbox-agent server --no-token --host 0.0.0.0 --port ${port}`,
       ],
       env,
       detached: true,
