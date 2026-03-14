@@ -1,11 +1,25 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automations, automationRuns } from "./schema";
+import { repositories } from "@/lib/integrations/schema";
 
 export async function findAutomationsByOrg(organizationId: string) {
   return db
     .select()
     .from(automations)
+    .where(eq(automations.organizationId, organizationId))
+    .orderBy(desc(automations.createdAt));
+}
+
+export async function findAutomationsWithRepoByOrg(organizationId: string) {
+  return db
+    .select({
+      automation: automations,
+      repoOwner: repositories.owner,
+      repoName: repositories.name,
+    })
+    .from(automations)
+    .leftJoin(repositories, eq(automations.repositoryId, repositories.id))
     .where(eq(automations.organizationId, organizationId))
     .orderBy(desc(automations.createdAt));
 }

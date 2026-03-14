@@ -15,7 +15,10 @@ export type ModeIntent = "autonomous" | "read-only" | "interactive";
 
 // ── Profile shape ──
 
+export type ProviderType = "anthropic" | "openai";
+
 type AgentProfile = {
+  compatibleProviders: readonly ProviderType[];
   models: readonly string[];
   modes: readonly string[];
   thoughtLevels: readonly string[] | null;
@@ -32,6 +35,7 @@ const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"] as const;
 
 const PROFILES: Record<AgentType, AgentProfile> = {
   claude: {
+    compatibleProviders: ["anthropic"],
     models: ["default", "sonnet", "opus", "haiku"],
     modes: ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
     thoughtLevels: null,
@@ -45,6 +49,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     filesystemConfigPath: (cwd) => `${cwd}/.claude/settings.json`,
   },
   codex: {
+    compatibleProviders: ["openai"],
     models: [
       "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
@@ -63,6 +68,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     effortMechanism: "sdk-thought-level",
   },
   opencode: {
+    compatibleProviders: ["anthropic", "openai"],
     models: [],
     modes: ["build", "plan"],
     thoughtLevels: null,
@@ -74,6 +80,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     effortMechanism: null,
   },
   amp: {
+    compatibleProviders: ["anthropic"],
     models: [],
     modes: ["default", "bypass"],
     thoughtLevels: null,
@@ -247,4 +254,8 @@ export function getModes(agentType: AgentType): readonly string[] {
 
 export function getThoughtLevels(agentType: AgentType): readonly string[] | null {
   return PROFILES[agentType].thoughtLevels;
+}
+
+export function getCompatibleProviders(agentType: AgentType): readonly ProviderType[] {
+  return PROFILES[agentType].compatibleProviders;
 }
