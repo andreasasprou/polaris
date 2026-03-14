@@ -7,8 +7,8 @@ export type AutomationMode = "oneshot" | "continuous";
 export interface PRReviewConfig {
   /** Override model for this automation */
   model?: string;
-  /** Agent-specific model parameters (e.g., reasoningEffort) */
-  modelParams?: Record<string, unknown>;
+  /** Agent-specific model parameters (e.g., effortLevel) */
+  modelParams?: import("@/lib/sandbox-agent/types").ModelParams;
   /** Custom review instructions appended to the system prompt */
   customPrompt?: string;
 

@@ -2,6 +2,7 @@ import { eq, and, or, lt, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automations, automationRuns, automationSessions } from "./schema";
 import type { AutomationSessionMetadata, QueuedReviewRequest } from "@/lib/reviews/types";
+import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export async function createAutomation(input: {
   organizationId: string;
@@ -20,7 +21,7 @@ export async function createAutomation(input: {
   allowPush?: boolean;
   allowPrCreate?: boolean;
   mode?: string;
-  modelParams?: Record<string, unknown>;
+  modelParams?: ModelParams;
   prReviewConfig?: Record<string, unknown>;
 }) {
   const [row] = await db
@@ -48,7 +49,7 @@ export async function updateAutomation(
     allowPush: boolean;
     allowPrCreate: boolean;
     mode: string;
-    modelParams: Record<string, unknown>;
+    modelParams: ModelParams;
     prReviewConfig: Record<string, unknown>;
   }>,
 ) {

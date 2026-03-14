@@ -13,6 +13,7 @@ import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import type { PRReviewConfig, AutomationSessionMetadata } from "@/lib/reviews/types";
+import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export const automations = pgTable(
   "automations",
@@ -41,7 +42,7 @@ export const automations = pgTable(
 
     // Continuous mode fields
     mode: text("mode").default("oneshot").notNull(), // 'oneshot' | 'continuous'
-    modelParams: jsonb("model_params").$type<Record<string, unknown>>().default({}).notNull(),
+    modelParams: jsonb("model_params").$type<ModelParams>().default({}).notNull(),
     prReviewConfig: jsonb("pr_review_config").$type<PRReviewConfig>().default({}).notNull(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

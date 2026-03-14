@@ -277,7 +277,7 @@ export const continuousPrReviewTask = task({
         }
 
         const agentType = (automation.agentType ?? "claude") as AgentType;
-        const effortLevel = (automation.modelParams as Record<string, unknown>)?.effortLevel as string | undefined;
+        const effortLevel = automation.modelParams.effortLevel;
         const reviewAgentConfig = resolveAgentConfig({
           agentType,
           modeIntent: "read-only",

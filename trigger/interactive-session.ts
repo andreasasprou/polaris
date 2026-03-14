@@ -46,8 +46,8 @@ export type InteractiveSessionPayload = {
   modeOverride?: string;
   /** Agent model (e.g. "opus", "gpt-5.3-codex"). */
   model?: string;
-  /** Effort / thought level (e.g. "low", "medium", "high", "xhigh"). */
-  effortLevel?: string;
+  /** Effort / thought level (e.g. "low", "medium", "high", "max"). */
+  effortLevel?: import("@/lib/sandbox-agent/agent-profiles").EffortLevel;
   /** Semantic mode intent — determines permissions scope. Defaults to "autonomous". */
   modeIntent?: "autonomous" | "read-only" | "interactive";
 };
