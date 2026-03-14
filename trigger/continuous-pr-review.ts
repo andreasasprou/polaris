@@ -12,6 +12,8 @@ export type ContinuousPrReviewPayload = {
   installationId: number;
   deliveryId: string;
   normalizedEvent: NormalizedPrReviewEvent;
+  /** Check run created eagerly by the router for immediate PR visibility. */
+  checkRunId?: string;
 };
 
 export const continuousPrReviewTask = task({
@@ -53,6 +55,33 @@ export const continuousPrReviewTask = task({
     const config = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
     const sessionMetadata = automationSession.metadata as import("@/lib/reviews/types").AutomationSessionMetadata;
 
+    // Import GitHub helpers early — needed for check cleanup in all exit paths
+    const { createPendingCheck, completeCheck, failCheck, postReviewComment, markCommentStale, getReviewOctokit, isAncestor } =
+      await import("@/lib/reviews/github");
+
+    let checkRunId: string | undefined = payload.checkRunId;
+
+    /**
+     * Complete the eagerly-created check for early-exit paths. Non-fatal.
+     * - Filter-skip: APPROVE (review decided this PR doesn't need review — that's a pass)
+     * - Queued: ATTENTION/neutral (review hasn't run yet — don't show green)
+     */
+    const cancelCheck = async (summary: string, verdict: "APPROVE" | "ATTENTION" = "APPROVE") => {
+      if (!checkRunId) return;
+      try {
+        await completeCheck({
+          installationId,
+          owner: event.owner,
+          repo: event.repo,
+          checkRunId,
+          verdict,
+          summary,
+        });
+      } catch (err) {
+        logger.warn("Failed to cancel check", { error: err instanceof Error ? err.message : String(err) });
+      }
+    };
+
     // ── 2. Acquire lock ──
     const lockAcquired = await timer.time("acquire_lock", () =>
       tryAcquireAutomationSessionLock({
@@ -65,6 +94,7 @@ export const continuousPrReviewTask = task({
     if (!lockAcquired) {
       // Queue this request for later
       logger.info("Lock not acquired — queuing review request");
+      await cancelCheck("Queued — another review is in progress", "ATTENTION");
       await setPendingReviewRequest(automationSessionId, {
         reason: event.action as import("@/lib/reviews/types").QueuedReviewRequest["reason"],
         headSha: event.headSha,
@@ -91,6 +121,7 @@ export const continuousPrReviewTask = task({
       });
       if (!filterResult.review) {
         logger.info("Skipped by filters", { reason: filterResult.reason });
+        await cancelCheck(`Skipped: ${filterResult.reason}`);
         await updateAutomationRun(automationRunId, {
           status: "completed",
           summary: `Skipped: ${filterResult.reason}`,
@@ -100,35 +131,32 @@ export const continuousPrReviewTask = task({
         return { ok: true, skipped: true, reason: filterResult.reason };
       }
 
-      // ── 4. Create pending GitHub check ──
-      const { createPendingCheck, completeCheck, failCheck, postReviewComment, markCommentStale, getReviewOctokit, isAncestor } =
-        await import("@/lib/reviews/github");
+      // ── 4. Ensure GitHub check exists ──
+      // The router creates the check eagerly for immediate PR visibility.
+      // Only create here as fallback (e.g. queued re-dispatch, older payloads).
+      if (!checkRunId) {
+        await timer.time("create_check", async () => {
+          try {
+            const check = await createPendingCheck({
+              installationId,
+              owner: event.owner,
+              repo: event.repo,
+              headSha: event.headSha,
+              checkName: config.checkName,
+            });
+            checkRunId = check.checkRunId;
+          } catch (err) {
+            logger.warn("Failed to create check run — continuing without it", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
+      }
 
-      let checkRunId: string | undefined;
-      await timer.time("create_check", async () => {
-        try {
-          const check = await createPendingCheck({
-            installationId,
-            owner: event.owner,
-            repo: event.repo,
-            headSha: event.headSha,
-            checkName: config.checkName,
-          });
-          checkRunId = check.checkRunId;
-          await updateAutomationRun(automationRunId, {
-            githubCheckRunId: checkRunId,
-            status: "running",
-            startedAt: new Date(),
-          });
-        } catch (err) {
-          logger.warn("Failed to create check run — continuing without it", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          await updateAutomationRun(automationRunId, {
-            status: "running",
-            startedAt: new Date(),
-          });
-        }
+      await updateAutomationRun(automationRunId, {
+        ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
+        status: "running",
+        startedAt: new Date(),
       });
 
       // ── 5. Gather metadata (agent explores the code itself) ──
@@ -267,8 +295,9 @@ export const continuousPrReviewTask = task({
           model: reviewAgentConfig.model,
           modeOverride: reviewAgentConfig.mode,
           effortLevel,
+          // Don't pass branch: event.headRef — it doesn't exist on origin for fork PRs.
+          // The prompt fetches via refs/pull/<pr>/head and checks out the head SHA instead.
           modeIntent: "read-only",
-          branch: event.headRef,
         });
 
         return { dispatchResult: result, targetSessionId: target };

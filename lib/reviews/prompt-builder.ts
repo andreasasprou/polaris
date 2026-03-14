@@ -204,13 +204,18 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
 
   // CRITICAL: Remote refs (origin/*) are NOT available. Use commit SHAs directly.
   // The repo is a shallow clone — must unshallow to access full diff history.
+  // Use refs/pull/<pr>/head to fetch the PR head — works for both forks and same-repo PRs.
+  // Never interpolate raw ref names into commands (shell injection risk via branch names).
+  const prNumber = input.event.prNumber;
   parts.push(`### Setup — run these commands first`);
   parts.push(
     `\`\`\`bash`,
-    `# 1. Unshallow the clone so all commits are available for diffing`,
-    `git fetch --unshallow 2>/dev/null || true`,
-    `# 2. Fetch all branches so base branch commits are available`,
-    `git fetch origin ${input.event.baseRef}`,
+    `# 1. Unshallow and fetch all branches so base branch commits are available`,
+    `git fetch --unshallow 2>/dev/null || git fetch origin`,
+    `# 2. Fetch the PR head (works for forks too — refs/pull is always on the base repo)`,
+    `git fetch origin refs/pull/${prNumber}/head`,
+    `# 3. Checkout the PR head commit so file reads reflect the PR's code`,
+    `git checkout ${headSha}`,
     `\`\`\``,
   );
 
@@ -239,7 +244,7 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
 
   parts.push(
     `\n### Review strategy`,
-    `1. Run the setup command above to checkout the PR head`,
+    `1. Run the setup commands above to ensure you're on the PR head and all commits are available`,
     `2. Start with \`git diff ${baseSha} ${headSha} --stat\` to understand the scope`,
     `3. Read the full diff or review file-by-file for focused analysis`,
     `4. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,

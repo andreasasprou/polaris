@@ -1,5 +1,7 @@
 import { z } from "zod";
-import type { ParsedReviewOutput, ReviewVerdict } from "./types";
+import type { ParsedReviewOutput, ReviewVerdict, ReviewFinding } from "./types";
+
+// ── Strict schema (ideal agent output) ──
 
 const ReviewFindingSchema = z.object({
   id: z.string(),
@@ -10,10 +12,6 @@ const ReviewFindingSchema = z.object({
   body: z.string(),
 });
 
-const CATEGORIES = [
-  "Correctness", "Design", "Security", "Performance", "Tests", "Style",
-] as const;
-
 const ReviewStateSchema = z.object({
   lastReviewedSha: z.string().nullable(),
   openIssues: z.array(
@@ -22,7 +20,6 @@ const ReviewStateSchema = z.object({
       file: z.string(),
       severity: z.enum(["P0", "P1", "P2"]),
       category: z.string().optional(),
-      // Accept either summary (our schema) or title/body (agent often mirrors findings format)
       summary: z.string().optional(),
       title: z.string().optional(),
       body: z.string().optional(),
@@ -53,29 +50,57 @@ const ParsedOutputSchema = z.object({
   reviewState: ReviewStateSchema,
 });
 
+// ── Lenient schema (recovers findings even when some fields are off) ──
+
+const LenientFindingSchema = z.object({
+  id: z.string().optional(),
+  severity: z.string().optional().default("P2"),
+  category: z.string().optional().default("Uncategorized"),
+  file: z.string().optional().default("unknown"),
+  title: z.string().optional().default(""),
+  body: z.string().optional().default(""),
+  // Accept description as alias for body (common agent variation)
+  description: z.string().optional(),
+});
+
+const LenientOutputSchema = z.object({
+  verdict: z.string(),
+  summary: z.string().optional().default(""),
+  severityCounts: z
+    .object({ P0: z.number(), P1: z.number(), P2: z.number() })
+    .optional(),
+  findings: z.array(LenientFindingSchema).optional().default([]),
+  resolvedIssueIds: z.array(z.string()).optional().default([]),
+  reviewState: ReviewStateSchema.optional(),
+});
+
 /**
  * Parse the agent's review output to extract structured data.
  *
  * Strategy:
- * 1. Find last fenced JSON block (```json ... ```)
- * 2. Find unfenced JSON objects with verdict key
- * 3. Fallback: regex for verdict + severity counts
- * 4. Returns null if unparseable
+ * 1. Find last fenced JSON block (```json ... ```) — strict parse
+ * 2. Find unfenced JSON objects with verdict key — strict parse
+ * 3. Re-try all JSON blocks with lenient schema (recovers partial data)
+ * 4. Fallback: regex for verdict + severity counts
+ * 5. Returns null if unparseable
  */
 export function parseReviewOutput(
   output: string,
 ): ParsedReviewOutput | null {
-  // Strategy 1: Find fenced JSON blocks
-  const jsonBlocks = extractJsonBlocks(output);
-  for (const block of jsonBlocks.reverse()) {
-    const result = tryParseBlock(block);
+  const allBlocks = [
+    ...extractJsonBlocks(output),
+    ...extractUnfencedJson(output),
+  ];
+
+  // Strategy 1: Strict parse (last block first — most likely to be the structured output)
+  for (const block of [...allBlocks].reverse()) {
+    const result = tryParseStrict(block);
     if (result) return result;
   }
 
-  // Strategy 2: Find unfenced JSON objects containing "verdict"
-  const unfenced = extractUnfencedJson(output);
-  for (const block of unfenced.reverse()) {
-    const result = tryParseBlock(block);
+  // Strategy 2: Lenient parse — recover findings even when schema doesn't match perfectly
+  for (const block of [...allBlocks].reverse()) {
+    const result = tryParseLenient(block);
     if (result) return result;
   }
 
@@ -83,16 +108,91 @@ export function parseReviewOutput(
   return regexFallback(output);
 }
 
-/** Try to parse a JSON string and validate against the output schema. */
-function tryParseBlock(block: string): ParsedReviewOutput | null {
+/** Strict parse: validates against the full output schema. */
+function tryParseStrict(block: string): ParsedReviewOutput | null {
   try {
     const parsed = JSON.parse(block);
     const result = ParsedOutputSchema.safeParse(parsed);
     if (result.success) return result.data;
+    console.log("[output-parser] Strict parse failed:", result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; "));
   } catch {
     // Not valid JSON
   }
   return null;
+}
+
+/**
+ * Lenient parse: accepts partial/malformed data and normalizes it.
+ * Recovers findings even when individual fields have unexpected types or values.
+ */
+function tryParseLenient(block: string): ParsedReviewOutput | null {
+  try {
+    const raw = JSON.parse(block);
+    const result = LenientOutputSchema.safeParse(raw);
+    if (!result.success) return null;
+
+    const data = result.data;
+
+    // Validate verdict
+    const verdict = normalizeVerdict(data.verdict);
+    if (!verdict) return null;
+
+    // Normalize findings — coerce severity, fill missing fields
+    const findings: ReviewFinding[] = data.findings
+      .map((f, i) => ({
+        id: f.id || `finding-${i + 1}`,
+        severity: normalizeSeverity(f.severity),
+        category: f.category || "Uncategorized",
+        file: f.file || "unknown",
+        title: f.title || f.body || f.description || "",
+        body: f.body || f.description || f.title || "",
+      }))
+      .filter((f): f is ReviewFinding => !!f.title || !!f.body);
+
+    // Compute severity counts from actual findings if not provided
+    const severityCounts = data.severityCounts ?? {
+      P0: findings.filter((f) => f.severity === "P0").length,
+      P1: findings.filter((f) => f.severity === "P1").length,
+      P2: findings.filter((f) => f.severity === "P2").length,
+    };
+
+    return {
+      verdict,
+      summary: data.summary,
+      severityCounts,
+      findings,
+      resolvedIssueIds: data.resolvedIssueIds,
+      reviewState: data.reviewState ?? {
+        lastReviewedSha: null,
+        openIssues: findings.map((f) => ({
+          id: f.id,
+          file: f.file,
+          severity: f.severity,
+          summary: f.title,
+        })),
+        resolvedIssues: [],
+        reviewCount: 0,
+      },
+    };
+  } catch {
+    // Not valid JSON
+  }
+  return null;
+}
+
+function normalizeVerdict(v: string): ReviewVerdict | null {
+  const upper = v.toUpperCase().trim();
+  if (upper === "BLOCK") return "BLOCK";
+  if (upper === "ATTENTION") return "ATTENTION";
+  if (upper === "APPROVE") return "APPROVE";
+  return null;
+}
+
+function normalizeSeverity(s: string): "P0" | "P1" | "P2" {
+  const upper = s.toUpperCase().trim();
+  if (upper === "P0") return "P0";
+  if (upper === "P1") return "P1";
+  return "P2"; // Default unknown severities to P2
 }
 
 /**
