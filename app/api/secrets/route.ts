@@ -22,13 +22,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const secret = await createSecret({
-    organizationId: orgId,
-    provider: body.provider,
-    label: body.label,
-    value: body.value,
-    createdBy: session.user.id,
-  });
+  try {
+    const secret = await createSecret({
+      organizationId: orgId,
+      provider: body.provider,
+      label: body.label,
+      value: body.value,
+      createdBy: session.user.id,
+    });
 
-  return NextResponse.json({ secret }, { status: 201 });
+    return NextResponse.json({ secret }, { status: 201 });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Validation failed" },
+      { status: 400 },
+    );
+  }
 }

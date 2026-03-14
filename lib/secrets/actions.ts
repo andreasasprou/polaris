@@ -1,7 +1,9 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { secrets } from "./schema";
 import { encrypt } from "@/lib/credentials/encryption";
+import { validateSecretValue } from "./validation";
+import { findSecretByIdAndOrg } from "./queries";
 
 export async function createSecret(input: {
   organizationId: string;
@@ -10,6 +12,14 @@ export async function createSecret(input: {
   value: string;
   createdBy: string;
 }) {
+  const result = validateSecretValue({
+    provider: input.provider,
+    value: input.value,
+  });
+  if (!result.valid) {
+    throw new Error(result.error);
+  }
+
   const [row] = await db
     .insert(secrets)
     .values({
@@ -19,6 +29,46 @@ export async function createSecret(input: {
       encryptedValue: encrypt(input.value),
       createdBy: input.createdBy,
     })
+    .returning({
+      id: secrets.id,
+      provider: secrets.provider,
+      label: secrets.label,
+      createdAt: secrets.createdAt,
+    });
+
+  return row;
+}
+
+export async function updateSecret(input: {
+  id: string;
+  organizationId: string;
+  value: string;
+}) {
+  const secret = await findSecretByIdAndOrg(input.id, input.organizationId);
+  if (!secret) {
+    throw new Error("Secret not found");
+  }
+  if (secret.revokedAt) {
+    throw new Error("Cannot update a revoked secret");
+  }
+
+  const result = validateSecretValue({
+    provider: secret.provider,
+    value: input.value,
+  });
+  if (!result.valid) {
+    throw new Error(result.error);
+  }
+
+  const [row] = await db
+    .update(secrets)
+    .set({ encryptedValue: encrypt(input.value) })
+    .where(
+      and(
+        eq(secrets.id, input.id),
+        eq(secrets.organizationId, input.organizationId),
+      ),
+    )
     .returning({
       id: secrets.id,
       provider: secrets.provider,
