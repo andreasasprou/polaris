@@ -5,12 +5,13 @@ import { Sandbox } from "@vercel/sandbox";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
 import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import { getEnabledAgentTypes } from "@/lib/sandbox-agent/agent-profiles";
 
 const SANDBOX_AGENT_VERSION = "0.3.x";
 const PROJECT_DIR = "/vercel/sandbox";
 
-/** All agent types that should have snapshots built. */
-const SNAPSHOT_AGENT_TYPES: AgentType[] = ["claude", "codex"];
+/** All agent types that should have snapshots built (derived from enabled agents). */
+const SNAPSHOT_AGENT_TYPES: AgentType[] = getEnabledAgentTypes();
 
 /**
  * Build a snapshot for a single agent type.

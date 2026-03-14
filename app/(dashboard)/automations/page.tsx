@@ -1,13 +1,20 @@
 import Link from "next/link";
 import { getSessionWithOrg } from "@/lib/auth/session";
-import { findAutomationsByOrg } from "@/lib/automations/queries";
+import { findAutomationsWithRepoByOrg } from "@/lib/automations/queries";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+} from "@/components/ui/empty";
+import { PlusIcon, ZapIcon } from "lucide-react";
+import { AutomationsTable } from "./_components/automations-table";
 
 export default async function AutomationsPage() {
   const { orgId } = await getSessionWithOrg();
-  const automations = await findAutomationsByOrg(orgId);
+  const rows = await findAutomationsWithRepoByOrg(orgId);
 
   return (
     <div className="flex flex-col gap-6">
@@ -19,47 +26,34 @@ export default async function AutomationsPage() {
           </p>
         </div>
         <Button asChild>
-          <Link href="/automations/new">New automation</Link>
+          <Link href="/automations/new">
+            <PlusIcon data-icon="inline-start" />
+            New automation
+          </Link>
         </Button>
       </div>
 
-      {automations.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="py-8 text-center">
-            <p className="text-sm text-muted-foreground">
-              No automations yet. Create one to get started.
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {automations.map((automation) => (
-            <Link
-              key={automation.id}
-              href={`/automations/${automation.id}`}
-              className="block transition-colors hover:bg-accent/50"
-            >
-              <Card>
-                <CardContent className="flex items-center justify-between py-4">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`size-2.5 rounded-full ${
-                        automation.enabled ? "bg-green-500" : "bg-muted"
-                      }`}
-                    />
-                    <div>
-                      <p className="font-medium">{automation.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {automation.triggerType} trigger
-                      </p>
-                    </div>
-                  </div>
-                  <Badge variant="secondary">{automation.agentType}</Badge>
-                </CardContent>
-              </Card>
+      {rows.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <ZapIcon />
+            </EmptyMedia>
+            <EmptyTitle>No automations yet</EmptyTitle>
+            <EmptyDescription>
+              Create your first automation to run agent workflows on GitHub
+              events like pushes and pull requests.
+            </EmptyDescription>
+          </EmptyHeader>
+          <Button asChild>
+            <Link href="/automations/new">
+              <PlusIcon data-icon="inline-start" />
+              New automation
             </Link>
-          ))}
-        </div>
+          </Button>
+        </Empty>
+      ) : (
+        <AutomationsTable rows={rows} />
       )}
     </div>
   );

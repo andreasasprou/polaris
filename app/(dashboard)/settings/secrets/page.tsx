@@ -6,7 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircleIcon } from "lucide-react";
+import { AlertCircleIcon, CopyIcon, CheckIcon } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Select,
   SelectContent,
@@ -15,6 +20,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+const CODEX_AUTH_COMMAND = `base64 < ~/.codex/auth.json | tr -d '\\n'`;
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+      onClick={handleCopy}
+      aria-label={copied ? "Copied" : "Copy command"}
+    >
+      {copied ? (
+        <CheckIcon className="h-3.5 w-3.5" />
+      ) : (
+        <CopyIcon className="h-3.5 w-3.5" />
+      )}
+    </Button>
+  );
+}
 
 type Secret = {
   id: string;
@@ -133,6 +167,36 @@ export default function SecretsPage() {
                 />
               </div>
             </div>
+            {provider === "openai" && (
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground"
+                  >
+                    Using ChatGPT OAuth instead of an API key?
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-2 rounded-md border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
+                    <p className="mb-2">
+                      You can authenticate Codex with your ChatGPT account
+                      instead of an API key. Run{" "}
+                      <code className="rounded bg-muted px-1 py-0.5 font-mono">
+                        codex auth
+                      </code>{" "}
+                      locally, then paste the output of:
+                    </p>
+                    <div className="flex items-center gap-2 rounded bg-muted px-3 py-2 font-mono">
+                      <code className="flex-1 select-all text-foreground">
+                        {CODEX_AUTH_COMMAND}
+                      </code>
+                      <CopyButton text={CODEX_AUTH_COMMAND} />
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
             <div>
               <Button type="submit" disabled={loading}>
                 {loading ? "Adding..." : "Add key"}

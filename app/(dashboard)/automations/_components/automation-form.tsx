@@ -1,13 +1,20 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircleIcon } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldDescription,
+  FieldSet,
+  FieldLegend,
+} from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -20,8 +27,12 @@ import {
   getModels,
   getModes,
   getThoughtLevels,
+  getCompatibleProviders,
+  getEnabledAgents,
 } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import { AlertCircleIcon } from "lucide-react";
+import Link from "next/link";
 
 type Repo = {
   id: string;
@@ -89,8 +100,12 @@ export function AutomationForm({
   const [effortLevel, setEffortLevel] = useState(
     (initial?.modelParams?.effortLevel as string) ?? "",
   );
-  const [repositoryId, setRepositoryId] = useState(initial?.repositoryId || "__none__");
-  const [agentSecretId, setAgentSecretId] = useState(initial?.agentSecretId || "__none__");
+  const [repositoryId, setRepositoryId] = useState(
+    initial?.repositoryId || "__none__",
+  );
+  const [agentSecretId, setAgentSecretId] = useState(
+    initial?.agentSecretId || "__none__",
+  );
 
   // Review config (continuous mode only)
   const prReviewConfig = initial?.prReviewConfig ?? {};
@@ -101,17 +116,41 @@ export function AutomationForm({
     (prReviewConfig as Record<string, unknown>).skipBots !== false,
   );
   const [ignorePaths, setIgnorePaths] = useState(
-    ((prReviewConfig as Record<string, unknown>).ignorePaths as string[])?.join(", ") ?? "",
+    ((prReviewConfig as Record<string, unknown>).ignorePaths as string[])?.join(
+      ", ",
+    ) ?? "",
   );
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Dynamic options based on agent type
-  const models = useMemo(() => getModels(agentType as AgentType), [agentType]);
-  const thoughtLevels = useMemo(() => getThoughtLevels(agentType as AgentType), [agentType]);
+  const models = useMemo(
+    () => getModels(agentType as AgentType),
+    [agentType],
+  );
+  const thoughtLevels = useMemo(
+    () => getThoughtLevels(agentType as AgentType),
+    [agentType],
+  );
+  const filteredSecrets = useMemo(() => {
+    const providers = getCompatibleProviders(agentType as AgentType);
+    return secrets.filter((s) =>
+      providers.includes(s.provider as "anthropic" | "openai"),
+    );
+  }, [agentType, secrets]);
 
-  // Reset model/effort when agent type changes if current value is invalid
+  // Sync selected key with filtered list (handles stale initial values & deleted keys)
+  useEffect(() => {
+    if (
+      agentSecretId !== "__none__" &&
+      !filteredSecrets.some((s) => s.id === agentSecretId)
+    ) {
+      setAgentSecretId("__none__");
+    }
+  }, [agentSecretId, filteredSecrets]);
+
+  // Reset model/effort/key when agent type changes if current value is invalid
   const handleAgentTypeChange = (newType: string) => {
     setAgentType(newType);
     const newModels = getModels(newType as AgentType);
@@ -121,6 +160,17 @@ export function AutomationForm({
     const newLevels = getThoughtLevels(newType as AgentType);
     if (effortLevel && (!newLevels || !newLevels.includes(effortLevel))) {
       setEffortLevel("");
+    }
+    // Reset API key if it's no longer compatible with the new agent type
+    if (agentSecretId !== "__none__") {
+      const providers = getCompatibleProviders(newType as AgentType);
+      const selectedSecret = secrets.find((s) => s.id === agentSecretId);
+      if (
+        selectedSecret &&
+        !providers.includes(selectedSecret.provider as "anthropic" | "openai")
+      ) {
+        setAgentSecretId("__none__");
+      }
     }
   };
 
@@ -140,8 +190,14 @@ export function AutomationForm({
       name,
       triggerType,
       triggerConfig: {
-        events: events.split(",").map((e) => e.trim()).filter(Boolean),
-        branches: branches.split(",").map((b) => b.trim()).filter(Boolean),
+        events: events
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean),
+        branches: branches
+          .split(",")
+          .map((b) => b.trim())
+          .filter(Boolean),
       },
       prompt,
       agentType,
@@ -164,7 +220,9 @@ export function AutomationForm({
     }
 
     try {
-      const url = isEdit ? `/api/automations/${initial!.id}` : "/api/automations";
+      const url = isEdit
+        ? `/api/automations/${initial!.id}`
+        : "/api/automations";
       const method = isEdit ? "PUT" : "POST";
 
       const res = await fetch(url, {
@@ -188,7 +246,7 @@ export function AutomationForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex max-w-2xl flex-col gap-6">
+    <form onSubmit={handleSubmit} className="flex max-w-2xl flex-col gap-8">
       {error && (
         <Alert variant="destructive">
           <AlertCircleIcon />
@@ -196,85 +254,87 @@ export function AutomationForm({
         </Alert>
       )}
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="name">Name</Label>
-        <Input
-          id="name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Review PRs on push"
-          required
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="mode">Mode</Label>
-        <Select value={mode} onValueChange={handleModeChange}>
-          <SelectTrigger id="mode">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="oneshot">One-shot (coding task)</SelectItem>
-              <SelectItem value="continuous">Continuous (PR review)</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        {mode === "continuous" && (
-          <p className="text-xs text-muted-foreground">
-            Code review agents run in read-only mode automatically.
-          </p>
-        )}
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="events">GitHub events</Label>
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="name">Name</FieldLabel>
           <Input
-            id="events"
+            id="name"
             type="text"
-            value={events}
-            onChange={(e) => setEvents(e.target.value)}
-            placeholder="push, pull_request.opened"
-            disabled={mode === "continuous"}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Review PRs on push"
+            required
           />
-          <p className="text-xs text-muted-foreground">Comma-separated</p>
+        </Field>
+
+        <Field>
+          <FieldLabel htmlFor="mode">Mode</FieldLabel>
+          <Select value={mode} onValueChange={handleModeChange}>
+            <SelectTrigger id="mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="oneshot">One-shot (coding task)</SelectItem>
+                <SelectItem value="continuous">
+                  Continuous (PR review)
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          {mode === "continuous" && (
+            <FieldDescription>
+              Code review agents run in read-only mode automatically.
+            </FieldDescription>
+          )}
+        </Field>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="events">GitHub events</FieldLabel>
+            <Input
+              id="events"
+              type="text"
+              value={events}
+              onChange={(e) => setEvents(e.target.value)}
+              placeholder="push, pull_request.opened"
+              disabled={mode === "continuous"}
+            />
+            <FieldDescription>Comma-separated</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="branches">Branch filter</FieldLabel>
+            <Input
+              id="branches"
+              type="text"
+              value={branches}
+              onChange={(e) => setBranches(e.target.value)}
+              placeholder="main, develop"
+            />
+            <FieldDescription>
+              Leave empty for all branches
+            </FieldDescription>
+          </Field>
         </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="branches">Branch filter</Label>
-          <Input
-            id="branches"
-            type="text"
-            value={branches}
-            onChange={(e) => setBranches(e.target.value)}
-            placeholder="main, develop"
+
+        <Field>
+          <FieldLabel htmlFor="prompt">Instructions</FieldLabel>
+          <Textarea
+            id="prompt"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={
+              mode === "continuous"
+                ? "Review this PR for bugs, security issues, and design problems..."
+                : "Review the code changes and create a PR with improvements..."
+            }
+            required
+            rows={6}
           />
-          <p className="text-xs text-muted-foreground">
-            Leave empty for all branches
-          </p>
-        </div>
-      </div>
+        </Field>
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="prompt">Instructions</Label>
-        <Textarea
-          id="prompt"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder={
-            mode === "continuous"
-              ? "Review this PR for bugs, security issues, and design problems..."
-              : "Review the code changes and create a PR with improvements..."
-          }
-          required
-          rows={6}
-        />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="repository">Repository</Label>
+        <Field>
+          <FieldLabel htmlFor="repository">Repository</FieldLabel>
           <Select value={repositoryId} onValueChange={setRepositoryId}>
             <SelectTrigger id="repository">
               <SelectValue placeholder="Select a repository" />
@@ -290,130 +350,166 @@ export function AutomationForm({
               </SelectGroup>
             </SelectContent>
           </Select>
-        </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="secret">API key</Label>
-          <Select value={agentSecretId} onValueChange={setAgentSecretId}>
-            <SelectTrigger id="secret">
-              <SelectValue placeholder="Select an API key" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="__none__">Select an API key</SelectItem>
-                {secrets.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.provider} — {s.label}
+        </Field>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="agentType">Agent</FieldLabel>
+            <Select value={agentType} onValueChange={handleAgentTypeChange}>
+              <SelectTrigger id="agentType">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {getEnabledAgents().map((a) => (
+                    <SelectItem key={a.value} value={a.value}>
+                      {a.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="secret">API key</FieldLabel>
+            <Select
+              value={agentSecretId}
+              onValueChange={setAgentSecretId}
+              disabled={filteredSecrets.length === 0}
+            >
+              <SelectTrigger id="secret">
+                <SelectValue placeholder="Select an API key" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="__none__">
+                    {filteredSecrets.length === 0
+                      ? "No keys available"
+                      : "Select an API key"}
                   </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+                  {filteredSecrets.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            {filteredSecrets.length === 0 && (
+              <FieldDescription>
+                No {getCompatibleProviders(agentType as AgentType).join("/")} keys found.{" "}
+                <Link
+                  href="/settings/secrets"
+                  className="underline underline-offset-4 hover:text-foreground"
+                >
+                  Add one
+                </Link>
+              </FieldDescription>
+            )}
+          </Field>
         </div>
-      </div>
 
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="agentType">Agent</Label>
-        <Select value={agentType} onValueChange={handleAgentTypeChange}>
-          <SelectTrigger id="agentType">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="claude">Claude Code</SelectItem>
-              <SelectItem value="codex">Codex</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </div>
+        <div className="grid gap-5 sm:grid-cols-2">
+          {models.length > 0 && (
+            <Field>
+              <FieldLabel htmlFor="model">Model</FieldLabel>
+              <Select
+                value={model || "__default__"}
+                onValueChange={(v) => setModel(v === "__default__" ? "" : v)}
+              >
+                <SelectTrigger id="model">
+                  <SelectValue placeholder="Default" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="__default__">Default</SelectItem>
+                    {models.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {models.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="model">Model</Label>
-            <Select value={model || "__default__"} onValueChange={(v) => setModel(v === "__default__" ? "" : v)}>
-              <SelectTrigger id="model">
-                <SelectValue placeholder="Default" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="__default__">Default</SelectItem>
-                  {models.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+          {thoughtLevels && thoughtLevels.length > 0 && (
+            <Field>
+              <FieldLabel htmlFor="effortLevel">Effort level</FieldLabel>
+              <Select
+                value={effortLevel || "__default__"}
+                onValueChange={(v) =>
+                  setEffortLevel(v === "__default__" ? "" : v)
+                }
+              >
+                <SelectTrigger id="effortLevel">
+                  <SelectValue placeholder="Default" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="__default__">Default</SelectItem>
+                    {thoughtLevels.map((l) => (
+                      <SelectItem key={l} value={l}>
+                        {l}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+        </div>
 
-        {thoughtLevels && thoughtLevels.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="effortLevel">Effort level</Label>
-            <Select value={effortLevel || "__default__"} onValueChange={(v) => setEffortLevel(v === "__default__" ? "" : v)}>
-              <SelectTrigger id="effortLevel">
-                <SelectValue placeholder="Default" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="__default__">Default</SelectItem>
-                  {thoughtLevels.map((l) => (
-                    <SelectItem key={l} value={l}>
-                      {l}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
+        {mode === "continuous" && (
+          <FieldSet>
+            <FieldLegend variant="label">Review settings</FieldLegend>
 
-      {mode === "continuous" && (
-        <fieldset className="flex flex-col gap-4 rounded-md border p-4">
-          <legend className="px-2 text-sm font-medium">Review settings</legend>
+            <div className="flex items-center gap-6">
+              <Field orientation="horizontal">
+                <Switch
+                  id="skipDrafts"
+                  size="sm"
+                  checked={skipDrafts}
+                  onCheckedChange={setSkipDrafts}
+                />
+                <FieldLabel htmlFor="skipDrafts">Skip draft PRs</FieldLabel>
+              </Field>
+              <Field orientation="horizontal">
+                <Switch
+                  id="skipBots"
+                  size="sm"
+                  checked={skipBots}
+                  onCheckedChange={setSkipBots}
+                />
+                <FieldLabel htmlFor="skipBots">Skip bot PRs</FieldLabel>
+              </Field>
+            </div>
 
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={skipDrafts}
-                onChange={(e) => setSkipDrafts(e.target.checked)}
-                className="rounded"
+            <Field>
+              <FieldLabel htmlFor="ignorePaths">Ignore paths</FieldLabel>
+              <Input
+                id="ignorePaths"
+                type="text"
+                value={ignorePaths}
+                onChange={(e) => setIgnorePaths(e.target.value)}
+                placeholder="*.lock, dist/**, docs/**"
               />
-              Skip draft PRs
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={skipBots}
-                onChange={(e) => setSkipBots(e.target.checked)}
-                className="rounded"
-              />
-              Skip bot PRs
-            </label>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="ignorePaths">Ignore paths</Label>
-            <Input
-              id="ignorePaths"
-              type="text"
-              value={ignorePaths}
-              onChange={(e) => setIgnorePaths(e.target.value)}
-              placeholder="*.lock, dist/**, docs/**"
-            />
-            <p className="text-xs text-muted-foreground">
-              Comma-separated glob patterns for files to skip in reviews
-            </p>
-          </div>
-        </fieldset>
-      )}
+              <FieldDescription>
+                Comma-separated glob patterns for files to skip in reviews
+              </FieldDescription>
+            </Field>
+          </FieldSet>
+        )}
+      </FieldGroup>
 
       <div className="flex gap-3">
         <Button type="submit" disabled={loading}>
-          {loading ? "Saving..." : isEdit ? "Update automation" : "Create automation"}
+          {loading
+            ? "Saving..."
+            : isEdit
+              ? "Update automation"
+              : "Create automation"}
         </Button>
         <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel

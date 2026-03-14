@@ -15,7 +15,12 @@ export type ModeIntent = "autonomous" | "read-only" | "interactive";
 
 // ── Profile shape ──
 
+export type ProviderType = "anthropic" | "openai";
+
 type AgentProfile = {
+  label: string;
+  enabled: boolean;
+  compatibleProviders: readonly ProviderType[];
   models: readonly string[];
   modes: readonly string[];
   thoughtLevels: readonly string[] | null;
@@ -32,6 +37,9 @@ const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"] as const;
 
 const PROFILES: Record<AgentType, AgentProfile> = {
   claude: {
+    label: "Claude Code",
+    enabled: true,
+    compatibleProviders: ["anthropic"],
     models: ["default", "sonnet", "opus", "haiku"],
     modes: ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
     thoughtLevels: null,
@@ -45,7 +53,11 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     filesystemConfigPath: (cwd) => `${cwd}/.claude/settings.json`,
   },
   codex: {
+    label: "Codex",
+    enabled: true,
+    compatibleProviders: ["openai"],
     models: [
+      "gpt-5.4-codex",
       "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
       "gpt-5.2-codex",
@@ -63,6 +75,9 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     effortMechanism: "sdk-thought-level",
   },
   opencode: {
+    label: "OpenCode",
+    enabled: false,
+    compatibleProviders: ["anthropic", "openai"],
     models: [],
     modes: ["build", "plan"],
     thoughtLevels: null,
@@ -74,6 +89,9 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     effortMechanism: null,
   },
   amp: {
+    label: "Amp",
+    enabled: false,
+    compatibleProviders: ["anthropic"],
     models: [],
     modes: ["default", "bypass"],
     thoughtLevels: null,
@@ -247,4 +265,20 @@ export function getModes(agentType: AgentType): readonly string[] {
 
 export function getThoughtLevels(agentType: AgentType): readonly string[] | null {
   return PROFILES[agentType].thoughtLevels;
+}
+
+export function getCompatibleProviders(agentType: AgentType): readonly ProviderType[] {
+  return PROFILES[agentType].compatibleProviders;
+}
+
+/** Enabled agents for UI dropdowns: `[{ value: "claude", label: "Claude Code" }, ...]` */
+export function getEnabledAgents(): { value: AgentType; label: string }[] {
+  return (Object.entries(PROFILES) as [AgentType, AgentProfile][])
+    .filter(([, p]) => p.enabled)
+    .map(([value, p]) => ({ value, label: p.label }));
+}
+
+/** Enabled agent type keys — for non-UI code (snapshots, validation, etc.) */
+export function getEnabledAgentTypes(): AgentType[] {
+  return getEnabledAgents().map((a) => a.value);
 }
