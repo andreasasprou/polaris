@@ -241,25 +241,43 @@ async function dispatchContinuousReview(
     interactiveSessionId: automationSession.interactiveSessionId,
   });
 
-  const handle = await tasks.trigger("continuous-pr-review", {
-    orgId,
-    automationId: automation.id,
-    automationSessionId: automationSession.id,
-    automationRunId: run.id,
-    installationId: input.installationId,
-    deliveryId: input.deliveryId,
-    normalizedEvent: prEvent,
-    checkRunId,
-  }, {
-    idempotencyKey: `run:${run.id}`,
-  });
-
-  if (handle.id || checkRunId) {
-    const { updateAutomationRun } = await import("@/lib/automations/actions");
-    await updateAutomationRun(run.id, {
-      ...(handle.id ? { triggerRunId: handle.id } : {}),
-      ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
+  try {
+    const handle = await tasks.trigger("continuous-pr-review", {
+      orgId,
+      automationId: automation.id,
+      automationSessionId: automationSession.id,
+      automationRunId: run.id,
+      installationId: input.installationId,
+      deliveryId: input.deliveryId,
+      normalizedEvent: prEvent,
+      checkRunId,
+    }, {
+      idempotencyKey: `run:${run.id}`,
     });
+
+    if (handle.id || checkRunId) {
+      const { updateAutomationRun } = await import("@/lib/automations/actions");
+      await updateAutomationRun(run.id, {
+        ...(handle.id ? { triggerRunId: handle.id } : {}),
+        ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
+      });
+    }
+  } catch (err) {
+    console.log("[router] Failed to trigger task — cancelling check:", err instanceof Error ? err.message : String(err));
+    // Cancel the eagerly-created check so it doesn't stay in_progress forever
+    if (checkRunId) {
+      try {
+        const { failCheck } = await import("@/lib/reviews/github");
+        await failCheck({
+          installationId: input.installationId,
+          owner: prEvent.owner,
+          repo: prEvent.repo,
+          checkRunId,
+          error: "Failed to start review task",
+        });
+      } catch { /* best-effort */ }
+    }
+    return false;
   }
 
   return true;

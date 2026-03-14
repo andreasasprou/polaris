@@ -289,7 +289,9 @@ export const continuousPrReviewTask = task({
           source: "automation",
           model: reviewAgentConfig.model,
           effortLevel,
-          branch: event.headRef,
+          // Don't pass branch: event.headRef — it doesn't exist on origin for fork PRs.
+          // The prompt fetches via refs/pull/<pr>/head and checks out the head SHA instead.
+          modeIntent: "read-only",
         });
 
         return { dispatchResult: result, targetSessionId: target };

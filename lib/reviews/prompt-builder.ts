@@ -204,15 +204,18 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
 
   // CRITICAL: Remote refs (origin/*) are NOT available. Use commit SHAs directly.
   // The repo is a shallow clone — must unshallow to access full diff history.
+  // Use refs/pull/<pr>/head to fetch the PR head — works for both forks and same-repo PRs.
+  // Never interpolate raw ref names into commands (shell injection risk via branch names).
+  const prNumber = input.event.prNumber;
   parts.push(`### Setup — run these commands first`);
   parts.push(
     `\`\`\`bash`,
     `# 1. Unshallow the clone so all commits are available for diffing`,
     `git fetch --unshallow 2>/dev/null || true`,
-    `# 2. Fetch the base branch so its commits are available for diffing`,
-    `git fetch origin ${input.event.baseRef}`,
-    `# 3. Make sure you're on the PR head branch so file reads reflect the PR's code`,
-    `git checkout ${input.event.headRef} 2>/dev/null || git checkout ${headSha}`,
+    `# 2. Fetch the PR head and base branch commits (works for forks too)`,
+    `git fetch origin refs/pull/${prNumber}/head`,
+    `# 3. Checkout the PR head commit so file reads reflect the PR's code`,
+    `git checkout ${headSha}`,
     `\`\`\``,
   );
 
