@@ -20,7 +20,10 @@ export async function GET() {
     exp: Math.floor(Date.now() / 1000) + 300, // 5 min
   });
 
-  const githubAppSlug = process.env.GITHUB_APP_SLUG ?? "polaris-agent";
+  const githubAppSlug = process.env.GITHUB_APP_SLUG;
+  if (!githubAppSlug) {
+    throw new Error("GITHUB_APP_SLUG environment variable is required");
+  }
   const installUrl = `https://github.com/apps/${githubAppSlug}/installations/new?state=${encodeURIComponent(state)}`;
 
   return NextResponse.redirect(installUrl);
