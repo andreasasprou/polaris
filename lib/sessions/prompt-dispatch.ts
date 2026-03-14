@@ -318,6 +318,7 @@ export async function dispatchPromptToSession(input: {
           modeOverride: input.modeOverride,
           model: input.model,
           effortLevel: input.effortLevel,
+          modeIntent: input.modeIntent,
         },
         { tags: [`session:${sessionId}`] },
       );
