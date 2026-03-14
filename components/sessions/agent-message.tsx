@@ -13,7 +13,7 @@ export function AgentMessage({ text }: AgentMessageProps) {
       <div className="text-sm text-foreground">
         <MarkdownRenderer>{text}</MarkdownRenderer>
       </div>
-      <div className="absolute -right-1 top-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
+      <div className="absolute right-0 top-1 opacity-0 transition-opacity group-hover/msg:opacity-100">
         <CopyButton text={text} />
       </div>
     </div>
