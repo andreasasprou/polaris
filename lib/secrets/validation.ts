@@ -27,7 +27,7 @@ export function validateSecretValue({
     }
 
     case "openai": {
-      if (trimmed.startsWith("sk-")) {
+      if (trimmed.startsWith("sk-") && !trimmed.startsWith("sk-ant-")) {
         return { valid: true };
       }
       // Treat as base64-encoded Codex auth.json

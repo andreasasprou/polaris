@@ -133,7 +133,17 @@ export async function GET(req: NextRequest) {
   const onboardingComplete = !!meta?.onboardingCompletedAt;
 
   if (!onboardingComplete) {
-    return NextResponse.redirect(new URL("/onboarding", baseUrl));
+    // Legacy orgs (created before onboarding) have no onboardingCompletedAt
+    // but may have existing automations — don't force them into the wizard
+    const { count } = await import("drizzle-orm");
+    const { automations } = await import("@/lib/automations/schema");
+    const [result] = await db
+      .select({ count: count() })
+      .from(automations)
+      .where(eq(automations.organizationId, orgId));
+    if ((result?.count ?? 0) === 0) {
+      return NextResponse.redirect(new URL("/onboarding", baseUrl));
+    }
   }
 
   if (orgCreated) {

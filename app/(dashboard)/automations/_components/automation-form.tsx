@@ -99,7 +99,7 @@ export function AutomationForm({
   const [agentType, setAgentType] = useState(initial?.agentType ?? "claude");
   const [model, setModel] = useState(initial?.model ?? "");
   const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(
-    initial?.modelParams?.effortLevel ?? "high",
+    initial?.modelParams?.effortLevel ?? "",
   );
   const [repositoryId, setRepositoryId] = useState(
     initial?.repositoryId || "__none__",

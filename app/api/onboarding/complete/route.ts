@@ -354,11 +354,23 @@ export async function POST(req: NextRequest) {
       { status: 404 },
     );
   }
+  if (secret.revokedAt) {
+    return NextResponse.json(
+      { error: "This API key has been revoked. Please add a new one." },
+      { status: 400 },
+    );
+  }
   const PROVIDER_TO_AGENT: Record<string, string> = {
     anthropic: "claude",
     openai: "codex",
   };
-  const agentType = PROVIDER_TO_AGENT[secret.provider] ?? "claude";
+  const agentType = PROVIDER_TO_AGENT[secret.provider];
+  if (!agentType) {
+    return NextResponse.json(
+      { error: `Unsupported provider: ${secret.provider}` },
+      { status: 400 },
+    );
+  }
 
   // Create template automations + mark onboarding complete atomically
   const created: string[] = [];
