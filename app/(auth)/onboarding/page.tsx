@@ -50,12 +50,22 @@ export default function OnboardingPage() {
     async function init() {
       // Check if user already has an org with completed onboarding
       try {
+        // Use the session's active org if available, otherwise pick the first
+        const session = await authClient.getSession();
+        const activeOrgId = session.data?.session?.activeOrganizationId;
+
         const orgs = await authClient.organization.list();
         if (orgs.data && orgs.data.length > 0) {
-          // Set first org as active
-          await authClient.organization.setActive({
-            organizationId: orgs.data[0].id,
-          });
+          const orgToCheck = activeOrgId
+            ? orgs.data.find((o) => o.id === activeOrgId) ?? orgs.data[0]
+            : orgs.data[0];
+
+          // Only set active if not already the right org
+          if (orgToCheck.id !== activeOrgId) {
+            await authClient.organization.setActive({
+              organizationId: orgToCheck.id,
+            });
+          }
 
           // Check if onboarding is complete
           const res = await fetch("/api/onboarding/status");

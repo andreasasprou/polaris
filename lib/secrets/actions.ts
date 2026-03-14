@@ -78,6 +78,10 @@ export async function updateSecret(input: {
       createdAt: secrets.createdAt,
     });
 
+  if (!row) {
+    throw new Error("Cannot update a revoked secret");
+  }
+
   return row;
 }
 

@@ -28,8 +28,19 @@ export default async function DashboardLayout({
     ? (JSON.parse(org.metadata) as Record<string, unknown>)
     : null;
 
+  // Only gate new orgs — if the org has automations or runs, treat as complete
+  // This prevents forcing legacy orgs (created before onboarding) through the wizard
   if (!meta?.onboardingCompletedAt) {
-    redirect("/onboarding");
+    // Check if this org has any automations — if so, it's a legacy org, skip gating
+    const { count } = await import("drizzle-orm");
+    const { automations } = await import("@/lib/automations/schema");
+    const [result] = await db
+      .select({ count: count() })
+      .from(automations)
+      .where(eq(automations.organizationId, orgId));
+    if ((result?.count ?? 0) === 0) {
+      redirect("/onboarding");
+    }
   }
 
   return (

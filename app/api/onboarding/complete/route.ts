@@ -274,8 +274,9 @@ function getTemplateForIntent(intent: Intent): TemplateConfig | null {
         allowPush: false,
         allowPrCreate: false,
         prReviewConfig: {
-          skipDraftPrs: true,
-          skipBotPrs: true,
+          customPrompt: PR_REVIEW_PROMPT,
+          skipDrafts: true,
+          skipBots: true,
           ignorePaths: [],
         },
       };
@@ -359,56 +360,60 @@ export async function POST(req: NextRequest) {
   };
   const agentType = PROVIDER_TO_AGENT[secret.provider] ?? "claude";
 
-  // Create template automations for each automation-producing intent
+  // Create template automations + mark onboarding complete atomically
   const created: string[] = [];
-  for (const intent of intents) {
-    const template = getTemplateForIntent(intent);
-    if (!template) continue;
+  await db.transaction(async (tx) => {
+    for (const intent of intents) {
+      const template = getTemplateForIntent(intent);
+      if (!template) continue;
 
-    await createAutomation({
-      organizationId: orgId,
-      createdBy: session.user.id,
-      name: template.name,
-      mode: template.mode,
-      triggerType: template.triggerType,
-      triggerConfig: template.triggerConfig,
-      prompt: template.prompt,
-      agentType,
-      repositoryId: repo.id,
-      agentSecretId: secretId,
-      allowPush: template.allowPush,
-      allowPrCreate: template.allowPrCreate,
-      prReviewConfig: template.prReviewConfig,
-    });
-    created.push(template.name);
-  }
-
-  // Mark onboarding complete on the org — merge with existing metadata
-  const [existingOrg] = await db
-    .select({ metadata: organization.metadata })
-    .from(organization)
-    .where(eq(organization.id, orgId))
-    .limit(1);
-
-  let existingMeta: Record<string, unknown> = {};
-  try {
-    if (existingOrg?.metadata) {
-      existingMeta = JSON.parse(existingOrg.metadata) as Record<string, unknown>;
+      await tx
+        .insert((await import("@/lib/automations/schema")).automations)
+        .values({
+          organizationId: orgId,
+          createdBy: session.user.id,
+          name: template.name,
+          mode: template.mode,
+          triggerType: template.triggerType,
+          triggerConfig: template.triggerConfig,
+          prompt: template.prompt,
+          agentType,
+          repositoryId: repo.id,
+          agentSecretId: secretId,
+          allowPush: template.allowPush,
+          allowPrCreate: template.allowPrCreate,
+          prReviewConfig: template.prReviewConfig,
+        });
+      created.push(template.name);
     }
-  } catch {
-    // Corrupted metadata — start fresh
-  }
 
-  const meta = JSON.stringify({
-    ...existingMeta,
-    onboardingCompletedAt: new Date().toISOString(),
-    intents,
+    // Merge with existing metadata
+    const [existingOrg] = await tx
+      .select({ metadata: organization.metadata })
+      .from(organization)
+      .where(eq(organization.id, orgId))
+      .limit(1);
+
+    let existingMeta: Record<string, unknown> = {};
+    try {
+      if (existingOrg?.metadata) {
+        existingMeta = JSON.parse(existingOrg.metadata) as Record<string, unknown>;
+      }
+    } catch {
+      // Corrupted metadata — start fresh
+    }
+
+    const meta = JSON.stringify({
+      ...existingMeta,
+      onboardingCompletedAt: new Date().toISOString(),
+      intents,
+    });
+
+    await tx
+      .update(organization)
+      .set({ metadata: meta })
+      .where(eq(organization.id, orgId));
   });
-
-  await db
-    .update(organization)
-    .set({ metadata: meta })
-    .where(eq(organization.id, orgId));
 
   return NextResponse.json({
     completed: true,
