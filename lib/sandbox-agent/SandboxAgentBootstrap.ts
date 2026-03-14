@@ -50,8 +50,7 @@ export class SandboxAgentBootstrap {
         && tar -xzf /tmp/gh.tar.gz -C /tmp \
         && mv "/tmp/gh_\${GH_VERSION}_linux_amd64/bin/gh" "$HOME/bin/gh" \
         && chmod +x "$HOME/bin/gh" \
-        && rm -rf /tmp/gh.tar.gz /tmp/gh_* \
-        && { grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null || echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"; }
+        && rm -rf /tmp/gh.tar.gz /tmp/gh_*
       }`,
       { cwd: "/" },
     );
@@ -112,16 +111,13 @@ export class SandboxAgentBootstrap {
     port: number = DEFAULT_PORT,
     env: Record<string, string> = {},
   ): Promise<string> {
-    // Start server in detached mode
+    // Start server in detached mode, wrapping in a shell to ensure $HOME/bin
+    // (where gh CLI is installed) is on PATH for the server and child agents.
     await this.sandbox.runCommand({
-      cmd: "sandbox-agent",
+      cmd: "sh",
       args: [
-        "server",
-        "--no-token",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        String(port),
+        "-c",
+        `export PATH="$HOME/bin:$PATH" && exec sandbox-agent server --no-token --host 0.0.0.0 --port ${port}`,
       ],
       env,
       detached: true,
