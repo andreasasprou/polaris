@@ -28,6 +28,7 @@ import {
   getModes,
   getThoughtLevels,
   getCompatibleProviders,
+  getEnabledAgents,
 } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
 import { AlertCircleIcon } from "lucide-react";
@@ -350,8 +351,11 @@ export function AutomationForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectItem value="claude">Claude Code</SelectItem>
-                  <SelectItem value="codex">Codex</SelectItem>
+                  {getEnabledAgents().map((a) => (
+                    <SelectItem key={a.value} value={a.value}>
+                      {a.label}
+                    </SelectItem>
+                  ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
