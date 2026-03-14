@@ -83,12 +83,27 @@ export function useSessionChat({
     setDbLoading(true);
     setDbError(null);
     try {
-      const r = await fetch(
-        `/api/sessions/${sdkSessionId}/events?limit=500`,
-      );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      setDbEvents(data.items ?? []);
+      // Paginate through all events — sessions with many tool calls
+      // can easily exceed a single page. Without full pagination,
+      // tail events (including the final response) get lost on refresh.
+      const pageSize = 500;
+      let allItems: RawEvent[] = [];
+      let offset = 0;
+
+      for (;;) {
+        const r = await fetch(
+          `/api/sessions/${sdkSessionId}/events?limit=${pageSize}&offset=${offset}`,
+        );
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        const items: RawEvent[] = data.items ?? [];
+        allItems = allItems.concat(items);
+
+        if (items.length < pageSize) break; // last page
+        offset += pageSize;
+      }
+
+      setDbEvents(allItems);
     } catch (err) {
       setDbError(err instanceof Error ? err : new Error(String(err)));
     } finally {

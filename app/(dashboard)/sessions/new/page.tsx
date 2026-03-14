@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getEnabledAgents } from "@/lib/sandbox-agent/agent-profiles";
 
 type Repo = {
   id: string;
@@ -29,12 +30,7 @@ type Secret = {
   label: string;
 };
 
-const AGENT_TYPES = [
-  { value: "claude", label: "Claude" },
-  { value: "codex", label: "Codex" },
-  { value: "opencode", label: "OpenCode" },
-  { value: "amp", label: "Amp" },
-];
+const AGENT_TYPES = getEnabledAgents();
 
 export default function NewSessionPage() {
   const router = useRouter();

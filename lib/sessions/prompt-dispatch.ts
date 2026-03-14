@@ -54,6 +54,8 @@ export async function dispatchPromptToSession(input: {
   branch?: string;
   /** Semantic mode intent — determines agent permissions scope. */
   modeIntent?: "autonomous" | "read-only" | "interactive";
+  /** Override the agent type (e.g. when automation config changed since session creation). */
+  agentType?: AgentType;
 }): Promise<DispatchResult> {
   const { sessionId, orgId, prompt } = input;
   const requestId = input.requestId ?? randomUUID();
@@ -61,6 +63,13 @@ export async function dispatchPromptToSession(input: {
   let session = await getInteractiveSession(sessionId);
   if (!session || session.organizationId !== orgId) {
     return { tier: "unavailable", error: "Session not found" };
+  }
+
+  // If caller provides an agentType override (e.g. automation changed agent),
+  // update the session so the task payload and future dispatches use the correct type.
+  if (input.agentType && input.agentType !== session.agentType) {
+    await updateInteractiveSession(sessionId, { agentType: input.agentType });
+    session = { ...session, agentType: input.agentType };
   }
 
   // ── Run liveness check ──

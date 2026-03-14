@@ -32,6 +32,7 @@ export async function updateInteractiveSession(
   id: string,
   input: Partial<{
     status: string;
+    agentType: string;
     sdkSessionId: string;
     sandboxId: string;
     sandboxBaseUrl: string;
