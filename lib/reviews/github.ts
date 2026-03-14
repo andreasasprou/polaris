@@ -156,8 +156,11 @@ export async function isAncestor(input: {
       base: input.baseSha,
       head: input.headSha,
     });
-    // If the base is behind or at the head, it's an ancestor
-    return data.status === "behind" || data.status === "identical" || data.status === "ahead";
+    // "behind" = base is behind head (base is an ancestor of head) ✓
+    // "identical" = same commit ✓
+    // "ahead" = base is AHEAD of head (base has commits head doesn't) ✗
+    //   This happens after force-push — must fall back to full review
+    return data.status === "behind" || data.status === "identical";
   } catch {
     // If compare fails (e.g., force push removed the base commit), it's not an ancestor
     return false;

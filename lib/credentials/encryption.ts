@@ -8,7 +8,7 @@ function getKey(): Buffer {
   const key = process.env.ENCRYPTION_KEY;
   if (!key) throw new Error("ENCRYPTION_KEY env var is required");
   // Accept hex-encoded 32-byte key (64 hex chars) or raw 32-byte string
-  if (key.length === 64) return Buffer.from(key, "hex");
+  if (key.length === 64 && /^[0-9a-fA-F]+$/.test(key)) return Buffer.from(key, "hex");
   if (key.length === 32) return Buffer.from(key, "utf-8");
   throw new Error("ENCRYPTION_KEY must be 32 bytes (64 hex chars or 32 raw chars)");
 }

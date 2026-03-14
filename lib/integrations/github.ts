@@ -109,13 +109,17 @@ export function verifyWebhookSignature(
   const secret = process.env.GITHUB_APP_WEBHOOK_SECRET;
   if (!secret) throw new Error("GITHUB_APP_WEBHOOK_SECRET not configured");
 
-  const expected = `sha256=${crypto
+  // Compare raw HMAC digest buffers (fixed 32 bytes) to avoid timing leaks
+  // from variable-length string comparison
+  const prefix = "sha256=";
+  if (!signature.startsWith(prefix)) return false;
+
+  const expectedDigest = crypto
     .createHmac("sha256", secret)
     .update(payload)
-    .digest("hex")}`;
+    .digest();
+  const signatureDigest = Buffer.from(signature.slice(prefix.length), "hex");
 
-  const sigBuf = Buffer.from(signature);
-  const expBuf = Buffer.from(expected);
-  if (sigBuf.length !== expBuf.length) return false;
-  return crypto.timingSafeEqual(sigBuf, expBuf);
+  if (expectedDigest.length !== signatureDigest.length) return false;
+  return crypto.timingSafeEqual(expectedDigest, signatureDigest);
 }
