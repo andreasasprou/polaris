@@ -880,7 +880,11 @@ export const interactiveSessionTask = task({
     // throw a unique constraint violation — catch it and just failTurn.
     if (payload.requestId) {
       const errorMsg =
-        error instanceof Error ? error.message : "Session terminated unexpectedly";
+        error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && "message" in error
+            ? String((error as Record<string, unknown>).message)
+            : "Session terminated unexpectedly";
       try {
         await createTurn({
           sessionId: payload.sessionId,
