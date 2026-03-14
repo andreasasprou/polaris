@@ -210,9 +210,9 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
   parts.push(`### Setup — run these commands first`);
   parts.push(
     `\`\`\`bash`,
-    `# 1. Unshallow the clone so all commits are available for diffing`,
-    `git fetch --unshallow 2>/dev/null || true`,
-    `# 2. Fetch the PR head and base branch commits (works for forks too)`,
+    `# 1. Unshallow and fetch all branches so base branch commits are available`,
+    `git fetch --unshallow 2>/dev/null || git fetch origin`,
+    `# 2. Fetch the PR head (works for forks too — refs/pull is always on the base repo)`,
     `git fetch origin refs/pull/${prNumber}/head`,
     `# 3. Checkout the PR head commit so file reads reflect the PR's code`,
     `git checkout ${headSha}`,

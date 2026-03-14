@@ -61,8 +61,12 @@ export const continuousPrReviewTask = task({
 
     let checkRunId: string | undefined = payload.checkRunId;
 
-    /** Cancel the eagerly-created check (skipped/queued). Non-fatal. */
-    const cancelCheck = async (summary: string) => {
+    /**
+     * Complete the eagerly-created check for early-exit paths. Non-fatal.
+     * - Filter-skip: APPROVE (review decided this PR doesn't need review — that's a pass)
+     * - Queued: ATTENTION/neutral (review hasn't run yet — don't show green)
+     */
+    const cancelCheck = async (summary: string, verdict: "APPROVE" | "ATTENTION" = "APPROVE") => {
       if (!checkRunId) return;
       try {
         await completeCheck({
@@ -70,7 +74,7 @@ export const continuousPrReviewTask = task({
           owner: event.owner,
           repo: event.repo,
           checkRunId,
-          verdict: "APPROVE",
+          verdict,
           summary,
         });
       } catch (err) {
@@ -90,7 +94,7 @@ export const continuousPrReviewTask = task({
     if (!lockAcquired) {
       // Queue this request for later
       logger.info("Lock not acquired — queuing review request");
-      await cancelCheck("Queued — another review is in progress");
+      await cancelCheck("Queued — another review is in progress", "ATTENTION");
       await setPendingReviewRequest(automationSessionId, {
         reason: event.action as import("@/lib/reviews/types").QueuedReviewRequest["reason"],
         headSha: event.headSha,
