@@ -39,6 +39,7 @@ function CopyButton({ text }: { text: string }) {
       size="sm"
       className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
       onClick={handleCopy}
+      aria-label={copied ? "Copied" : "Copy command"}
     >
       {copied ? (
         <CheckIcon className="h-3.5 w-3.5" />

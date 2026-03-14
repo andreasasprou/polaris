@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,6 +139,16 @@ export function AutomationForm({
       providers.includes(s.provider as "anthropic" | "openai"),
     );
   }, [agentType, secrets]);
+
+  // Sync selected key with filtered list (handles stale initial values & deleted keys)
+  useEffect(() => {
+    if (
+      agentSecretId !== "__none__" &&
+      !filteredSecrets.some((s) => s.id === agentSecretId)
+    ) {
+      setAgentSecretId("__none__");
+    }
+  }, [agentSecretId, filteredSecrets]);
 
   // Reset model/effort/key when agent type changes if current value is invalid
   const handleAgentTypeChange = (newType: string) => {
