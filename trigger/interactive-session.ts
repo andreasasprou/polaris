@@ -846,10 +846,15 @@ export const interactiveSessionTask = task({
     }
   },
 
-  onFailure: async ({ payload: rawPayload }) => {
+  onFailure: async ({ payload: rawPayload, error }) => {
     const payload = rawPayload as unknown as InteractiveSessionPayload;
-    const { updateInteractiveSession, getInteractiveSession, updateRuntime } =
-      await import("@/lib/sessions/actions");
+    const {
+      updateInteractiveSession,
+      getInteractiveSession,
+      updateRuntime,
+      createTurn,
+      failTurn,
+    } = await import("@/lib/sessions/actions");
 
     const session = await getInteractiveSession(payload.sessionId);
     if (session?.sandboxId) {
@@ -867,6 +872,31 @@ export const interactiveSessionTask = task({
         status: "failed",
         endedAt: new Date(),
       });
+    }
+
+    // Write a failed turn so the orchestrator's waitForTurnCompletion() unblocks
+    // instead of polling for 25 min on a turn that will never arrive.
+    // If run() already created the turn (crash happened later), createTurn will
+    // throw a unique constraint violation — catch it and just failTurn.
+    if (payload.requestId) {
+      const errorMsg =
+        error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && "message" in error
+            ? String((error as Record<string, unknown>).message)
+            : "Session terminated unexpectedly";
+      try {
+        await createTurn({
+          sessionId: payload.sessionId,
+          requestId: payload.requestId,
+          runtimeId: payload.runtimeId,
+          source: "automation",
+          prompt: "",
+        });
+      } catch {
+        // Turn already exists from run() — that's fine, we'll fail it below
+      }
+      await failTurn(payload.requestId, payload.sessionId, errorMsg);
     }
   },
 });
