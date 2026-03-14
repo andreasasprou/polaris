@@ -322,6 +322,12 @@ export async function POST(req: NextRequest) {
 
   // Find the repository in DB
   const [owner, name] = repositoryFullName.split("/");
+  if (!owner || !name) {
+    return NextResponse.json(
+      { error: "Invalid repository format. Expected 'owner/name'." },
+      { status: 400 },
+    );
+  }
   const [repo] = await db
     .select()
     .from(repositories)
@@ -365,8 +371,19 @@ export async function POST(req: NextRequest) {
     created.push(template.name);
   }
 
-  // Mark onboarding complete on the org
+  // Mark onboarding complete on the org — merge with existing metadata
+  const [existingOrg] = await db
+    .select({ metadata: organization.metadata })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+
+  const existingMeta = existingOrg?.metadata
+    ? (JSON.parse(existingOrg.metadata) as Record<string, unknown>)
+    : {};
+
   const meta = JSON.stringify({
+    ...existingMeta,
     onboardingCompletedAt: new Date().toISOString(),
     intents,
   });

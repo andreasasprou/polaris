@@ -26,7 +26,7 @@ export async function createSecret(input: {
       organizationId: input.organizationId,
       provider: input.provider,
       label: input.label,
-      encryptedValue: encrypt(input.value),
+      encryptedValue: encrypt(input.value.trim()),
       createdBy: input.createdBy,
     })
     .returning({
@@ -62,7 +62,7 @@ export async function updateSecret(input: {
 
   const [row] = await db
     .update(secrets)
-    .set({ encryptedValue: encrypt(input.value) })
+    .set({ encryptedValue: encrypt(input.value.trim()) })
     .where(
       and(
         eq(secrets.id, input.id),

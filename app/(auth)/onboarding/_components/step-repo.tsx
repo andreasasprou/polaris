@@ -57,9 +57,11 @@ export function StepRepo({
         if (res.ok) {
           const data = await res.json();
           setRepos(data.repos ?? []);
+        } else {
+          setError("Failed to load repositories");
         }
       } catch {
-        // Failed to fetch repos
+        setError("Failed to load repositories");
       } finally {
         setLoadingRepos(false);
       }

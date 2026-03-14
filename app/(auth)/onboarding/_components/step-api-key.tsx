@@ -225,7 +225,7 @@ export function StepApiKey({
               <CheckCircleIcon className="size-4 shrink-0" />
               Credentials validated
             </div>
-            <Button type="button" onClick={() => onContinue(secretId!)}>
+            <Button type="button" onClick={() => secretId && onContinue(secretId)}>
               Continue
             </Button>
           </div>

@@ -132,14 +132,18 @@ export default function OnboardingPage() {
         )}
 
         {state.step === 4 && (
-          <StepRepo
-            intents={state.intents}
-            secretId={state.secretId!}
-            onComplete={() => {
-              clearState();
-              router.push("/dashboard");
-            }}
-          />
+          state.secretId ? (
+            <StepRepo
+              intents={state.intents}
+              secretId={state.secretId}
+              onComplete={() => {
+                clearState();
+                router.push("/dashboard");
+              }}
+            />
+          ) : (
+            <StepApiKey onContinue={(secretId) => updateState({ step: 4, secretId })} />
+          )
         )}
       </div>
     </div>
