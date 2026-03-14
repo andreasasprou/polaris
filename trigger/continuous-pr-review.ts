@@ -78,7 +78,7 @@ export const continuousPrReviewTask = task({
           summary,
         });
       } catch (err) {
-        logger.warn("Failed to cancel check", { error: err instanceof Error ? err.message : String(err) });
+        logger.warn(`Failed to cancel check: ${err instanceof Error ? err.message : String(err)}`);
       }
     };
 
@@ -120,7 +120,7 @@ export const continuousPrReviewTask = task({
         return shouldReviewPR(event, config);
       });
       if (!filterResult.review) {
-        logger.info("Skipped by filters", { reason: filterResult.reason });
+        logger.info(`Skipped by filters: ${filterResult.reason}`);
         await cancelCheck(`Skipped: ${filterResult.reason}`);
         await updateAutomationRun(automationRunId, {
           status: "completed",
@@ -146,9 +146,9 @@ export const continuousPrReviewTask = task({
             });
             checkRunId = check.checkRunId;
           } catch (err) {
-            logger.warn("Failed to create check run — continuing without it", {
-              error: err instanceof Error ? err.message : String(err),
-            });
+            logger.warn(
+              `Failed to create check run — continuing without it: ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
         });
       }
@@ -191,10 +191,10 @@ export const continuousPrReviewTask = task({
               from = sessionMetadata.lastReviewedSha;
             } else {
               scope = "full";
-              logger.info("Force push detected — falling back to full review", {
-                lastReviewedSha: sessionMetadata.lastReviewedSha,
-                headSha: to,
-              });
+              logger.info(
+                `Force push detected — falling back to full review ` +
+                `(lastReviewedSha=${sessionMetadata.lastReviewedSha?.slice(0, 8)}, headSha=${to.slice(0, 8)})`,
+              );
             }
           }
 
@@ -304,7 +304,10 @@ export const continuousPrReviewTask = task({
       });
 
       if (dispatchResult.tier === "unavailable") {
-        throw new Error(`Dispatch failed: ${dispatchResult.error}`);
+        throw new Error(
+          `Dispatch failed: ${dispatchResult.error} ` +
+          `(sessionId=${targetSessionId.slice(0, 8)}, automationSessionId=${automationSessionId.slice(0, 8)})`,
+        );
       }
 
       await updateAutomationRun(automationRunId, {
@@ -325,7 +328,7 @@ export const continuousPrReviewTask = task({
 
       if (turnResult.status !== "completed") {
         const errorMsg = turnResult.error ?? "Turn did not complete successfully";
-        logger.error("Turn failed", { requestId, error: errorMsg });
+        logger.error(`Turn failed: ${errorMsg} (requestId=${requestId}, status=${turnResult.status})`);
 
         if (checkRunId) {
           await failCheck({
@@ -374,9 +377,7 @@ export const continuousPrReviewTask = task({
               ),
             });
           } catch (err) {
-            logger.warn("Failed to mark previous comment stale", {
-              error: err instanceof Error ? err.message : String(err),
-            });
+            logger.warn(`Failed to mark previous comment stale: ${err instanceof Error ? err.message : String(err)}`);
           }
         });
       }
@@ -428,9 +429,7 @@ export const continuousPrReviewTask = task({
           return result.commentId;
         });
       } catch (err) {
-        logger.error("Failed to post review comment — state already saved", {
-          error: err instanceof Error ? err.message : String(err),
-        });
+        logger.error(`Failed to post review comment — state already saved: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Update comment ID if we got one
@@ -451,9 +450,7 @@ export const continuousPrReviewTask = task({
             verdict: parsed.verdict,
             summary: parsed.summary,
           }).catch((err: unknown) => {
-            logger.warn("Failed to complete check", {
-              error: err instanceof Error ? err.message : String(err),
-            });
+            logger.warn(`Failed to complete check: ${err instanceof Error ? err.message : String(err)}`);
           });
         } else if (checkRunId) {
           await completeCheck({
@@ -504,9 +501,7 @@ export const continuousPrReviewTask = task({
 
       // ── 17. Dispatch queued review (after lock release so it can acquire) ──
       if (pending) {
-        logger.info("Dispatching queued review request", {
-          headSha: pending.headSha,
-        });
+        logger.info(`Dispatching queued review request (headSha=${pending.headSha.slice(0, 8)})`);
         try {
           const { createAutomationRun } = await import("@/lib/automations/actions");
           const run = await createAutomationRun({
@@ -537,9 +532,7 @@ export const continuousPrReviewTask = task({
             idempotencyKey: `run:${run.id}`,
           });
         } catch (err) {
-          logger.error("Failed to dispatch queued review", {
-            error: err instanceof Error ? err.message : String(err),
-          });
+          logger.error(`Failed to dispatch queued review: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }

@@ -305,11 +305,26 @@ export async function dispatchPromptToSession(input: {
     }
   }
 
-  // ── Tier 5: Fresh — brand new session, never started ──
-  // The session row exists but no task has ever been triggered for it.
-  // This happens when the continuous review router pre-creates the session
-  // and the orchestrator dispatches the first prompt.
-  if (session.status === "creating" && !session.triggerRunId && !session.sdkSessionId) {
+  // ── Tier 5: Fresh — brand new or failed-before-start session ──
+  // Matches when no sdkSessionId exists (nothing to resume) and the session is
+  // either freshly created or failed before the agent ever started.
+  const isNeverStarted =
+    !session.sdkSessionId &&
+    ((session.status === "creating" && !session.triggerRunId) || session.status === "failed");
+  if (isNeverStarted) {
+    // For failed sessions, CAS to "creating" to prevent concurrent resets
+    if (session.status === "failed") {
+      console.log(`[dispatch] session=${sessionId.slice(0, 8)} failed before start — resetting to fresh`);
+      const casResult = await casSessionStatus(sessionId, ["failed"], "creating", {
+        error: null,
+        endedAt: null,
+        triggerRunId: null,
+      });
+      if (!casResult) {
+        return { tier: "unavailable", error: "Session is already being reset" };
+      }
+    }
+
     try {
       const creds = await resolveSessionCredentials(session);
 
