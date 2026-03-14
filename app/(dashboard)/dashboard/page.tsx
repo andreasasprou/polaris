@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -12,6 +12,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/status-badge";
+import {
+  GitPullRequestIcon,
+  ZapIcon,
+  MessageSquareIcon,
+  ArrowRightIcon,
+} from "lucide-react";
 
 type Stats = {
   activeAutomations: number;
@@ -32,9 +38,35 @@ type Run = {
   createdAt: string;
 };
 
+type Automation = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  mode: string;
+};
+
+const INTENT_CARDS = {
+  "pr-review": {
+    icon: GitPullRequestIcon,
+    title: "PR Review Bot",
+    description: "Automatically review pull requests with AI-powered code analysis.",
+  },
+  "coding-tasks": {
+    icon: ZapIcon,
+    title: "Coding Task Automation",
+    description: "Run coding agents on push events to automate implementation work.",
+  },
+  "chat": {
+    icon: MessageSquareIcon,
+    title: "Interactive Session",
+    description: "Start a live coding session with an AI agent.",
+  },
+} as const;
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentRuns, setRecentRuns] = useState<Run[]>([]);
+  const [automations, setAutomations] = useState<Automation[]>([]);
 
   useEffect(() => {
     fetch("/api/dashboard/stats")
@@ -45,6 +77,11 @@ export default function DashboardPage() {
     fetch("/api/runs?limit=10")
       .then((r) => r.json())
       .then((data) => setRecentRuns(data.runs ?? []))
+      .catch(() => {});
+
+    fetch("/api/automations")
+      .then((r) => r.json())
+      .then((data) => setAutomations(data.automations ?? []))
       .catch(() => {});
   }, []);
 
@@ -85,7 +122,39 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {recentRuns.length === 0 ? (
+        {recentRuns.length === 0 && automations.length > 0 ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {automations.map((auto) => {
+              const intentKey = auto.name === "PR Review Bot" ? "pr-review"
+                : auto.name === "Coding Task Automation" ? "coding-tasks"
+                : null;
+              const card = intentKey ? INTENT_CARDS[intentKey] : null;
+              if (!card) return null;
+              return (
+                <Link key={auto.id} href={`/automations/${auto.id}`}>
+                  <Card className="transition-colors hover:bg-muted/50">
+                    <CardHeader>
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
+                          <card.icon className="size-5 text-primary" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-base">{card.title}</CardTitle>
+                          <CardDescription>{card.description}</CardDescription>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <span className="flex items-center gap-1 text-sm text-primary">
+                        Configure automation <ArrowRightIcon className="size-3" />
+                      </span>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        ) : recentRuns.length === 0 ? (
           <p className="text-sm text-muted-foreground">No runs yet.</p>
         ) : (
           <Card>
