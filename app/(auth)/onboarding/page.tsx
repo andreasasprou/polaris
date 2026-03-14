@@ -3,75 +3,100 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
+import { StepIndicator } from "./_components/step-indicator";
+import { StepIntent, type Intent } from "./_components/step-intent";
+import { StepGitHub } from "./_components/step-github";
+import { StepApiKey } from "./_components/step-api-key";
+import { StepRepo } from "./_components/step-repo";
 
-type Step = "loading" | "choose" | "create-org" | "install-github";
+const STORAGE_KEY = "polaris_onboarding";
+
+type WizardState = {
+  step: number;
+  intents: Intent[];
+  secretId: string | null;
+};
+
+function loadState(): WizardState {
+  if (typeof window === "undefined") {
+    return { step: 1, intents: [], secretId: null };
+  }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw) as WizardState;
+    }
+  } catch {
+    // Corrupted state, start fresh
+  }
+  return { step: 1, intents: [], secretId: null };
+}
+
+function saveState(state: WizardState) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function clearState() {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem("polaris_onboarding_step");
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>("loading");
-  const [orgName, setOrgName] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState<WizardState>({ step: 1, intents: [], secretId: null });
 
-  // On mount, check if user already has an org — if so, set it active and redirect
   useEffect(() => {
-    async function checkExistingOrgs() {
+    async function init() {
+      // Check if user already has an org with completed onboarding
       try {
         const orgs = await authClient.organization.list();
         if (orgs.data && orgs.data.length > 0) {
+          // Set first org as active
           await authClient.organization.setActive({
             organizationId: orgs.data[0].id,
           });
-          router.push("/dashboard");
-          return;
+
+          // Check if onboarding is complete
+          const res = await fetch("/api/onboarding/status");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.completed) {
+              clearState();
+              router.push("/dashboard");
+              return;
+            }
+          }
         }
       } catch {
-        // Failed to list orgs, fall through to choose
-      }
-      setStep("choose");
-    }
-    checkExistingOrgs();
-  }, [router]);
-
-  async function handleCreateOrg(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    try {
-      const slug = orgName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
-
-      const result = await authClient.organization.create({
-        name: orgName,
-        slug,
-      });
-
-      if (result.error) {
-        setError(result.error.message ?? "Failed to create organization");
-        return;
+        // No orgs or error — continue with onboarding
       }
 
-      // setActive is handled automatically by createOrganization
-      setStep("install-github");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
+      // Restore wizard state from localStorage
+      const saved = loadState();
+
+      // Check if we're returning from GitHub redirect
+      const redirectStep = localStorage.getItem("polaris_onboarding_step");
+      if (redirectStep) {
+        saved.step = Number(redirectStep);
+        localStorage.removeItem("polaris_onboarding_step");
+      }
+
+      setState(saved);
       setLoading(false);
     }
+    init();
+  }, [router]);
+
+  function updateState(partial: Partial<WizardState>) {
+    setState((prev) => {
+      const next = { ...prev, ...partial };
+      saveState(next);
+      return next;
+    });
   }
 
-  function handleInstallGitHub() {
-    window.location.href = "/api/integrations/github/install";
-  }
-
-  function handleSkipGitHub() {
-    router.push("/dashboard");
-  }
-
-  if (step === "loading") {
+  if (loading) {
     return (
       <div className="flex min-h-svh items-center justify-center p-6">
         <p className="text-sm text-muted-foreground">Loading...</p>
@@ -81,94 +106,40 @@ export default function OnboardingPage() {
 
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-6">
-        <div className="text-center">
-          <h1 className="text-2xl font-medium">Set up your workspace</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {step === "choose" && "Get started by connecting your GitHub account or creating an organization manually."}
-            {step === "create-org" && "Create your organization to get started."}
-            {step === "install-github" && "Connect your GitHub repositories."}
-          </p>
+      <div className="w-full max-w-md">
+        <div className="mb-8">
+          <StepIndicator step={state.step} />
         </div>
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-            {error}
-          </div>
+        {state.step === 1 && (
+          <StepIntent
+            selected={state.intents}
+            onSelect={(intents) => updateState({ intents })}
+            onContinue={() => updateState({ step: 2 })}
+          />
         )}
 
-        {step === "choose" && (
-          <div className="space-y-4">
-            <button
-              onClick={handleInstallGitHub}
-              className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              Connect GitHub
-            </button>
-            <div className="text-center">
-              <button
-                onClick={() => setStep("create-org")}
-                className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-              >
-                Create organization manually
-              </button>
-            </div>
-          </div>
+        {state.step === 2 && (
+          <StepGitHub
+            onContinue={() => updateState({ step: 3 })}
+          />
         )}
 
-        {step === "create-org" && (
-          <form onSubmit={handleCreateOrg} className="space-y-4">
-            <div>
-              <label
-                htmlFor="orgName"
-                className="block text-sm font-medium text-foreground"
-              >
-                Organization name
-              </label>
-              <input
-                id="orgName"
-                type="text"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                placeholder="Acme Corp"
-                required
-                className="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading || !orgName.trim()}
-              className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {loading ? "Creating..." : "Create organization"}
-            </button>
-            <div className="text-center">
-              <button
-                type="button"
-                onClick={() => setStep("choose")}
-                className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-              >
-                Back
-              </button>
-            </div>
-          </form>
+        {state.step === 3 && (
+          <StepApiKey
+            onContinue={(secretId) => updateState({ step: 4, secretId })}
+          />
         )}
 
-        {step === "install-github" && (
-          <div className="space-y-4">
-            <button
-              onClick={handleInstallGitHub}
-              className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              Install GitHub App
-            </button>
-            <button
-              onClick={handleSkipGitHub}
-              className="w-full rounded-md border border-input px-4 py-2.5 text-sm font-medium text-foreground hover:bg-accent"
-            >
-              Skip for now
-            </button>
-          </div>
+        {state.step === 4 && (
+          <StepRepo
+            intents={state.intents}
+            secretId={state.secretId!}
+            onComplete={() => {
+              clearState();
+              router.push("/dashboard");
+            }}
+          />
         )}
       </div>
     </div>

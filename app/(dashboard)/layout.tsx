@@ -1,4 +1,8 @@
+import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { db } from "@/lib/db";
+import { organization } from "@/lib/db/auth-schema";
 import { AppSidebar } from "./_components/app-sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
@@ -11,7 +15,22 @@ export default async function DashboardLayout({
 }) {
   // Ensures user is authenticated and has an active org.
   // Redirects to /login or /onboarding if not.
-  await getSessionWithOrg();
+  const { orgId } = await getSessionWithOrg();
+
+  // Gate: redirect to onboarding if not yet completed
+  const [org] = await db
+    .select({ metadata: organization.metadata })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+
+  const meta = org?.metadata
+    ? (JSON.parse(org.metadata) as Record<string, unknown>)
+    : null;
+
+  if (!meta?.onboardingCompletedAt) {
+    redirect("/onboarding");
+  }
 
   return (
     <TooltipProvider>
