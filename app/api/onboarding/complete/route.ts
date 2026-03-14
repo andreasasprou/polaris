@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
 import { repositories } from "@/lib/integrations/schema";
 import { createAutomation } from "@/lib/automations/actions";
+import { findSecretByIdAndOrg } from "@/lib/secrets/queries";
 import { and, eq } from "drizzle-orm";
 import type { Intent } from "@/app/(auth)/onboarding/_components/step-intent";
 
@@ -249,7 +250,6 @@ type TemplateConfig = {
   triggerType: string;
   triggerConfig: Record<string, unknown>;
   prompt: string;
-  agentType: string;
   allowPush: boolean;
   allowPrCreate: boolean;
   prReviewConfig?: Record<string, unknown>;
@@ -271,7 +271,6 @@ function getTemplateForIntent(intent: Intent): TemplateConfig | null {
           ],
         },
         prompt: PR_REVIEW_PROMPT,
-        agentType: "claude",
         allowPush: false,
         allowPrCreate: false,
         prReviewConfig: {
@@ -290,7 +289,6 @@ function getTemplateForIntent(intent: Intent): TemplateConfig | null {
           branches: ["main"],
         },
         prompt: CODING_TASK_PROMPT,
-        agentType: "claude",
         allowPush: true,
         allowPrCreate: true,
       };
@@ -347,6 +345,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Look up secret to derive agentType from provider
+  const secret = await findSecretByIdAndOrg(secretId, orgId);
+  if (!secret) {
+    return NextResponse.json(
+      { error: "Secret not found." },
+      { status: 404 },
+    );
+  }
+  const PROVIDER_TO_AGENT: Record<string, string> = {
+    anthropic: "claude",
+    openai: "codex",
+  };
+  const agentType = PROVIDER_TO_AGENT[secret.provider] ?? "claude";
+
   // Create template automations for each automation-producing intent
   const created: string[] = [];
   for (const intent of intents) {
@@ -361,7 +373,7 @@ export async function POST(req: NextRequest) {
       triggerType: template.triggerType,
       triggerConfig: template.triggerConfig,
       prompt: template.prompt,
-      agentType: template.agentType,
+      agentType,
       repositoryId: repo.id,
       agentSecretId: secretId,
       allowPush: template.allowPush,
@@ -378,9 +390,14 @@ export async function POST(req: NextRequest) {
     .where(eq(organization.id, orgId))
     .limit(1);
 
-  const existingMeta = existingOrg?.metadata
-    ? (JSON.parse(existingOrg.metadata) as Record<string, unknown>)
-    : {};
+  let existingMeta: Record<string, unknown> = {};
+  try {
+    if (existingOrg?.metadata) {
+      existingMeta = JSON.parse(existingOrg.metadata) as Record<string, unknown>;
+    }
+  } catch {
+    // Corrupted metadata — start fresh
+  }
 
   const meta = JSON.stringify({
     ...existingMeta,

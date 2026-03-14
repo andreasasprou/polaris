@@ -83,6 +83,7 @@ export default function OnboardingPage() {
       }
 
       setState(saved);
+      saveState(saved);
       setLoading(false);
     }
     init();

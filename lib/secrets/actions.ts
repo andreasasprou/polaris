@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { secrets } from "./schema";
 import { encrypt } from "@/lib/credentials/encryption";
@@ -60,6 +60,7 @@ export async function updateSecret(input: {
     throw new Error(result.error);
   }
 
+  // Include revokedAt IS NULL in the WHERE to prevent TOCTOU race
   const [row] = await db
     .update(secrets)
     .set({ encryptedValue: encrypt(input.value.trim()) })
@@ -67,6 +68,7 @@ export async function updateSecret(input: {
       and(
         eq(secrets.id, input.id),
         eq(secrets.organizationId, input.organizationId),
+        isNull(secrets.revokedAt),
       ),
     )
     .returning({

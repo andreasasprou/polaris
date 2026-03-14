@@ -35,7 +35,7 @@ export function validateSecretValue({
     }
 
     default:
-      return { valid: true };
+      return { valid: false, error: `Unsupported provider: ${provider}` };
   }
 }
 

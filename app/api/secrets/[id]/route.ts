@@ -11,9 +11,9 @@ export async function PUT(
   const { id } = await params;
 
   const body = await req.json();
-  if (!body.value) {
+  if (typeof body.value !== "string" || !body.value.trim()) {
     return NextResponse.json(
-      { error: "value is required" },
+      { error: "value is required (non-empty string)" },
       { status: 400 },
     );
   }
@@ -26,9 +26,21 @@ export async function PUT(
     });
     return NextResponse.json({ secret: updated });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Update failed";
-    const status = message === "Secret not found" ? 404 : 400;
-    return NextResponse.json({ error: message }, { status });
+    const message = err instanceof Error ? err.message : "";
+    if (message === "Secret not found") {
+      return NextResponse.json({ error: message }, { status: 404 });
+    }
+    if (message === "Cannot update a revoked secret") {
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
+    // Validation errors are user-facing
+    const isValidation = message.includes("must start with") ||
+      message.includes("Invalid") || message.includes("missing") ||
+      message.includes("Unsupported provider");
+    return NextResponse.json(
+      { error: isValidation ? message : "Update failed" },
+      { status: isValidation ? 400 : 500 },
+    );
   }
 }
 
