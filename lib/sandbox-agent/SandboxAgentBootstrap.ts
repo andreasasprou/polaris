@@ -44,11 +44,14 @@ export class SandboxAgentBootstrap {
     const result = await this.commands.runShell(
       `(type gh > /dev/null 2>&1) || {
         GH_VERSION="2.67.0"
+        mkdir -p "$HOME/bin"
         curl -fsSL "https://github.com/cli/cli/releases/download/v\${GH_VERSION}/gh_\${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tar.gz \
         && tar -xzf /tmp/gh.tar.gz -C /tmp \
-        && mv "/tmp/gh_\${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh \
-        && chmod +x /usr/local/bin/gh \
+        && mv "/tmp/gh_\${GH_VERSION}_linux_amd64/bin/gh" "$HOME/bin/gh" \
+        && chmod +x "$HOME/bin/gh" \
         && rm -rf /tmp/gh.tar.gz /tmp/gh_*
+        grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null || echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+        export PATH="$HOME/bin:$PATH"
       }`,
       { cwd: "/" },
     );
