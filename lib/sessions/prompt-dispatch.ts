@@ -301,7 +301,7 @@ export async function dispatchPromptToSession(input: {
           agentApiKey: creds.agentApiKey,
           repositoryOwner: creds.repositoryOwner,
           repositoryName: creds.repositoryName,
-          defaultBranch: creds.defaultBranch,
+          defaultBranch: input.branch ?? creds.defaultBranch,
           githubInstallationId: creds.githubInstallationId,
           prompt,
           extraEnv: extraEnvPayload,
@@ -309,6 +309,7 @@ export async function dispatchPromptToSession(input: {
           modeOverride: input.modeOverride,
           model: input.model,
           effortLevel: input.effortLevel,
+          modeIntent: input.modeIntent,
         },
         { tags: [`session:${sessionId}`] },
       );

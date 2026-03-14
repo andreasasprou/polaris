@@ -209,8 +209,10 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
     `\`\`\`bash`,
     `# 1. Unshallow the clone so all commits are available for diffing`,
     `git fetch --unshallow 2>/dev/null || true`,
-    `# 2. Fetch all branches so base branch commits are available`,
+    `# 2. Fetch the base branch so its commits are available for diffing`,
     `git fetch origin ${input.event.baseRef}`,
+    `# 3. Make sure you're on the PR head branch so file reads reflect the PR's code`,
+    `git checkout ${input.event.headRef} 2>/dev/null || git checkout ${headSha}`,
     `\`\`\``,
   );
 
@@ -239,7 +241,7 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
 
   parts.push(
     `\n### Review strategy`,
-    `1. Run the setup command above to checkout the PR head`,
+    `1. Run the setup commands above to ensure you're on the PR head and all commits are available`,
     `2. Start with \`git diff ${baseSha} ${headSha} --stat\` to understand the scope`,
     `3. Read the full diff or review file-by-file for focused analysis`,
     `4. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,

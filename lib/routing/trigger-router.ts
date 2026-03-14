@@ -101,7 +101,7 @@ export async function routeGitHubEvent(input: {
 // ── Continuous mode dispatch ──
 
 async function dispatchContinuousReview(
-  automation: { id: string; repositoryId: string | null; agentType: string; agentSecretId: string | null; mode: string },
+  automation: { id: string; repositoryId: string | null; agentType: string; agentSecretId: string | null; mode: string; prReviewConfig?: import("@/lib/reviews/types").PRReviewConfig | null },
   orgId: string,
   input: {
     installationId: number;
@@ -131,6 +131,24 @@ async function dispatchContinuousReview(
     console.log("[router] Could not normalize PR event:", input.eventType, input.action);
     return false;
   }
+  // Resolve missing PR data for issue_comment events (GitHub doesn't include
+  // base/head refs in the issue_comment payload — must fetch from PR API)
+  if (!prEvent.headSha || !prEvent.baseSha) {
+    const { getPullRequest } = await import("@/lib/reviews/github");
+    const pr = await getPullRequest({
+      installationId: input.installationId,
+      owner: prEvent.owner,
+      repo: prEvent.repo,
+      prNumber: prEvent.prNumber,
+    });
+    prEvent.baseRef = pr.base.ref;
+    prEvent.baseSha = pr.base.sha;
+    prEvent.headRef = pr.head.ref;
+    prEvent.headSha = pr.head.sha;
+    prEvent.isDraft = pr.draft ?? false;
+    prEvent.isOpen = pr.state === "open";
+  }
+
   console.log("[router] Normalized PR event:", { prNumber: prEvent.prNumber, isOpen: prEvent.isOpen, headSha: prEvent.headSha?.slice(0, 8) });
 
   if (!automation.repositoryId) {
@@ -195,6 +213,22 @@ async function dispatchContinuousReview(
 
   console.log("[router] Creating automation run + triggering task for PR", prEvent.prNumber);
 
+  // Create GitHub check immediately so it appears on the PR while the task queues
+  let checkRunId: string | undefined;
+  try {
+    const { createPendingCheck } = await import("@/lib/reviews/github");
+    const check = await createPendingCheck({
+      installationId: input.installationId,
+      owner: prEvent.owner,
+      repo: prEvent.repo,
+      headSha: prEvent.headSha,
+      checkName: automation.prReviewConfig?.checkName,
+    });
+    checkRunId = check.checkRunId;
+  } catch (err) {
+    console.log("[router] Failed to create early check run — task will retry:", err instanceof Error ? err.message : String(err));
+  }
+
   // Create run + dispatch
   const run = await createAutomationRun({
     automationId: automation.id,
@@ -215,13 +249,17 @@ async function dispatchContinuousReview(
     installationId: input.installationId,
     deliveryId: input.deliveryId,
     normalizedEvent: prEvent,
+    checkRunId,
   }, {
     idempotencyKey: `run:${run.id}`,
   });
 
-  if (handle.id) {
+  if (handle.id || checkRunId) {
     const { updateAutomationRun } = await import("@/lib/automations/actions");
-    await updateAutomationRun(run.id, { triggerRunId: handle.id });
+    await updateAutomationRun(run.id, {
+      ...(handle.id ? { triggerRunId: handle.id } : {}),
+      ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
+    });
   }
 
   return true;

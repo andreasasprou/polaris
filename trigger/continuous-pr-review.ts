@@ -12,6 +12,8 @@ export type ContinuousPrReviewPayload = {
   installationId: number;
   deliveryId: string;
   normalizedEvent: NormalizedPrReviewEvent;
+  /** Check run created eagerly by the router for immediate PR visibility. */
+  checkRunId?: string;
 };
 
 export const continuousPrReviewTask = task({
@@ -100,35 +102,36 @@ export const continuousPrReviewTask = task({
         return { ok: true, skipped: true, reason: filterResult.reason };
       }
 
-      // ── 4. Create pending GitHub check ──
+      // ── 4. Ensure GitHub check exists ──
+      // The router creates the check eagerly for immediate PR visibility.
+      // Only create here as fallback (e.g. queued re-dispatch, older payloads).
       const { createPendingCheck, completeCheck, failCheck, postReviewComment, markCommentStale, getReviewOctokit, isAncestor } =
         await import("@/lib/reviews/github");
 
-      let checkRunId: string | undefined;
-      await timer.time("create_check", async () => {
-        try {
-          const check = await createPendingCheck({
-            installationId,
-            owner: event.owner,
-            repo: event.repo,
-            headSha: event.headSha,
-            checkName: config.checkName,
-          });
-          checkRunId = check.checkRunId;
-          await updateAutomationRun(automationRunId, {
-            githubCheckRunId: checkRunId,
-            status: "running",
-            startedAt: new Date(),
-          });
-        } catch (err) {
-          logger.warn("Failed to create check run — continuing without it", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          await updateAutomationRun(automationRunId, {
-            status: "running",
-            startedAt: new Date(),
-          });
-        }
+      let checkRunId: string | undefined = payload.checkRunId;
+      if (!checkRunId) {
+        await timer.time("create_check", async () => {
+          try {
+            const check = await createPendingCheck({
+              installationId,
+              owner: event.owner,
+              repo: event.repo,
+              headSha: event.headSha,
+              checkName: config.checkName,
+            });
+            checkRunId = check.checkRunId;
+          } catch (err) {
+            logger.warn("Failed to create check run — continuing without it", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
+      }
+
+      await updateAutomationRun(automationRunId, {
+        ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
+        status: "running",
+        startedAt: new Date(),
       });
 
       // ── 5. Gather metadata (agent explores the code itself) ──
