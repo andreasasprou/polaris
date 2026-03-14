@@ -846,10 +846,15 @@ export const interactiveSessionTask = task({
     }
   },
 
-  onFailure: async ({ payload: rawPayload }) => {
+  onFailure: async ({ payload: rawPayload, error }) => {
     const payload = rawPayload as unknown as InteractiveSessionPayload;
-    const { updateInteractiveSession, getInteractiveSession, updateRuntime } =
-      await import("@/lib/sessions/actions");
+    const {
+      updateInteractiveSession,
+      getInteractiveSession,
+      updateRuntime,
+      createTurn,
+      failTurn,
+    } = await import("@/lib/sessions/actions");
 
     const session = await getInteractiveSession(payload.sessionId);
     if (session?.sandboxId) {
@@ -867,6 +872,21 @@ export const interactiveSessionTask = task({
         status: "failed",
         endedAt: new Date(),
       });
+    }
+
+    // Write a failed turn so the orchestrator's waitForTurnCompletion() unblocks
+    // instead of polling for 25 min on a turn that will never arrive.
+    if (payload.requestId) {
+      const errorMsg =
+        error instanceof Error ? error.message : "Session terminated unexpectedly";
+      await createTurn({
+        sessionId: payload.sessionId,
+        requestId: payload.requestId,
+        runtimeId: payload.runtimeId ?? "unknown",
+        source: "automation",
+        prompt: "",
+      });
+      await failTurn(payload.requestId, payload.sessionId, errorMsg);
     }
   },
 });
