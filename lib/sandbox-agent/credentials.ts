@@ -28,8 +28,10 @@ export function buildSessionEnv(
     case "codex": {
       if (apiKey.startsWith("sk-")) {
         env.OPENAI_API_KEY = apiKey;
+      } else {
+        // Base64-encoded auth.json — pass through so provisionCredentialFiles() writes it
+        env.CODEX_AUTH_JSON_B64 = apiKey;
       }
-      // Base64-encoded auth.json is handled separately (written to filesystem)
       break;
     }
 
