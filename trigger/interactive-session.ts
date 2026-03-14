@@ -876,16 +876,22 @@ export const interactiveSessionTask = task({
 
     // Write a failed turn so the orchestrator's waitForTurnCompletion() unblocks
     // instead of polling for 25 min on a turn that will never arrive.
+    // If run() already created the turn (crash happened later), createTurn will
+    // throw a unique constraint violation — catch it and just failTurn.
     if (payload.requestId) {
       const errorMsg =
         error instanceof Error ? error.message : "Session terminated unexpectedly";
-      await createTurn({
-        sessionId: payload.sessionId,
-        requestId: payload.requestId,
-        runtimeId: payload.runtimeId ?? "unknown",
-        source: "automation",
-        prompt: "",
-      });
+      try {
+        await createTurn({
+          sessionId: payload.sessionId,
+          requestId: payload.requestId,
+          runtimeId: payload.runtimeId,
+          source: "automation",
+          prompt: "",
+        });
+      } catch {
+        // Turn already exists from run() — that's fine, we'll fail it below
+      }
       await failTurn(payload.requestId, payload.sessionId, errorMsg);
     }
   },
