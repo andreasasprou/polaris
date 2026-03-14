@@ -304,6 +304,7 @@ export async function dispatchPromptToSession(input: {
           defaultBranch: input.branch ?? creds.defaultBranch,
           githubInstallationId: creds.githubInstallationId,
           prompt,
+          runtimeId: runtime.id,
           extraEnv: extraEnvPayload,
           requestId,
           modeOverride: input.modeOverride,

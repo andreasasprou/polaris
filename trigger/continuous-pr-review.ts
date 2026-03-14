@@ -55,6 +55,29 @@ export const continuousPrReviewTask = task({
     const config = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
     const sessionMetadata = automationSession.metadata as import("@/lib/reviews/types").AutomationSessionMetadata;
 
+    // Import GitHub helpers early — needed for check cleanup in all exit paths
+    const { createPendingCheck, completeCheck, failCheck, postReviewComment, markCommentStale, getReviewOctokit, isAncestor } =
+      await import("@/lib/reviews/github");
+
+    let checkRunId: string | undefined = payload.checkRunId;
+
+    /** Cancel the eagerly-created check (skipped/queued). Non-fatal. */
+    const cancelCheck = async (summary: string) => {
+      if (!checkRunId) return;
+      try {
+        await completeCheck({
+          installationId,
+          owner: event.owner,
+          repo: event.repo,
+          checkRunId,
+          verdict: "APPROVE",
+          summary,
+        });
+      } catch (err) {
+        logger.warn("Failed to cancel check", { error: err instanceof Error ? err.message : String(err) });
+      }
+    };
+
     // ── 2. Acquire lock ──
     const lockAcquired = await timer.time("acquire_lock", () =>
       tryAcquireAutomationSessionLock({
@@ -67,6 +90,7 @@ export const continuousPrReviewTask = task({
     if (!lockAcquired) {
       // Queue this request for later
       logger.info("Lock not acquired — queuing review request");
+      await cancelCheck("Queued — another review is in progress");
       await setPendingReviewRequest(automationSessionId, {
         reason: event.action as import("@/lib/reviews/types").QueuedReviewRequest["reason"],
         headSha: event.headSha,
@@ -93,6 +117,7 @@ export const continuousPrReviewTask = task({
       });
       if (!filterResult.review) {
         logger.info("Skipped by filters", { reason: filterResult.reason });
+        await cancelCheck(`Skipped: ${filterResult.reason}`);
         await updateAutomationRun(automationRunId, {
           status: "completed",
           summary: `Skipped: ${filterResult.reason}`,
@@ -105,10 +130,6 @@ export const continuousPrReviewTask = task({
       // ── 4. Ensure GitHub check exists ──
       // The router creates the check eagerly for immediate PR visibility.
       // Only create here as fallback (e.g. queued re-dispatch, older payloads).
-      const { createPendingCheck, completeCheck, failCheck, postReviewComment, markCommentStale, getReviewOctokit, isAncestor } =
-        await import("@/lib/reviews/github");
-
-      let checkRunId: string | undefined = payload.checkRunId;
       if (!checkRunId) {
         await timer.time("create_check", async () => {
           try {

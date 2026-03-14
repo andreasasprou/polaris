@@ -53,7 +53,7 @@ const ParsedOutputSchema = z.object({
 // ── Lenient schema (recovers findings even when some fields are off) ──
 
 const LenientFindingSchema = z.object({
-  id: z.string().optional().default("unknown"),
+  id: z.string().optional(),
   severity: z.string().optional().default("P2"),
   category: z.string().optional().default("Uncategorized"),
   file: z.string().optional().default("unknown"),
