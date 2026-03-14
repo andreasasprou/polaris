@@ -378,17 +378,15 @@ export function AutomationForm({
               disabled={filteredSecrets.length === 0}
             >
               <SelectTrigger id="secret">
-                <SelectValue
-                  placeholder={
-                    filteredSecrets.length === 0
-                      ? "No keys available"
-                      : "Select an API key"
-                  }
-                />
+                <SelectValue placeholder="Select an API key" />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectItem value="__none__">Select an API key</SelectItem>
+                  <SelectItem value="__none__">
+                    {filteredSecrets.length === 0
+                      ? "No keys available"
+                      : "Select an API key"}
+                  </SelectItem>
                   {filteredSecrets.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.label}
