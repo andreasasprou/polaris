@@ -57,7 +57,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     enabled: true,
     compatibleProviders: ["openai"],
     models: [
-      "gpt-5.4-codex",
+      "gpt-5.4",
       "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
       "gpt-5.2-codex",
