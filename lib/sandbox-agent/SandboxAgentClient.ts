@@ -173,19 +173,44 @@ export class SandboxAgentClient {
     sdkSessionId: string,
     config: SessionConfig,
   ): Promise<SandboxAgentSession> {
-    const session = await this.sdk.resumeOrCreateSession({
-      id: sdkSessionId,
-      agent: config.agent,
-      model: config.model,
-      mode: config.mode,
-      ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
-      sessionInit: {
-        cwd: config.cwd,
-        mcpServers: [],
-      },
-    });
+    try {
+      return await this.sdk.resumeOrCreateSession({
+        id: sdkSessionId,
+        agent: config.agent,
+        model: config.model,
+        mode: config.mode,
+        ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+    } catch (error) {
+      // Same fallback as createSession — some binaries reject set_config_option.
+      const isRpcParamError =
+        error instanceof Error &&
+        error.message.includes("Invalid parameters");
+      if (!isRpcParamError) throw error;
 
-    return session;
+      const session = await this.sdk.resumeOrCreateSession({
+        id: sdkSessionId,
+        agent: config.agent,
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+
+      if (config.mode) {
+        try {
+          await session.rawSend("session/set_mode", { mode: config.mode });
+        } catch {
+          // Mode setting not supported — agent uses its built-in defaults
+        }
+      }
+
+      return session;
+    }
   }
 
   /**
