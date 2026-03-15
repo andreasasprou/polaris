@@ -292,6 +292,7 @@ export const continuousPrReviewTask = task({
           requestId: requestId_,
           source: "automation",
           agentType,
+          agentSecretId: automation.agentSecretId ?? undefined,
           model: reviewAgentConfig.model,
           modeOverride: reviewAgentConfig.mode,
           effortLevel,

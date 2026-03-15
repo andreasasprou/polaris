@@ -13,6 +13,7 @@ import { sessionMessages } from "@/lib/trigger/streams";
 import type { interactiveSessionTask } from "@/trigger/interactive-session";
 import { LIVE_SESSION_STATUSES, RUN_TERMINAL_STATUSES } from "@/lib/sessions/status";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import { serializeSessionError } from "@/lib/errors/session-errors";
 
 const sandboxManager = new SandboxManager();
 
@@ -56,6 +57,8 @@ export async function dispatchPromptToSession(input: {
   modeIntent?: "autonomous" | "read-only" | "interactive";
   /** Override the agent type (e.g. when automation config changed since session creation). */
   agentType?: AgentType;
+  /** Override the agent secret (e.g. when automation config changed since session creation). */
+  agentSecretId?: string;
 }): Promise<DispatchResult> {
   const { sessionId, orgId, prompt } = input;
   const requestId = input.requestId ?? randomUUID();
@@ -170,7 +173,10 @@ export async function dispatchPromptToSession(input: {
       }
 
       try {
-        const creds = await resolveSessionCredentials(session);
+        const creds = await resolveSessionCredentials({
+          ...session,
+          ...(input.agentSecretId && { agentSecretId: input.agentSecretId }),
+        });
 
         await endStaleRuntimes(sessionId);
         const runtime = await createRuntime({
@@ -213,7 +219,14 @@ export async function dispatchPromptToSession(input: {
         const resumeErr = err instanceof Error ? err.message : String(err);
         console.log(`[dispatch] hibernate resume failed for session=${sessionId.slice(0, 8)}: ${resumeErr}`);
         await casSessionStatus(sessionId, ["creating"], "hibernated", {
-          error: `Resume failed: ${resumeErr}`,
+          error: serializeSessionError({
+            code: "SESSION_TERMINATED",
+            category: "transient",
+            phase: "snapshot_restore",
+            message: "Failed to resume from hibernation.",
+            detail: resumeErr,
+            recoveryHint: "Try sending a new message to restart the session.",
+          }),
         });
         return { tier: "unavailable", error: `Failed to resume session: ${resumeErr}` };
       }
@@ -241,7 +254,10 @@ export async function dispatchPromptToSession(input: {
     }
 
     try {
-      const creds = await resolveSessionCredentials(session);
+      const creds = await resolveSessionCredentials({
+        ...session,
+        ...(input.agentSecretId && { agentSecretId: input.agentSecretId }),
+      });
 
       // Probe sandbox: is it still alive?
       let warmResumeSandboxId: string | undefined;
@@ -299,7 +315,14 @@ export async function dispatchPromptToSession(input: {
       const resumeErr = err instanceof Error ? err.message : String(err);
       console.log(`[dispatch] cold resume failed for session=${sessionId.slice(0, 8)}: ${resumeErr}`);
       await casSessionStatus(sessionId, ["creating"], previousStatus, {
-        error: `Resume failed: ${resumeErr}`,
+        error: serializeSessionError({
+          code: "SESSION_TERMINATED",
+          category: "transient",
+          phase: "initialization",
+          message: "Failed to resume the session.",
+          detail: resumeErr,
+          recoveryHint: "Try sending a new message to restart the session.",
+        }),
       });
       return { tier: "unavailable", error: `Failed to resume session: ${resumeErr}` };
     }
@@ -326,7 +349,10 @@ export async function dispatchPromptToSession(input: {
     }
 
     try {
-      const creds = await resolveSessionCredentials(session);
+      const creds = await resolveSessionCredentials({
+        ...session,
+        ...(input.agentSecretId && { agentSecretId: input.agentSecretId }),
+      });
 
       await endStaleRuntimes(sessionId);
       const runtime = await createRuntime({
