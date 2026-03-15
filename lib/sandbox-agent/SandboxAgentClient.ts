@@ -133,23 +133,35 @@ export class SandboxAgentClient {
         },
       });
     } catch (error) {
-      // Some agent binaries don't support session/set_config_option for all
-      // options (e.g. Codex 0.3.2 rejects mode/model/thoughtLevel via this RPC).
-      // Fall back to creating a bare session — the agent will use its defaults
-      // for the configured agent type (mode, model, thought level come from
-      // the agent's own config JSON bundled in the binary).
+      // Some agent binaries reject session/set_config_option for certain options
+      // (e.g. Codex 0.3.2 rejects model/thoughtLevel via this RPC).
+      // Fall back to creating a bare session, then manually set mode via the
+      // direct session/set_mode RPC — mode is critical for read-only reviews.
       const isRpcParamError =
         error instanceof Error &&
         error.message.includes("Invalid parameters");
       if (!isRpcParamError) throw error;
 
-      return await this.sdk.createSession({
+      const session = await this.sdk.createSession({
         agent: config.agent,
         sessionInit: {
           cwd: config.cwd,
           mcpServers: [],
         },
       });
+
+      // Best-effort: set mode directly via session/set_mode RPC.
+      // This is a different RPC than session/set_config_option and may be
+      // supported even when the latter fails.
+      if (config.mode) {
+        try {
+          await session.rawSend("session/set_mode", { mode: config.mode });
+        } catch {
+          // Mode setting not supported — agent uses its built-in defaults
+        }
+      }
+
+      return session;
     }
   }
 
