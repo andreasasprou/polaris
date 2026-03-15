@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircleIcon } from "lucide-react";
+import { SessionErrorAlert } from "@/components/sessions/session-error-alert";
 import { StatusBadge } from "@/components/status-badge";
 import { SessionChat } from "@/components/sessions/session-chat";
 import { useSessionChat } from "@/hooks/use-session-chat";
@@ -123,13 +122,7 @@ export default function RunDetailPage() {
       )}
 
       {run.error && (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>
-            <pre className="whitespace-pre-wrap text-sm">{run.error}</pre>
-          </AlertDescription>
-        </Alert>
+        <SessionErrorAlert error={run.error} />
       )}
 
       <div>

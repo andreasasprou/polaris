@@ -5,8 +5,8 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useInputStreamSend } from "@trigger.dev/react-hooks";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircleIcon, ChevronLeftIcon } from "lucide-react";
+import { ChevronLeftIcon } from "lucide-react";
+import { SessionErrorAlert } from "@/components/sessions/session-error-alert";
 import { StatusBadge } from "@/components/status-badge";
 import { SessionChat } from "@/components/sessions/session-chat";
 import { ChatInput, type Attachment } from "@/components/sessions/chat-input";
@@ -390,11 +390,8 @@ export default function SessionDetailPage() {
         </div>
       </div>
 
-      {session.error && session.status === "failed" && (
-        <Alert variant="destructive" className="mb-4">
-          <AlertCircleIcon />
-          <AlertDescription>{session.error}</AlertDescription>
-        </Alert>
+      {session.status === "failed" && (
+        <SessionErrorAlert error={session.error} />
       )}
 
       {/* Chat area + Input */}

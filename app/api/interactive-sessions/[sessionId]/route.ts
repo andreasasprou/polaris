@@ -7,6 +7,7 @@ import {
 } from "@/lib/sessions/actions";
 import { getStatusConfig, LIVE_SESSION_STATUSES, RUN_TERMINAL_STATUSES } from "@/lib/sessions/status";
 import { sessionMessages } from "@/lib/trigger/streams";
+import { serializeSessionError } from "@/lib/errors/session-errors";
 
 /**
  * GET /api/interactive-sessions/:sessionId — get session details.
@@ -28,9 +29,10 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Reconcile: if session thinks it's live but the run is dead, heal the DB.
+  // Reconcile: if session thinks it's live (or still creating) but the run is
+  // dead, heal the DB. Includes "creating" to catch runs that die before setup.
   if (
-    LIVE_SESSION_STATUSES.includes(session.status) &&
+    [...LIVE_SESSION_STATUSES, "creating"].includes(session.status) &&
     session.triggerRunId
   ) {
     try {
@@ -38,10 +40,17 @@ export async function GET(
       if (RUN_TERMINAL_STATUSES.has(run.status)) {
         const healed = await casSessionStatus(
           sessionId,
-          [...LIVE_SESSION_STATUSES],
+          [...LIVE_SESSION_STATUSES, "creating"],
           "failed",
           {
-            error: `Run ${run.status.toLowerCase()} — session recovered automatically`,
+            error: serializeSessionError({
+              code: "SESSION_TERMINATED",
+              category: "transient",
+              phase: "unknown",
+              message: "Session ended unexpectedly due to a platform issue.",
+              detail: `Trigger.dev run ${run.status.toLowerCase()}`,
+              recoveryHint: "Try sending a new message to restart the session.",
+            }),
             endedAt: new Date(),
             triggerRunId: null,
           },

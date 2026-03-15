@@ -15,6 +15,12 @@ import type { AgentType } from "@/lib/sandbox-agent/types";
 import { resolveAgentConfig, applyFilesystemConfig } from "@/lib/sandbox-agent/agent-profiles";
 import { resolveSnapshotSource } from "@/lib/sandbox/snapshots/queries";
 import { sessionMessages } from "@/lib/trigger/streams";
+import {
+  SessionError,
+  toStructuredError,
+  serializeSessionError,
+  type SessionPhase,
+} from "@/lib/errors/session-errors";
 
 export type InteractiveSessionPayload = {
   sessionId: string;
@@ -60,6 +66,7 @@ const WARM_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
 export const interactiveSessionTask = task({
   id: "interactive-session",
   maxDuration: 3600, // 1 hour max
+  retry: { maxAttempts: 1 }, // No task-level retries — each retry wastes a full sandbox lifecycle
 
   onCancel: async () => {
     const sessionId = metadata.get("sessionId") as string | undefined;
@@ -157,7 +164,17 @@ export const interactiveSessionTask = task({
     metadata.set("sessionId", sessionId);
     metadata.set("agentType", agentType);
 
+    // ── Phase tracking for structured error reporting ──
+    let currentPhase: SessionPhase = "initialization";
+
+    // Variables initialized inside the try block, referenced in finally
+    let sandbox: Awaited<ReturnType<typeof sandboxManager.create>> | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    let exitReason: "idle_timeout" | "user_stop" | "error" = "idle_timeout";
+
+    try {
     // ── Mint GitHub token ──
+    currentPhase = "github_auth";
     const { mintInstallationToken } = await import(
       "@/lib/integrations/github"
     );
@@ -170,12 +187,12 @@ export const interactiveSessionTask = task({
     const repoUrl = `https://github.com/${repositoryOwner}/${repositoryName}.git`;
 
     // ── Resolve sandbox: warm resume → hibernate resume → cold create ──
-    let sandbox!: Awaited<ReturnType<typeof sandboxManager.create>>;
     let isWarmResume = false;
     let serverUrl!: string;
 
     if (warmResumeSandboxId) {
       // Warm resume: reconnect to existing sandbox + running server
+      currentPhase = "sandbox_reconnect";
       metadata.set("setupStep", "Reconnecting to sandbox...");
       const reconnected = await sandboxManager.reconnect(warmResumeSandboxId);
 
@@ -197,6 +214,7 @@ export const interactiveSessionTask = task({
 
     if (!isWarmResume && hibernateSnapshotId) {
       // Hibernate resume: restore from snapshot
+      currentPhase = "snapshot_restore";
       metadata.set("setupStep", "Restoring from snapshot...");
       logger.info("Hibernate resume: creating sandbox from snapshot", {
         snapshotId: hibernateSnapshotId,
@@ -225,6 +243,7 @@ export const interactiveSessionTask = task({
 
     if (!isWarmResume && !hibernateSnapshotId) {
       // Cold path: create new sandbox
+      currentPhase = "sandbox_creation";
       metadata.set("setupStep", "Preparing environment...");
       snapshotSource = await resolveSnapshotSource(agentType);
 
@@ -252,35 +271,32 @@ export const interactiveSessionTask = task({
     // ── Heartbeat: extend sandbox timeout periodically ──
     const HEARTBEAT_INTERVAL_MS = 20 * 60 * 1000;
     const HEARTBEAT_EXTEND_MS = 30 * 60 * 1000;
-    let heartbeat: ReturnType<typeof setInterval> = setInterval(async () => {
-      await sandboxManager.extendTimeout(sandbox, HEARTBEAT_EXTEND_MS);
+    heartbeat = setInterval(async () => {
+      await sandboxManager.extendTimeout(sandbox!, HEARTBEAT_EXTEND_MS);
     }, HEARTBEAT_INTERVAL_MS);
 
-    const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
+    const commands = new SandboxCommands(sandbox!, SandboxManager.PROJECT_DIR);
     const git = new GitOperations(commands);
-
-    let exitReason: "idle_timeout" | "user_stop" | "error" = "idle_timeout";
-
-    try {
       if (isWarmResume) {
         // Warm resume: server already running, refresh git token via networkPolicy
-        await sandboxManager.updateGitToken(sandbox, gitToken);
+        await sandboxManager.updateGitToken(sandbox!, gitToken);
         await git.configure({ repoUrl });
         logger.info("Warm resume: reusing agent server", { serverUrl });
       } else {
         // Cold or hibernate path: full or partial bootstrap
+        currentPhase = "agent_bootstrap";
         await git.configure({ repoUrl });
 
         if (hibernateSnapshotId) {
           // Hibernate resume: server binary is in snapshot, just restart it
           metadata.set("setupStep", "Starting agent server...");
-          const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
+          const bootstrap = new SandboxAgentBootstrap(sandbox!, commands);
           const rawEnv = buildSessionEnv(agentType, agentApiKey, extraEnv);
           const sessionEnv = await bootstrap.provisionCredentialFiles(rawEnv);
           serverUrl = await bootstrap.start(2468, sessionEnv);
         } else {
           // Cold start: full bootstrap
-          const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
+          const bootstrap = new SandboxAgentBootstrap(sandbox!, commands);
           const rawEnv = buildSessionEnv(agentType, agentApiKey, extraEnv);
           const sessionEnv = await bootstrap.provisionCredentialFiles(rawEnv);
 
@@ -402,6 +418,7 @@ export const interactiveSessionTask = task({
 
       await setRuntime({ sdkSessionId: sdkId ?? activeSession.id, status: "running" });
 
+      currentPhase = "agent_operation";
       metadata.set("status", "active");
       metadata.set("sdkSessionId", sdkId ?? activeSession.id);
       metadata.del("setupStep");
@@ -620,7 +637,7 @@ export const interactiveSessionTask = task({
 
         clearInterval(heartbeat);
         healthMonitor.stop(); // No sandbox interaction during suspend
-        await sandboxManager.extendTimeout(sandbox, 60 * 60_000); // 60 min buffer
+        await sandboxManager.extendTimeout(sandbox!, 60 * 60_000); // 60 min buffer
         inputStreamSub.off(); // .on() handlers don't fire during suspend anyway
 
         metadata.set("status", "suspended");
@@ -639,7 +656,7 @@ export const interactiveSessionTask = task({
 
           // Restart heartbeat + health monitor
           heartbeat = setInterval(async () => {
-            await sandboxManager.extendTimeout(sandbox, HEARTBEAT_EXTEND_MS);
+            await sandboxManager.extendTimeout(sandbox!, HEARTBEAT_EXTEND_MS);
           }, HEARTBEAT_INTERVAL_MS);
           healthMonitor.start();
 
@@ -649,7 +666,7 @@ export const interactiveSessionTask = task({
             [repositoryName],
             { contents: "write", pull_requests: "write" },
           );
-          await sandboxManager.updateGitToken(sandbox, freshGitToken);
+          await sandboxManager.updateGitToken(sandbox!, freshGitToken);
 
           // HITL messages — skip (shouldn't arrive during suspend, but handle gracefully)
           if (msg.action !== "prompt" && msg.action !== "stop") {
@@ -733,25 +750,24 @@ export const interactiveSessionTask = task({
       return { ok: true, sessionId };
     } catch (error) {
       exitReason = "error";
-      const isSandboxDead = error instanceof SandboxUnreachableError;
-      const message = error instanceof Error ? error.message : String(error);
+      const structured = toStructuredError(error, currentPhase);
+      const serialized = serializeSessionError(structured);
+
       logger.error(
-        `${isSandboxDead ? "Sandbox became unreachable" : "Session failed"}: ${message} ` +
+        `Session failed [${structured.code}] during ${currentPhase}: ${structured.detail ?? structured.message} ` +
         `(sessionId=${sessionId.slice(0, 8)})`,
       );
 
       // Fail the active turn if one was in progress
       if (currentTurnRequestId) {
-        await recordTurnFailed(currentTurnRequestId, message).catch(() => {});
+        await recordTurnFailed(currentTurnRequestId, structured.message).catch(() => {});
       }
 
       metadata.set("status", "failed");
 
       await updateInteractiveSession(sessionId, {
         status: "failed",
-        error: isSandboxDead
-          ? "Agent sandbox became unreachable — the session has ended."
-          : message,
+        error: serialized,
         endedAt: new Date(),
       });
 
@@ -759,7 +775,7 @@ export const interactiveSessionTask = task({
 
       throw error;
     } finally {
-      clearInterval(heartbeat);
+      if (heartbeat) clearInterval(heartbeat);
 
       if (exitReason === "idle_timeout") {
         // ── Hibernation sequence ──
@@ -778,10 +794,10 @@ export const interactiveSessionTask = task({
         metadata.set("status", "hibernating");
 
         // Step 1: Credential scrubbing
-        const scrubOk = await sandboxManager.scrubCredentials(sandbox);
+        const scrubOk = await sandboxManager.scrubCredentials(sandbox!);
         if (!scrubOk) {
           logger.error("Credential scrubbing failed");
-          await sandboxManager.destroy(sandbox);
+          await sandboxManager.destroy(sandbox!);
           await casSessionStatus(sessionId, ["hibernating"], "stopped", {
             endedAt: new Date(),
           });
@@ -790,10 +806,10 @@ export const interactiveSessionTask = task({
         }
 
         // Step 2: Snapshot (stops the sandbox automatically)
-        const snapshotResult = await sandboxManager.snapshot(sandbox);
+        const snapshotResult = await sandboxManager.snapshot(sandbox!);
         if (!snapshotResult) {
           logger.error("Snapshot failed");
-          await sandboxManager.destroy(sandbox); // May be redundant
+          await sandboxManager.destroy(sandbox!); // May be redundant
           await casSessionStatus(sessionId, ["hibernating"], "stopped", {
             endedAt: new Date(),
           });
@@ -809,7 +825,7 @@ export const interactiveSessionTask = task({
         // Step 3: DB transaction (checkpoint + session + runtime)
         if (!runtimeId) {
           logger.error("Cannot hibernate: runtimeId is missing");
-          await sandboxManager.destroy(sandbox);
+          await sandboxManager.destroy(sandbox!);
           await casSessionStatus(sessionId, ["hibernating"], "stopped", {
             endedAt: new Date(),
           });
@@ -838,8 +854,8 @@ export const interactiveSessionTask = task({
           });
           await setRuntime({ status: "stopped", endedAt: new Date() });
         }
-      } else {
-        // user_stop or error: destroy sandbox
+      } else if (sandbox) {
+        // user_stop or error: destroy sandbox (if one was created)
         logger.info("Destroying sandbox", { exitReason });
         await sandboxManager.destroy(sandbox);
       }
@@ -870,11 +886,16 @@ export const interactiveSessionTask = task({
       await sandboxManager.destroyById(session.sandboxId);
     }
 
-    await updateInteractiveSession(payload.sessionId, {
-      status: "failed",
-      error: `Session terminated unexpectedly: ${failureMsg}`,
-      endedAt: new Date(),
-    });
+    // Only write error if the catch block didn't already — avoid clobbering
+    // richer structured errors with a less informative fallback.
+    if (session?.status !== "failed") {
+      const structured = toStructuredError(error, "unknown");
+      await updateInteractiveSession(payload.sessionId, {
+        status: "failed",
+        error: serializeSessionError(structured),
+        endedAt: new Date(),
+      });
+    }
 
     if (payload.runtimeId) {
       await updateRuntime(payload.runtimeId, {
