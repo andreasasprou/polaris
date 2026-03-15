@@ -2,7 +2,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { secrets } from "./schema";
 import { encrypt } from "@/lib/credentials/encryption";
-import { validateSecretValue } from "./validation";
+import { validateSecretValue, validateSecretLive } from "./validation";
 import { findSecretByIdAndOrg } from "./queries";
 
 export async function createSecret(input: {
@@ -12,12 +12,20 @@ export async function createSecret(input: {
   value: string;
   createdBy: string;
 }) {
-  const result = validateSecretValue({
+  const formatResult = validateSecretValue({
     provider: input.provider,
     value: input.value,
   });
-  if (!result.valid) {
-    throw new Error(result.error);
+  if (!formatResult.valid) {
+    throw new Error(formatResult.error);
+  }
+
+  const liveResult = await validateSecretLive({
+    provider: input.provider,
+    value: input.value,
+  });
+  if (!liveResult.valid) {
+    throw new Error(liveResult.error);
   }
 
   const [row] = await db
@@ -52,12 +60,20 @@ export async function updateSecret(input: {
     throw new Error("Cannot update a revoked secret");
   }
 
-  const result = validateSecretValue({
+  const formatResult = validateSecretValue({
     provider: secret.provider,
     value: input.value,
   });
-  if (!result.valid) {
-    throw new Error(result.error);
+  if (!formatResult.valid) {
+    throw new Error(formatResult.error);
+  }
+
+  const liveResult = await validateSecretLive({
+    provider: secret.provider,
+    value: input.value,
+  });
+  if (!liveResult.valid) {
+    throw new Error(liveResult.error);
   }
 
   // Include revokedAt IS NULL in the WHERE to prevent TOCTOU race

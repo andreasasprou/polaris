@@ -56,8 +56,8 @@ function CodexOAuthInstructions() {
         <code className="rounded bg-muted px-1 py-0.5 font-mono">
           codex auth
         </code>{" "}
-        first if you haven&apos;t authenticated with ChatGPT, then paste the
-        output of one of these commands:
+        first if you haven&apos;t authenticated with ChatGPT, then run one of
+        these commands and paste the output here:
       </p>
       <div className="flex flex-col gap-1.5">
         <div>
@@ -345,22 +345,39 @@ export default function SecretsPage() {
                 </div>
 
                 {editingId === secret.id && (
-                  <div className="flex flex-col gap-2 border-t pt-3">
+                  <div className="flex flex-col gap-3 border-t pt-3">
                     {secret.provider === "openai" ? (
-                      <Textarea
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        placeholder="Paste API key (sk-...) or base64 auth.json"
-                        className="font-mono text-xs"
-                        rows={3}
-                      />
+                      <>
+                        <Textarea
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          placeholder="Paste API key (sk-...) or base64 auth.json"
+                          className="font-mono text-xs"
+                          rows={3}
+                        />
+                        <CodexOAuthInstructions />
+                      </>
                     ) : (
-                      <Input
-                        type="password"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        placeholder="sk-ant-..."
-                      />
+                      <>
+                        <Input
+                          type="password"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          placeholder="sk-ant-..."
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Get your API key from the{" "}
+                          <a
+                            href="https://console.anthropic.com/settings/keys"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-foreground"
+                          >
+                            Anthropic Console
+                          </a>
+                          .
+                        </p>
+                      </>
                     )}
                     <div className="flex gap-2">
                       <Button
