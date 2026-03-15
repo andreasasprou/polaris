@@ -12,8 +12,8 @@ importers:
         specifier: ^1.0.2
         version: 1.0.2
       '@sandbox-agent/persist-postgres':
-        specifier: 0.3.x
-        version: 0.3.0(zod@4.3.6)
+        specifier: 0.3.2
+        version: 0.3.2(zod@4.3.6)
       '@trigger.dev/react-hooks':
         specifier: ^4.4.2
         version: 4.4.2(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -24,8 +24,8 @@ importers:
         specifier: ^1.8.0
         version: 1.8.0
       acp-http-client:
-        specifier: 0.3.0
-        version: 0.3.0(zod@4.3.6)
+        specifier: 0.3.2
+        version: 0.3.2(zod@4.3.6)
       better-auth:
         specifier: ^1.5.4
         version: 1.5.4(c4f44898c02bbc981cfad0f8686d7e67)
@@ -81,8 +81,8 @@ importers:
         specifier: ^4.0.1
         version: 4.0.1
       sandbox-agent:
-        specifier: 0.3.x
-        version: 0.3.0(zod@4.3.6)
+        specifier: 0.3.2
+        version: 0.3.2(zod@4.3.6)
       shadcn:
         specifier: ^4.0.2
         version: 4.0.2(@types/node@25.3.5)(typescript@5.9.3)
@@ -2541,40 +2541,40 @@ packages:
   '@s2-dev/streamstore@0.22.5':
     resolution: {integrity: sha512-GqdOKIbIoIxT+40fnKzHbrsHB6gBqKdECmFe7D3Ojk4FoN1Hu0LhFzZv6ZmVMjoHHU+55debS1xSWjZwQmbIyQ==}
 
-  '@sandbox-agent/cli-darwin-arm64@0.3.0':
-    resolution: {integrity: sha512-Tp4IQLY8JLR1R+GoN1UfWTUbclIhISUggRJ4PhWKIiwq1IhN1ohHjWoluz7etDlMmK8tVLbvJGvziru/3FpoTA==}
+  '@sandbox-agent/cli-darwin-arm64@0.3.2':
+    resolution: {integrity: sha512-w4aAr7vPj4m6Lwr25bIoXRVTJDoybP/tcGhB+unzsRUSQqCtrZpRCg7opJqds5vIOQzVxFlmVwquKWcPlDjYRA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@sandbox-agent/cli-darwin-x64@0.3.0':
-    resolution: {integrity: sha512-Soe0gO20I14nhotBIVK3SOoGJpBAL/qvh6FstsgW7tyj6azlqYPwJEnapx8DNeFOZosuZlGpAOJEm64YqhxYeA==}
+  '@sandbox-agent/cli-darwin-x64@0.3.2':
+    resolution: {integrity: sha512-OJkaeNGjvPNWHVnNgUXxN4H5nv75nWwRnxOVRf1UP8VvLhd3xoL6uWGgmVoRSF+Wwg3dMHbkrmMwAdcXyaSV9w==}
     cpu: [x64]
     os: [darwin]
 
-  '@sandbox-agent/cli-linux-arm64@0.3.0':
-    resolution: {integrity: sha512-YqbQ2AY0cux72+XL25GAqHVWL4iM4yUlFsYfUDfb0lHJFRueFmhIVLfgbkuDKqwRUeTNbzHN8EiZihEfDqe7ZA==}
+  '@sandbox-agent/cli-linux-arm64@0.3.2':
+    resolution: {integrity: sha512-WTreRie8wrvGijuqBaK7/78sfizCcex1CNBZjws7a6/tn4Ar+thQ0jbY8alrpdtBLuwzk/pBIQ2oRU9vidHtvQ==}
     cpu: [arm64]
     os: [linux]
 
-  '@sandbox-agent/cli-linux-x64@0.3.0':
-    resolution: {integrity: sha512-r7UCwERhzc41RIN5lzwCEuiptBTT2LHHV0Byse2SUDWG70gt6dupFfvquR7NRglT8IKua4ybDyE0tW5W+LTDGA==}
+  '@sandbox-agent/cli-linux-x64@0.3.2':
+    resolution: {integrity: sha512-aas9+UdW0+j2aWOCp+EV5GA8JkmwsIg0lSRkrRijzrnewsNxlSFQ4dIsSpTkqyMWO18STqjqFtmkZI/dIASEyQ==}
     cpu: [x64]
     os: [linux]
 
-  '@sandbox-agent/cli-shared@0.3.0':
-    resolution: {integrity: sha512-RAdLm/nNLM5Pu/X/yxKWmM/If4EpTWd6X06+r58HsTOBgbjN8TC7chaPpv5GBIG9ghoHcHkaAc1BTSptB21AGA==}
+  '@sandbox-agent/cli-shared@0.3.2':
+    resolution: {integrity: sha512-4UQKczwfY+Bf83kQ9rdXv3U5Z9PqfWm2wp6EK2rzKh6iuMAtuNI8PSUWodi1LBUjch8mJv4rx7Gs/XCO92dRRw==}
 
-  '@sandbox-agent/cli-win32-x64@0.3.0':
-    resolution: {integrity: sha512-7z7SfLfFBpBfQEBhwprS8XZmYZnqVntMF+C3eHWNCulYp6v/EfU6Siu7hoPOSCXzKzjtDZZIfLw+d4Iv5yYxNw==}
+  '@sandbox-agent/cli-win32-x64@0.3.2':
+    resolution: {integrity: sha512-mJejOEp9czrMzbpN0VzC/y6UfKU/RyAJjTWHBNcCVfHP2zDuIOwT8y3gErM+q4CHt0lHR616wQYIqNpY8QqyDA==}
     cpu: [x64]
     os: [win32]
 
-  '@sandbox-agent/cli@0.3.0':
-    resolution: {integrity: sha512-YQL2BTt1g5ZqyKY1tV1SZBLePTR6S5AZD56ehaI/TDvrAwwJM01xKuWrLnLbPP6aIXwS2VkJT1l1ouPh2k+S2g==}
+  '@sandbox-agent/cli@0.3.2':
+    resolution: {integrity: sha512-nQ3bxbrr0QMdm0eK/MvBNd6Npvt1VCxQrrkpf747dVCHmKxCmcRc3t/jeeye1Lof6sP8l01mHgvSFNiez/KNHQ==}
     hasBin: true
 
-  '@sandbox-agent/persist-postgres@0.3.0':
-    resolution: {integrity: sha512-Bbn95MTNvh1/y9SOo5iH/K1t2Sx64FNbBdgK0SQikpjIrhrcrftqou6Pwg7T0LVFEGocChK8hEqmMlDQv3VyHw==}
+  '@sandbox-agent/persist-postgres@0.3.2':
+    resolution: {integrity: sha512-ifrtGK1ON8o0F6T12yQmItjtr+oy3vbp4rPD/8BM6BAJknIdM9rT0ph0Qb+P/f5qz5CTsDfgMfngnxarRmYtXQ==}
 
   '@sec-ant/readable-stream@0.4.1':
     resolution: {integrity: sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg==}
@@ -3000,8 +3000,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  acp-http-client@0.3.0:
-    resolution: {integrity: sha512-Gy+HCU5Y8TLLnNZwjNMaEhdsSc62vdfHb1lAsGeNJ+XEonfCPLuYuGp8bzWDOvvxwQQU/SFsaYdvWYGzHieGvw==}
+  acp-http-client@0.3.2:
+    resolution: {integrity: sha512-btRUDXAA9BlcTQURsJogdWthoXsKOnMeFhtYlEYQxgt0vq7H6xMfMrewlIgFjRXgRTbru4Fre2T6wS/amTTyjQ==}
 
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
@@ -6082,8 +6082,8 @@ packages:
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
 
-  sandbox-agent@0.3.0:
-    resolution: {integrity: sha512-PO+olDQX+elgWnFw7xyQDTliKB+vvnHpJdd7JqiPR717GoS9mCO87Xz7HbPRgJmXLtvhr32AvHzsi4mL+9MwLA==}
+  sandbox-agent@0.3.2:
+    resolution: {integrity: sha512-ic1UPLMKExjXIw4ViL0Wo07YsSqGtS25g6b6BechOX5CBC4d130tCR1xrhJ8Fuy6jlzx6I+f7gIxDedTnRUWSA==}
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
@@ -9184,38 +9184,38 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@sandbox-agent/cli-darwin-arm64@0.3.0':
+  '@sandbox-agent/cli-darwin-arm64@0.3.2':
     optional: true
 
-  '@sandbox-agent/cli-darwin-x64@0.3.0':
+  '@sandbox-agent/cli-darwin-x64@0.3.2':
     optional: true
 
-  '@sandbox-agent/cli-linux-arm64@0.3.0':
+  '@sandbox-agent/cli-linux-arm64@0.3.2':
     optional: true
 
-  '@sandbox-agent/cli-linux-x64@0.3.0':
+  '@sandbox-agent/cli-linux-x64@0.3.2':
     optional: true
 
-  '@sandbox-agent/cli-shared@0.3.0': {}
+  '@sandbox-agent/cli-shared@0.3.2': {}
 
-  '@sandbox-agent/cli-win32-x64@0.3.0':
+  '@sandbox-agent/cli-win32-x64@0.3.2':
     optional: true
 
-  '@sandbox-agent/cli@0.3.0':
+  '@sandbox-agent/cli@0.3.2':
     dependencies:
-      '@sandbox-agent/cli-shared': 0.3.0
+      '@sandbox-agent/cli-shared': 0.3.2
     optionalDependencies:
-      '@sandbox-agent/cli-darwin-arm64': 0.3.0
-      '@sandbox-agent/cli-darwin-x64': 0.3.0
-      '@sandbox-agent/cli-linux-arm64': 0.3.0
-      '@sandbox-agent/cli-linux-x64': 0.3.0
-      '@sandbox-agent/cli-win32-x64': 0.3.0
+      '@sandbox-agent/cli-darwin-arm64': 0.3.2
+      '@sandbox-agent/cli-darwin-x64': 0.3.2
+      '@sandbox-agent/cli-linux-arm64': 0.3.2
+      '@sandbox-agent/cli-linux-x64': 0.3.2
+      '@sandbox-agent/cli-win32-x64': 0.3.2
     optional: true
 
-  '@sandbox-agent/persist-postgres@0.3.0(zod@4.3.6)':
+  '@sandbox-agent/persist-postgres@0.3.2(zod@4.3.6)':
     dependencies:
       pg: 8.20.0
-      sandbox-agent: 0.3.0(zod@4.3.6)
+      sandbox-agent: 0.3.2(zod@4.3.6)
     transitivePeerDependencies:
       - pg-native
       - zod
@@ -9682,7 +9682,7 @@ snapshots:
 
   acorn@8.16.0: {}
 
-  acp-http-client@0.3.0(zod@4.3.6):
+  acp-http-client@0.3.2(zod@4.3.6):
     dependencies:
       '@agentclientprotocol/sdk': 0.14.1(zod@4.3.6)
     transitivePeerDependencies:
@@ -13062,12 +13062,12 @@ snapshots:
 
   safer-buffer@2.1.2: {}
 
-  sandbox-agent@0.3.0(zod@4.3.6):
+  sandbox-agent@0.3.2(zod@4.3.6):
     dependencies:
-      '@sandbox-agent/cli-shared': 0.3.0
-      acp-http-client: 0.3.0(zod@4.3.6)
+      '@sandbox-agent/cli-shared': 0.3.2
+      acp-http-client: 0.3.2(zod@4.3.6)
     optionalDependencies:
-      '@sandbox-agent/cli': 0.3.0
+      '@sandbox-agent/cli': 0.3.2
     transitivePeerDependencies:
       - zod
 

@@ -44,7 +44,7 @@ export type AgentSession = {
   agentSessionId: string;
   onEvent(listener: (event: SandboxAgentEvent) => void): () => void;
   prompt(prompt: PromptContentPart[]): Promise<{ stopReason?: string }>;
-  send(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  rawSend(method: string, params?: Record<string, unknown>): Promise<unknown>;
 };
 
 // ── Output reconstruction ──
@@ -378,7 +378,7 @@ export class SandboxAgentClient {
     permissionId: string,
     reply: string,
   ): Promise<void> {
-    await session.send("permission/reply", { permissionId, reply });
+    await session.rawSend("permission/reply", { permissionId, reply });
   }
 
   /**
@@ -389,7 +389,7 @@ export class SandboxAgentClient {
     questionId: string,
     answers: string[][],
   ): Promise<void> {
-    await session.send("question/reply", { questionId, answers });
+    await session.rawSend("question/reply", { questionId, answers });
   }
 
   /**
@@ -399,7 +399,7 @@ export class SandboxAgentClient {
     session: AgentSession,
     questionId: string,
   ): Promise<void> {
-    await session.send("question/reject", { questionId });
+    await session.rawSend("question/reject", { questionId });
   }
 
   async dispose(): Promise<void> {
@@ -441,7 +441,7 @@ export class NativeResumedSession {
     return { stopReason: response.stopReason ?? undefined };
   }
 
-  async send(method: string, params?: Record<string, unknown>): Promise<unknown> {
+  async rawSend(method: string, params?: Record<string, unknown>): Promise<unknown> {
     return this.acp.extMethod(method, {
       ...params,
       sessionId: this.agentSessionId,
