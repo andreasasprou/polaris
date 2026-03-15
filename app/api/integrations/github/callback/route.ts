@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { APIError } from "better-auth";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { organization } from "@/lib/db/auth-schema";
 import { githubInstallations } from "@/lib/integrations/schema";
 import { verifyState } from "@/lib/integrations/github-state";
 
@@ -117,6 +119,32 @@ export async function GET(req: NextRequest) {
       installedBy: session.user.id,
     })
     .onConflictDoNothing();
+
+  // Check if onboarding is in progress — redirect back to wizard instead of dashboard
+  const [orgRow] = await db
+    .select({ metadata: organization.metadata })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+
+  const meta = orgRow?.metadata
+    ? (JSON.parse(orgRow.metadata) as Record<string, unknown>)
+    : null;
+  const onboardingComplete = !!meta?.onboardingCompletedAt;
+
+  if (!onboardingComplete) {
+    // Legacy orgs (created before onboarding) have no onboardingCompletedAt
+    // but may have existing automations — don't force them into the wizard
+    const { count } = await import("drizzle-orm");
+    const { automations } = await import("@/lib/automations/schema");
+    const [result] = await db
+      .select({ count: count() })
+      .from(automations)
+      .where(eq(automations.organizationId, orgId));
+    if ((result?.count ?? 0) === 0) {
+      return NextResponse.redirect(new URL("/onboarding", baseUrl));
+    }
+  }
 
   if (orgCreated) {
     return NextResponse.redirect(new URL("/dashboard?success=org_created", baseUrl));

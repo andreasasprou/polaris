@@ -24,13 +24,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  type EffortLevel,
   getModels,
   getModes,
   getThoughtLevels,
   getCompatibleProviders,
   getEnabledAgents,
 } from "@/lib/sandbox-agent/agent-profiles";
-import type { AgentType } from "@/lib/sandbox-agent/types";
+import type { AgentType, ModelParams } from "@/lib/sandbox-agent/types";
 import { AlertCircleIcon } from "lucide-react";
 import Link from "next/link";
 
@@ -62,7 +63,7 @@ type AutomationData = {
   allowPush: boolean;
   allowPrCreate: boolean;
   mode: string;
-  modelParams: Record<string, unknown>;
+  modelParams: ModelParams;
   prReviewConfig: Record<string, unknown>;
 };
 
@@ -97,8 +98,8 @@ export function AutomationForm({
   const [prompt, setPrompt] = useState(initial?.prompt ?? "");
   const [agentType, setAgentType] = useState(initial?.agentType ?? "claude");
   const [model, setModel] = useState(initial?.model ?? "");
-  const [effortLevel, setEffortLevel] = useState(
-    (initial?.modelParams?.effortLevel as string) ?? "",
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">(
+    initial?.modelParams?.effortLevel ?? "",
   );
   const [repositoryId, setRepositoryId] = useState(
     initial?.repositoryId || "__none__",
@@ -440,7 +441,7 @@ export function AutomationForm({
               <Select
                 value={effortLevel || "__default__"}
                 onValueChange={(v) =>
-                  setEffortLevel(v === "__default__" ? "" : v)
+                  setEffortLevel(v === "__default__" ? "" : (v as EffortLevel))
                 }
               >
                 <SelectTrigger id="effortLevel">

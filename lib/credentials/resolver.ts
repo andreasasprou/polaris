@@ -4,6 +4,7 @@ import { getDecryptedSecretForOrg, findSecretByIdAndOrg } from "@/lib/secrets/qu
 import { db } from "@/lib/db";
 import { githubInstallations } from "@/lib/integrations/schema";
 import { eq } from "drizzle-orm";
+import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export type ResolvedCredentials = {
   agentApiKey: string;
@@ -18,7 +19,7 @@ export type ResolvedCredentials = {
   agentType: string;
   model: string | null;
   agentMode: string | null;
-  modelParams: Record<string, unknown>;
+  modelParams: ModelParams;
   maxDurationSeconds: number;
   allowPush: boolean;
   allowPrCreate: boolean;

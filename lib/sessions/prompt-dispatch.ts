@@ -48,8 +48,8 @@ export async function dispatchPromptToSession(input: {
   modeOverride?: string;
   /** Agent model (e.g. "opus", "gpt-5.3-codex"). */
   model?: string;
-  /** Effort / thought level (e.g. "low", "medium", "high"). */
-  effortLevel?: string;
+  /** Effort / thought level (e.g. "low", "medium", "high", "max"). */
+  effortLevel?: import("@/lib/sandbox-agent/agent-profiles").EffortLevel;
   /** Override the branch to clone/checkout (e.g. PR head branch for reviews). */
   branch?: string;
   /** Semantic mode intent — determines agent permissions scope. */
@@ -64,6 +64,13 @@ export async function dispatchPromptToSession(input: {
   if (!session || session.organizationId !== orgId) {
     return { tier: "unavailable", error: "Session not found" };
   }
+
+  console.log(
+    `[dispatch] session=${sessionId.slice(0, 8)} status=${session.status} ` +
+    `sdkSessionId=${session.sdkSessionId ? "set" : "null"} ` +
+    `triggerRunId=${session.triggerRunId?.slice(0, 12) ?? "null"} ` +
+    `sandboxId=${session.sandboxId?.slice(0, 8) ?? "null"}`,
+  );
 
   // If caller provides an agentType override (e.g. automation changed agent),
   // update the session so the task payload and future dispatches use the correct type.
@@ -80,6 +87,10 @@ export async function dispatchPromptToSession(input: {
     try {
       const run = await runs.retrieve(session.triggerRunId);
       if (RUN_TERMINAL_STATUSES.has(run.status)) {
+        console.log(
+          `[dispatch] stale run detected: run=${session.triggerRunId?.slice(0, 12)} ` +
+          `runStatus=${run.status} — transitioning session to idle`,
+        );
         await casSessionStatus(
           sessionId,
           LIVE_SESSION_STATUSES,
@@ -92,8 +103,11 @@ export async function dispatchPromptToSession(input: {
         }
         session = refreshed;
       }
-    } catch {
-      // Can't reach Trigger.dev API — fall through and try sending anyway.
+    } catch (err) {
+      console.log(
+        `[dispatch] run liveness check failed for run=${session.triggerRunId?.slice(0, 12)}: ` +
+        `${err instanceof Error ? err.message : String(err)} — continuing`,
+      );
     }
   }
 
@@ -196,10 +210,12 @@ export async function dispatchPromptToSession(input: {
 
         return { tier: "hibernate", triggerRunId: handle.id, accessToken };
       } catch (err) {
+        const resumeErr = err instanceof Error ? err.message : String(err);
+        console.log(`[dispatch] hibernate resume failed for session=${sessionId.slice(0, 8)}: ${resumeErr}`);
         await casSessionStatus(sessionId, ["creating"], "hibernated", {
-          error: `Resume failed: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Resume failed: ${resumeErr}`,
         });
-        return { tier: "unavailable", error: "Failed to resume session" };
+        return { tier: "unavailable", error: `Failed to resume session: ${resumeErr}` };
       }
     }
     // Checkpoint missing — fall through to cold resume
@@ -280,18 +296,35 @@ export async function dispatchPromptToSession(input: {
 
       return { tier: "cold", triggerRunId: handle.id, accessToken };
     } catch (err) {
+      const resumeErr = err instanceof Error ? err.message : String(err);
+      console.log(`[dispatch] cold resume failed for session=${sessionId.slice(0, 8)}: ${resumeErr}`);
       await casSessionStatus(sessionId, ["creating"], previousStatus, {
-        error: `Resume failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Resume failed: ${resumeErr}`,
       });
-      return { tier: "unavailable", error: "Failed to resume session" };
+      return { tier: "unavailable", error: `Failed to resume session: ${resumeErr}` };
     }
   }
 
-  // ── Tier 5: Fresh — brand new session, never started ──
-  // The session row exists but no task has ever been triggered for it.
-  // This happens when the continuous review router pre-creates the session
-  // and the orchestrator dispatches the first prompt.
-  if (session.status === "creating" && !session.triggerRunId && !session.sdkSessionId) {
+  // ── Tier 5: Fresh — brand new or failed-before-start session ──
+  // Matches when no sdkSessionId exists (nothing to resume) and the session is
+  // either freshly created or failed before the agent ever started.
+  const isNeverStarted =
+    !session.sdkSessionId &&
+    ((session.status === "creating" && !session.triggerRunId) || session.status === "failed");
+  if (isNeverStarted) {
+    // For failed sessions, CAS to "creating" to prevent concurrent resets
+    if (session.status === "failed") {
+      console.log(`[dispatch] session=${sessionId.slice(0, 8)} failed before start — resetting to fresh`);
+      const casResult = await casSessionStatus(sessionId, ["failed"], "creating", {
+        error: null,
+        endedAt: null,
+        triggerRunId: null,
+      });
+      if (!casResult) {
+        return { tier: "unavailable", error: "Session is already being reset" };
+      }
+    }
+
     try {
       const creds = await resolveSessionCredentials(session);
 
@@ -335,9 +368,16 @@ export async function dispatchPromptToSession(input: {
 
   // ── Creating/resuming: already starting up (task was triggered but hasn't finished setup) ──
   if (session.status === "creating" || session.status === "resuming") {
+    console.log(`[dispatch] session=${sessionId.slice(0, 8)} still starting up (status=${session.status})`);
     return { tier: "unavailable", error: "Session is still starting up, please wait" };
   }
 
+  console.log(
+    `[dispatch] no tier matched for session=${sessionId.slice(0, 8)} — ` +
+    `status=${session.status} sdkSessionId=${session.sdkSessionId ? "set" : "null"} ` +
+    `triggerRunId=${session.triggerRunId?.slice(0, 12) ?? "null"} ` +
+    `checkpointId=${session.latestCheckpointId ? "set" : "null"}`,
+  );
   return { tier: "unavailable", error: `Session is ${session.status}, cannot send prompt` };
 }
 

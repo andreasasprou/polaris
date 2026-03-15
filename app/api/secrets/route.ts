@@ -15,20 +15,36 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
 
-  if (!body.provider || !body.label || !body.value) {
+  if (
+    typeof body.provider !== "string" || !body.provider ||
+    typeof body.label !== "string" || !body.label ||
+    typeof body.value !== "string" || !body.value.trim()
+  ) {
     return NextResponse.json(
-      { error: "provider, label, and value are required" },
+      { error: "provider, label, and value are required (strings)" },
       { status: 400 },
     );
   }
 
-  const secret = await createSecret({
-    organizationId: orgId,
-    provider: body.provider,
-    label: body.label,
-    value: body.value,
-    createdBy: session.user.id,
-  });
+  try {
+    const secret = await createSecret({
+      organizationId: orgId,
+      provider: body.provider,
+      label: body.label,
+      value: body.value,
+      createdBy: session.user.id,
+    });
 
-  return NextResponse.json({ secret }, { status: 201 });
+    return NextResponse.json({ secret }, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    // Validation errors from validateSecretValue are user-facing
+    const isValidation = message.includes("must start with") ||
+      message.includes("Invalid") || message.includes("missing") ||
+      message.includes("Unsupported provider");
+    return NextResponse.json(
+      { error: isValidation ? message : "Failed to create secret" },
+      { status: isValidation ? 400 : 500 },
+    );
+  }
 }

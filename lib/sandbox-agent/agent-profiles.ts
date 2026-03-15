@@ -31,6 +31,15 @@ type AgentProfile = {
   filesystemConfigPath?: (cwd: string) => string;
 };
 
+// ── Effort levels ──
+
+const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "max"] as const;
+const CODEX_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"] as const;
+
+export type ClaudeEffortLevel = (typeof CLAUDE_EFFORT_LEVELS)[number];
+export type CodexEffortLevel = (typeof CODEX_EFFORT_LEVELS)[number];
+export type EffortLevel = ClaudeEffortLevel | CodexEffortLevel;
+
 // ── Per-agent profiles ──
 
 const READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"] as const;
@@ -42,7 +51,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     compatibleProviders: ["anthropic"],
     models: ["default", "sonnet", "opus", "haiku"],
     modes: ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"],
-    thoughtLevels: null,
+    thoughtLevels: CLAUDE_EFFORT_LEVELS,
     defaultMode: {
       autonomous: "bypassPermissions",
       "read-only": "dontAsk",
@@ -66,7 +75,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
       "gpt-5.1-codex-mini",
     ],
     modes: ["read-only", "auto", "full-access"],
-    thoughtLevels: ["low", "medium", "high", "xhigh"],
+    thoughtLevels: CODEX_EFFORT_LEVELS,
     defaultMode: {
       autonomous: "full-access",
       "read-only": "read-only",
@@ -111,7 +120,7 @@ export type AgentSessionIntent = {
   modeIntent: ModeIntent;
   modeOverride?: string;
   model?: string;
-  effortLevel?: string;
+  effortLevel?: EffortLevel;
 };
 
 export type ResolvedAgentConfig = {
@@ -165,19 +174,26 @@ export function resolveAgentConfig(
     null;
 
   if (intent.effortLevel) {
+    // Validate against allowed levels regardless of mechanism
+    if (
+      profile.thoughtLevels &&
+      !profile.thoughtLevels.includes(intent.effortLevel)
+    ) {
+      throw new Error(
+        `Invalid effort level "${intent.effortLevel}" for agent "${intent.agentType}". ` +
+          `Valid levels: ${profile.thoughtLevels.join(", ")}`,
+      );
+    }
+
     if (profile.effortMechanism === "sdk-thought-level") {
-      if (
-        profile.thoughtLevels &&
-        !profile.thoughtLevels.includes(intent.effortLevel)
-      ) {
-        throw new Error(
-          `Invalid effort level "${intent.effortLevel}" for agent "${intent.agentType}". ` +
-            `Valid levels: ${profile.thoughtLevels.join(", ")}`,
-        );
-      }
       thoughtLevel = intent.effortLevel;
     } else if (profile.effortMechanism === "filesystem-settings") {
+      // Write to settings file (e.g. .claude/settings.json)
       filesystemConfig = buildFilesystemConfig(profile, intent, {});
+      // Also pass as SDK thoughtLevel so the CLI flag (--effort) is set.
+      // CLI flag takes precedence over settings file, and "max" can only
+      // be set via CLI flag — it cannot be persisted in settings.json.
+      thoughtLevel = intent.effortLevel;
     }
     // null mechanism: silently ignore
   }

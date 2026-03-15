@@ -211,7 +211,7 @@ export const codingTask = task({
         modeIntent: "autonomous",
         modeOverride: agentMode,
         model,
-        effortLevel: (modelParams as Record<string, unknown>)?.effortLevel as string | undefined,
+        effortLevel: modelParams.effortLevel,
       });
 
       // Write filesystem config (e.g. .claude/settings.json) if needed

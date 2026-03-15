@@ -46,8 +46,8 @@ export type InteractiveSessionPayload = {
   modeOverride?: string;
   /** Agent model (e.g. "opus", "gpt-5.3-codex"). */
   model?: string;
-  /** Effort / thought level (e.g. "low", "medium", "high", "xhigh"). */
-  effortLevel?: string;
+  /** Effort / thought level (e.g. "low", "medium", "high", "max"). */
+  effortLevel?: import("@/lib/sandbox-agent/agent-profiles").EffortLevel;
   /** Semantic mode intent — determines permissions scope. Defaults to "autonomous". */
   modeIntent?: "autonomous" | "read-only" | "interactive";
 };
@@ -735,9 +735,10 @@ export const interactiveSessionTask = task({
       exitReason = "error";
       const isSandboxDead = error instanceof SandboxUnreachableError;
       const message = error instanceof Error ? error.message : String(error);
-      logger.error(isSandboxDead ? "Sandbox became unreachable" : "Session failed", {
-        error: message,
-      });
+      logger.error(
+        `${isSandboxDead ? "Sandbox became unreachable" : "Session failed"}: ${message} ` +
+        `(sessionId=${sessionId.slice(0, 8)})`,
+      );
 
       // Fail the active turn if one was in progress
       if (currentTurnRequestId) {
@@ -827,11 +828,10 @@ export const interactiveSessionTask = task({
           logger.info("Session hibernated successfully");
         } catch (dbError) {
           // Orphan snapshot — snapshot exists in Vercel but DB write failed
-          logger.error("Hibernate DB transaction failed — orphan snapshot", {
-            snapshotId: snapshotResult.snapshotId,
-            error:
-              dbError instanceof Error ? dbError.message : String(dbError),
-          });
+          logger.error(
+            `Hibernate DB transaction failed — orphan snapshot ` +
+            `(snapshotId=${snapshotResult.snapshotId}): ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+          );
 
           await casSessionStatus(sessionId, ["hibernating"], "stopped", {
             endedAt: new Date(),
@@ -848,6 +848,15 @@ export const interactiveSessionTask = task({
 
   onFailure: async ({ payload: rawPayload, error }) => {
     const payload = rawPayload as unknown as InteractiveSessionPayload;
+    const failureMsg = error instanceof Error ? error.message
+      : typeof error === "object" && error !== null && "message" in error
+        ? String((error as Record<string, unknown>).message)
+        : String(error);
+    console.log(
+      `[onFailure] session=${payload.sessionId.slice(0, 8)} ` +
+      `runtimeId=${payload.runtimeId?.slice(0, 8) ?? "null"}: ${failureMsg}`,
+    );
+
     const {
       updateInteractiveSession,
       getInteractiveSession,
@@ -863,7 +872,7 @@ export const interactiveSessionTask = task({
 
     await updateInteractiveSession(payload.sessionId, {
       status: "failed",
-      error: "Session terminated unexpectedly",
+      error: `Session terminated unexpectedly: ${failureMsg}`,
       endedAt: new Date(),
     });
 
@@ -879,12 +888,6 @@ export const interactiveSessionTask = task({
     // If run() already created the turn (crash happened later), createTurn will
     // throw a unique constraint violation — catch it and just failTurn.
     if (payload.requestId) {
-      const errorMsg =
-        error instanceof Error
-          ? error.message
-          : typeof error === "object" && error !== null && "message" in error
-            ? String((error as Record<string, unknown>).message)
-            : "Session terminated unexpectedly";
       try {
         await createTurn({
           sessionId: payload.sessionId,
@@ -896,7 +899,7 @@ export const interactiveSessionTask = task({
       } catch {
         // Turn already exists from run() — that's fine, we'll fail it below
       }
-      await failTurn(payload.requestId, payload.sessionId, errorMsg);
+      await failTurn(payload.requestId, payload.sessionId, failureMsg);
     }
   },
 });
