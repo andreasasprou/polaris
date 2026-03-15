@@ -18,6 +18,10 @@ type ConnectOptions = {
   persist?: SessionPersistDriver;
   replayMaxEvents?: number;
   replayMaxChars?: number;
+  /** Timeout (ms) for the SDK health wait gate. Default: 30 000. */
+  healthTimeoutMs?: number;
+  /** Abort signal — aborts connection if the sandbox dies during connect. */
+  signal?: AbortSignal;
 };
 
 type ExecuteOptions = {
@@ -108,7 +112,8 @@ export class SandboxAgentClient {
       persist: opts.persist,
       replayMaxEvents: opts.replayMaxEvents,
       replayMaxChars: opts.replayMaxChars,
-      waitForHealth: { timeoutMs: 30_000 },
+      waitForHealth: { timeoutMs: opts.healthTimeoutMs ?? 30_000 },
+      signal: opts.signal,
     });
     return new SandboxAgentClient(sdk);
   }
