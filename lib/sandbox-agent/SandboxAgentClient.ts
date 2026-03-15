@@ -119,18 +119,38 @@ export class SandboxAgentClient {
   }
 
   async createSession(config: SessionConfig): Promise<SandboxAgentSession> {
-    const session = await this.sdk.createSession({
-      agent: config.agent,
-      model: config.model,
-      mode: config.mode,
-      ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
-      sessionInit: {
-        cwd: config.cwd,
-        mcpServers: [],
-      },
-    });
+    // Create session with all options — the SDK internally sets mode, model,
+    // and thoughtLevel via ACP RPC after creating the bare session.
+    try {
+      return await this.sdk.createSession({
+        agent: config.agent,
+        model: config.model,
+        mode: config.mode,
+        ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+    } catch (error) {
+      // Some agent binaries don't support session/set_config_option for all
+      // options (e.g. Codex 0.3.2 rejects mode/model/thoughtLevel via this RPC).
+      // Fall back to creating a bare session — the agent will use its defaults
+      // for the configured agent type (mode, model, thought level come from
+      // the agent's own config JSON bundled in the binary).
+      const isRpcParamError =
+        error instanceof Error &&
+        error.message.includes("Invalid parameters");
+      if (!isRpcParamError) throw error;
 
-    return session;
+      return await this.sdk.createSession({
+        agent: config.agent,
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+    }
   }
 
   /**
