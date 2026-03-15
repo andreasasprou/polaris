@@ -78,7 +78,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     thoughtLevels: CODEX_EFFORT_LEVELS,
     defaultMode: {
       autonomous: "full-access",
-      "read-only": "read-only",
+      "read-only": "full-access",
       interactive: "auto",
     },
     effortMechanism: "sdk-thought-level",
