@@ -18,8 +18,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const CODEX_AUTH_FILE_CMD = `base64 < ~/.codex/auth.json | tr -d '\\n' | pbcopy`;
-const CODEX_AUTH_KEYCHAIN_CMD = `security find-generic-password -s "Codex Auth" -w | base64 | tr -d '\\n' | pbcopy`;
+const CODEX_AUTH_FILE_CMD = `base64 < ~/.codex/auth.json | tr -d '\\n'`;
+const CODEX_AUTH_KEYCHAIN_CMD = `security find-generic-password -s "Codex Auth" -w | base64 | tr -d '\\n'`;
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -56,8 +56,8 @@ function CodexOAuthInstructions() {
         <code className="rounded bg-muted px-1 py-0.5 font-mono">
           codex auth
         </code>{" "}
-        first if you haven&apos;t authenticated with ChatGPT, then paste the
-        output of one of these commands:
+        first if you haven&apos;t authenticated with ChatGPT, then run one of
+        these commands and paste the output here:
       </p>
       <div className="flex flex-col gap-1.5">
         <div>
