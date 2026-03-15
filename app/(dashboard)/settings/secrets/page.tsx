@@ -18,8 +18,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const CODEX_AUTH_FILE_CMD = `base64 < ~/.codex/auth.json | tr -d '\\n'`;
-const CODEX_AUTH_KEYCHAIN_CMD = `security find-generic-password -s "Codex Auth" -w | base64 | tr -d '\\n'`;
+const CODEX_AUTH_FILE_CMD = `base64 < ~/.codex/auth.json | tr -d '\\n' | pbcopy`;
+const CODEX_AUTH_KEYCHAIN_CMD = `security find-generic-password -s "Codex Auth" -w | base64 | tr -d '\\n' | pbcopy`;
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -345,22 +345,39 @@ export default function SecretsPage() {
                 </div>
 
                 {editingId === secret.id && (
-                  <div className="flex flex-col gap-2 border-t pt-3">
+                  <div className="flex flex-col gap-3 border-t pt-3">
                     {secret.provider === "openai" ? (
-                      <Textarea
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        placeholder="Paste API key (sk-...) or base64 auth.json"
-                        className="font-mono text-xs"
-                        rows={3}
-                      />
+                      <>
+                        <Textarea
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          placeholder="Paste API key (sk-...) or base64 auth.json"
+                          className="font-mono text-xs"
+                          rows={3}
+                        />
+                        <CodexOAuthInstructions />
+                      </>
                     ) : (
-                      <Input
-                        type="password"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        placeholder="sk-ant-..."
-                      />
+                      <>
+                        <Input
+                          type="password"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          placeholder="sk-ant-..."
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Get your API key from the{" "}
+                          <a
+                            href="https://console.anthropic.com/settings/keys"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-foreground"
+                          >
+                            Anthropic Console
+                          </a>
+                          .
+                        </p>
+                      </>
                     )}
                     <div className="flex gap-2">
                       <Button
