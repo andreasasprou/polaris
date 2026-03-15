@@ -7,7 +7,7 @@ import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap
 import type { AgentType } from "@/lib/sandbox-agent/types";
 import { getEnabledAgentTypes } from "@/lib/sandbox-agent/agent-profiles";
 
-const SANDBOX_AGENT_VERSION = "0.3.x";
+const SANDBOX_AGENT_VERSION = "0.3.2";
 const PROJECT_DIR = "/vercel/sandbox";
 
 /** All agent types that should have snapshots built (derived from enabled agents). */

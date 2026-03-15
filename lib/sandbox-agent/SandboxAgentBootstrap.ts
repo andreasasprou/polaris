@@ -3,7 +3,7 @@ import type { Sandbox } from "@vercel/sandbox";
 import type { AgentType } from "./types";
 import { buildSessionEnv } from "./credentials";
 
-const SANDBOX_AGENT_VERSION = "0.3.x";
+const SANDBOX_AGENT_VERSION = "0.3.2";
 const DEFAULT_PORT = 2468;
 const HEALTH_CHECK_RETRIES = 5;
 const HEALTH_CHECK_INTERVAL_MS = 2000;
