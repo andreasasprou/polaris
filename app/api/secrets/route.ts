@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
     // Validation errors from validateSecretValue are user-facing
     const isValidation = message.includes("must start with") ||
       message.includes("Invalid") || message.includes("missing") ||
-      message.includes("Unsupported provider");
+      message.includes("Unsupported provider") ||
+      message.includes("invalid or revoked") || message.includes("expired");
     return NextResponse.json(
       { error: isValidation ? message : "Failed to create secret" },
       { status: isValidation ? 400 : 500 },
