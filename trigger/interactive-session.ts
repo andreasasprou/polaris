@@ -330,7 +330,10 @@ export const interactiveSessionTask = task({
       const resolved = resolveAgentConfig({
         agentType,
         modeIntent: payload.modeIntent ?? "autonomous",
-        modeOverride: payload.modeOverride,
+        // When modeIntent is explicitly set, let the profile resolve the mode.
+        // modeOverride is only used when modeIntent is absent (caller wants
+        // explicit control over the agent-native mode).
+        modeOverride: payload.modeIntent ? undefined : payload.modeOverride,
         model: payload.model,
         effortLevel: payload.effortLevel,
       });
