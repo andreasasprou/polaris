@@ -88,15 +88,17 @@ export class SandboxAgentBootstrap {
     const cleaned = { ...env };
 
     // CODEX_AUTH_JSON_B64 → ~/.codex/auth.json
+    // Use shell commands instead of sandbox.writeFiles() because the Vercel
+    // Sandbox fs/write API uses tar extraction which rejects paths outside
+    // the project directory (tar exits with code 2).
     if (cleaned.CODEX_AUTH_JSON_B64) {
-      const content = Buffer.from(cleaned.CODEX_AUTH_JSON_B64, "base64");
-      await this.sandbox.writeFiles([
-        { path: "/root/.codex/auth.json", content },
-      ]);
-      await this.commands.runShell(
-        "chmod 600 $HOME/.codex/auth.json",
-        { cwd: "/" },
+      const result = await this.commands.runShell(
+        "mkdir -p $HOME/.codex && echo \"$_CRED_B64\" | base64 -d > $HOME/.codex/auth.json && chmod 600 $HOME/.codex/auth.json",
+        { cwd: "/", env: { _CRED_B64: cleaned.CODEX_AUTH_JSON_B64 } },
       );
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to provision codex credentials: ${result.stderr}`);
+      }
       delete cleaned.CODEX_AUTH_JSON_B64;
     }
 
