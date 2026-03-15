@@ -78,6 +78,9 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     thoughtLevels: CODEX_EFFORT_LEVELS,
     defaultMode: {
       autonomous: "full-access",
+      // Codex native "read-only" uses Landlock to block all shell/git commands,
+      // making it impossible to run diffs for code review. "full-access" is safe
+      // here because the agent runs inside an isolated Vercel Sandbox container.
       "read-only": "full-access",
       interactive: "auto",
     },

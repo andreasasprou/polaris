@@ -155,7 +155,7 @@ export class SandboxAgentClient {
       // supported even when the latter fails.
       if (config.mode) {
         try {
-          await session.rawSend("session/set_mode", { mode: config.mode });
+          await session.rawSend("session/set_mode", { modeId: config.mode });
         } catch {
           // Mode setting not supported — agent uses its built-in defaults
         }
@@ -203,7 +203,7 @@ export class SandboxAgentClient {
 
       if (config.mode) {
         try {
-          await session.rawSend("session/set_mode", { mode: config.mode });
+          await session.rawSend("session/set_mode", { modeId: config.mode });
         } catch {
           // Mode setting not supported — agent uses its built-in defaults
         }
