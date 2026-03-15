@@ -5,8 +5,6 @@ import { buildSessionEnv } from "./credentials";
 
 const SANDBOX_AGENT_VERSION = "0.3.2";
 const DEFAULT_PORT = 2468;
-const HEALTH_CHECK_RETRIES = 5;
-const HEALTH_CHECK_INTERVAL_MS = 2000;
 
 /**
  * Installs and starts the sandbox-agent server inside a Vercel Sandbox.
@@ -108,6 +106,9 @@ export class SandboxAgentBootstrap {
   /**
    * Start the sandbox-agent server as a background process.
    * Returns the base URL for SDK connection.
+   *
+   * Health readiness is deferred to `SandboxAgent.connect({ waitForHealth })`
+   * which the SDK handles with its own retry logic (30s timeout).
    */
   async start(
     port: number = DEFAULT_PORT,
@@ -125,33 +126,6 @@ export class SandboxAgentBootstrap {
       detached: true,
     });
 
-    const baseUrl = this.sandbox.domain(port);
-    await this.waitForHealth(baseUrl);
-
-    return baseUrl;
-  }
-
-  /**
-   * Wait for the sandbox-agent server to become healthy.
-   */
-  private async waitForHealth(baseUrl: string): Promise<void> {
-    for (let attempt = 1; attempt <= HEALTH_CHECK_RETRIES; attempt++) {
-      try {
-        const response = await fetch(`${baseUrl}/v1/health`);
-        if (response.ok) return;
-      } catch {
-        // Server not ready yet
-      }
-
-      if (attempt < HEALTH_CHECK_RETRIES) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, HEALTH_CHECK_INTERVAL_MS),
-        );
-      }
-    }
-
-    throw new Error(
-      `sandbox-agent server failed health check after ${HEALTH_CHECK_RETRIES} attempts at ${baseUrl}`,
-    );
+    return this.sandbox.domain(port);
   }
 }
