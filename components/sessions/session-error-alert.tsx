@@ -2,7 +2,7 @@
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircleIcon } from "lucide-react";
-import { parseSessionError, PHASE_LABELS } from "@/lib/errors/session-errors";
+import { parseSessionError, PHASE_LABELS } from "@/lib/errors/session-error-types";
 
 export function SessionErrorAlert({ error }: { error: string | null }) {
   const parsed = parseSessionError(error);
