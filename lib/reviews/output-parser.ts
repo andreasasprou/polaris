@@ -71,7 +71,8 @@ const LenientOutputSchema = z.object({
     .optional(),
   findings: z.array(LenientFindingSchema).optional().default([]),
   resolvedIssueIds: z.array(z.string()).optional().default([]),
-  reviewState: ReviewStateSchema.optional(),
+  // Accept any shape — agents often emit openIssues as string[] instead of object[]
+  reviewState: z.any().optional(),
 });
 
 /**
@@ -156,23 +157,29 @@ function tryParseLenient(block: string): ParsedReviewOutput | null {
       P2: findings.filter((f) => f.severity === "P2").length,
     };
 
+    // Try to parse reviewState strictly; fall back to synthesized state from findings
+    const reviewStateParsed = ReviewStateSchema.safeParse(data.reviewState);
+    const reviewState = reviewStateParsed.success
+      ? reviewStateParsed.data
+      : {
+          lastReviewedSha: data.reviewState?.lastReviewedSha ?? null,
+          openIssues: findings.map((f) => ({
+            id: f.id,
+            file: f.file,
+            severity: f.severity,
+            summary: f.title,
+          })),
+          resolvedIssues: [],
+          reviewCount: data.reviewState?.reviewCount ?? 0,
+        };
+
     return {
       verdict,
       summary: data.summary,
       severityCounts,
       findings,
       resolvedIssueIds: data.resolvedIssueIds,
-      reviewState: data.reviewState ?? {
-        lastReviewedSha: null,
-        openIssues: findings.map((f) => ({
-          id: f.id,
-          file: f.file,
-          severity: f.severity,
-          summary: f.title,
-        })),
-        resolvedIssues: [],
-        reviewCount: 0,
-      },
+      reviewState,
     };
   } catch {
     // Not valid JSON
