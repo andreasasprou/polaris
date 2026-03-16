@@ -1,0 +1,75 @@
+/**
+ * HITL (Human-in-the-Loop) via REST
+ *
+ * Forwards permission replies and question answers to the sandbox proxy.
+ * Replaces the Trigger.dev input stream HITL mechanism.
+ */
+
+import { getInteractiveSession } from "./actions";
+
+/**
+ * Reply to a permission request via the sandbox proxy.
+ */
+export async function replyPermission(
+  sessionId: string,
+  permissionId: string,
+  reply: "allow" | "deny",
+): Promise<void> {
+  const proxyUrl = await getProxyUrl(sessionId);
+
+  const response = await fetch(
+    `https://${proxyUrl}/permissions/${encodeURIComponent(permissionId)}/reply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reply }),
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Permission reply failed (${response.status}): ${body}`);
+  }
+}
+
+/**
+ * Reply to a question request via the sandbox proxy.
+ */
+export async function replyQuestion(
+  sessionId: string,
+  questionId: string,
+  answers: Record<string, string>,
+): Promise<void> {
+  const proxyUrl = await getProxyUrl(sessionId);
+
+  const response = await fetch(
+    `https://${proxyUrl}/questions/${encodeURIComponent(questionId)}/reply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers }),
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Question reply failed (${response.status}): ${body}`);
+  }
+}
+
+/**
+ * Resolve the proxy URL for a session.
+ */
+async function getProxyUrl(sessionId: string): Promise<string> {
+  const session = await getInteractiveSession(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  if (!session.sandboxBaseUrl) {
+    throw new Error(`Session ${sessionId} has no sandbox URL`);
+  }
+
+  // Rewrite agent server port (2468) to proxy port (2469)
+  return session.sandboxBaseUrl.replace(/:2468\b/, ":2469");
+}

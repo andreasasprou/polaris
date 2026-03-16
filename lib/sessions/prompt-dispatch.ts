@@ -1,13 +1,22 @@
 /**
- * v2 PLACEHOLDER — Prompt dispatch.
+ * v2 Prompt Dispatch — Two-Tier Session Dispatch
  *
- * This file previously contained the v1 5-tier dispatch routing with Trigger.dev.
- * It will be rewritten in Phase 3 with the v2 implementation:
- *   - Tier 1: sandbox alive → CAS idle→active, POST /prompt
- *   - Tier 2: sandbox dead → restore/create, increment epoch, then Tier 1
- *
- * The new implementation lives in lib/orchestration/ (Phase 3).
+ * Tier 1 (sandbox alive): CAS idle→active, create job, POST /prompt to proxy
+ * Tier 2 (sandbox dead):  call ensureSandboxReady, then execute Tier 1
  */
+
+import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
+import {
+  createJob,
+  createJobAttempt,
+  getActiveJobForSession,
+} from "@/lib/jobs/actions";
+import {
+  casSessionStatus,
+  getInteractiveSession,
+  createTurn,
+} from "./actions";
+import { ensureSandboxReady } from "./sandbox-lifecycle";
 
 export type DispatchResult = {
   jobId: string;
@@ -15,17 +24,184 @@ export type DispatchResult = {
 
 /**
  * Dispatch a prompt to a session's sandbox.
- * TODO(v2-phase3): Implement v2 dispatch.
+ *
+ * Tier 1: If sandbox is alive, CAS idle→active and POST /prompt.
+ * Tier 2: If sandbox is dead/missing, provision a new one, then Tier 1.
  */
-export async function dispatchPromptToSession(_input: {
+export async function dispatchPromptToSession(input: {
   sessionId: string;
   prompt: string;
   requestId: string;
   source: string;
 }): Promise<DispatchResult> {
-  throw new Error(
-    "v1 prompt dispatch has been removed. v2 dispatch not yet implemented (Phase 3).",
+  const { sessionId, prompt, requestId, source } = input;
+
+  const session = await getInteractiveSession(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  // Check for existing active job (prevents double dispatch)
+  const existingJob = await getActiveJobForSession(sessionId);
+  if (existingJob) {
+    throw new Error(
+      `Session ${sessionId} already has an active job: ${existingJob.id}`,
+    );
+  }
+
+  // CAS to active (serializes concurrent sends)
+  const cas = await casSessionStatus(
+    sessionId,
+    ["idle", "hibernated", "stopped", "failed"],
+    "active",
   );
+  if (!cas) {
+    throw new Error(
+      `Cannot dispatch to session ${sessionId}: status is ${session.status}`,
+    );
+  }
+
+  // Resolve credentials
+  const creds = await resolveSessionCredentials(session);
+
+  // Determine if sandbox is alive (Tier 1) or needs provisioning (Tier 2)
+  let sandboxBaseUrl = session.sandboxBaseUrl;
+  let epoch = session.epoch;
+  let sandboxId = session.sandboxId;
+
+  const sandboxAlive = sandboxBaseUrl
+    ? await probeSandboxHealth(sandboxBaseUrl)
+    : false;
+
+  if (!sandboxAlive) {
+    // Tier 2: Provision sandbox
+    const result = await ensureSandboxReady(sessionId, {
+      agentApiKey: creds.agentApiKey,
+      agentType: session.agentType as Parameters<typeof ensureSandboxReady>[1]["agentType"],
+      repositoryOwner: creds.repositoryOwner,
+      repositoryName: creds.repositoryName,
+      defaultBranch: creds.defaultBranch,
+      githubInstallationId: creds.githubInstallationId,
+    });
+    sandboxBaseUrl = result.proxyBaseUrl;
+    epoch = result.epoch;
+    sandboxId = result.sandboxId;
+  }
+
+  if (!sandboxBaseUrl) {
+    // Rollback CAS
+    await casSessionStatus(sessionId, ["active"], "idle");
+    throw new Error("No sandbox URL available after provisioning");
+  }
+
+  // Create job + attempt + turn
+  const hmacKey = generateJobHmacKey();
+  const job = await createJob({
+    organizationId: session.organizationId,
+    type: "prompt",
+    sessionId,
+    requestId,
+    hmacKey,
+    payload: {
+      prompt,
+      source,
+      sandboxId,
+    },
+    timeoutSeconds: 1200, // 20 minutes
+  });
+
+  if (!job) {
+    // Idempotent conflict — job already exists for this request
+    await casSessionStatus(sessionId, ["active"], "idle");
+    throw new Error(`Job already exists for request ${requestId}`);
+  }
+
+  const attempt = await createJobAttempt({
+    jobId: job.id,
+    attemptNumber: 1,
+    epoch,
+    sandboxId: sandboxId ?? undefined,
+  });
+
+  await createTurn({
+    sessionId,
+    requestId,
+    runtimeId: undefined,
+    source,
+    prompt,
+  });
+
+  // POST /prompt to sandbox proxy
+  const proxyUrl = sandboxAlive
+    ? sandboxBaseUrl.replace(/:2468\b/, ":2469") // Rewrite agent URL to proxy port
+    : sandboxBaseUrl; // Already the proxy URL from ensureSandboxReady
+
+  try {
+    const response = await fetch(`https://${proxyUrl}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jobId: job.id,
+        attemptId: attempt.id,
+        epoch,
+        prompt,
+        callbackUrl: buildCallbackUrl(),
+        hmacKey,
+        config: {
+          agent: session.agentType,
+          cwd: "/vercel/sandbox",
+        },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (response.status === 202) {
+      return { jobId: job.id };
+    }
+
+    // Non-202: rollback
+    const body = await response.text().catch(() => "");
+    const { casAttemptStatus, casJobStatus } = await import(
+      "@/lib/jobs/actions"
+    );
+    await casAttemptStatus(attempt.id, ["dispatching"], "failed", {
+      error: `Proxy returned ${response.status}: ${body}`,
+    });
+    await casJobStatus(job.id, ["pending"], "failed_retryable");
+    await casSessionStatus(sessionId, ["active"], "idle");
+    throw new Error(`Proxy returned ${response.status}: ${body}`);
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      // Dispatch unknown — sweeper will reconcile
+      const { casAttemptStatus } = await import("@/lib/jobs/actions");
+      await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown");
+      return { jobId: job.id };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Probe sandbox proxy health.
+ */
+async function probeSandboxHealth(baseUrl: string): Promise<boolean> {
+  try {
+    // Probe the proxy health endpoint
+    const proxyUrl = baseUrl.replace(/:2468\b/, ":2469");
+    const response = await fetch(`https://${proxyUrl}/health`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function buildCallbackUrl(): string {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
+  if (appUrl) {
+    const base = appUrl.startsWith("http") ? appUrl : `https://${appUrl}`;
+    return `${base}/api/callbacks`;
+  }
+  return "http://localhost:3001/api/callbacks";
 }
 
 /**

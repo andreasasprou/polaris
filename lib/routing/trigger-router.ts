@@ -4,11 +4,12 @@ import { createAutomationRun } from "@/lib/automations/actions";
 import { claimDelivery } from "./dedupe";
 import { matchesGitHubTrigger } from "./matchers";
 import type { GitHubTriggerConfig } from "@/lib/automations/types";
-import { tasks } from "@trigger.dev/sdk/v3";
 
 /**
  * Route an incoming GitHub webhook event to matching automations.
  * Returns the number of automations triggered.
+ *
+ * v2: Dispatches directly to orchestration modules (no Trigger.dev).
  */
 export async function routeGitHubEvent(input: {
   installationId: number;
@@ -66,7 +67,7 @@ export async function routeGitHubEvent(input: {
       );
       if (dispatched) triggered++;
     } else {
-      // Oneshot: existing coding-task dispatch
+      // Oneshot: dispatch coding task directly
       const run = await createAutomationRun({
         automationId: automation.id,
         organizationId: orgId,
@@ -76,22 +77,22 @@ export async function routeGitHubEvent(input: {
         triggerEvent: input.payload,
       });
 
-      const handle = await tasks.trigger("coding-task", {
-        orgId,
-        automationId: automation.id,
-        automationRunId: run.id,
-        source: "automation" as const,
-        triggerEvent: input.payload,
-      }, {
-        idempotencyKey: `run:${run.id}`,
-      });
-
-      if (handle.id) {
-        const { updateAutomationRun } = await import("@/lib/automations/actions");
-        await updateAutomationRun(run.id, { triggerRunId: handle.id });
+      try {
+        const { dispatchCodingTask } = await import("@/lib/orchestration/coding-task");
+        await dispatchCodingTask({
+          orgId,
+          automationId: automation.id,
+          automationRunId: run.id,
+          source: "automation" as const,
+          triggerEvent: input.payload,
+        });
+        triggered++;
+      } catch (err) {
+        console.error(
+          `[router] Failed to dispatch coding task for automation ${automation.id}:`,
+          err instanceof Error ? err.message : err,
+        );
       }
-
-      triggered++;
     }
   }
 
@@ -131,8 +132,7 @@ async function dispatchContinuousReview(
     console.log("[router] Could not normalize PR event:", input.eventType, input.action);
     return false;
   }
-  // Resolve missing PR data for issue_comment events (GitHub doesn't include
-  // base/head refs in the issue_comment payload — must fetch from PR API)
+  // Resolve missing PR data for issue_comment events
   if (!prEvent.headSha || !prEvent.baseSha) {
     const { getPullRequest } = await import("@/lib/reviews/github");
     const pr = await getPullRequest({
@@ -211,7 +211,7 @@ async function dispatchContinuousReview(
     return false;
   }
 
-  console.log("[router] Creating automation run + triggering task for PR", prEvent.prNumber);
+  console.log("[router] Creating automation run + dispatching review for PR", prEvent.prNumber);
 
   // Create GitHub check immediately so it appears on the PR while the task queues
   let checkRunId: string | undefined;
@@ -226,10 +226,10 @@ async function dispatchContinuousReview(
     });
     checkRunId = check.checkRunId;
   } catch (err) {
-    console.log("[router] Failed to create early check run — task will retry:", err instanceof Error ? err.message : String(err));
+    console.log("[router] Failed to create early check run — dispatch will retry:", err instanceof Error ? err.message : String(err));
   }
 
-  // Create run + dispatch
+  // Create run + dispatch directly
   const run = await createAutomationRun({
     automationId: automation.id,
     organizationId: orgId,
@@ -241,8 +241,16 @@ async function dispatchContinuousReview(
     interactiveSessionId: automationSession.interactiveSessionId,
   });
 
+  if (checkRunId) {
+    const { updateAutomationRun } = await import("@/lib/automations/actions");
+    await updateAutomationRun(run.id, {
+      githubCheckRunId: checkRunId,
+    });
+  }
+
   try {
-    const handle = await tasks.trigger("continuous-pr-review", {
+    const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
+    await dispatchPrReview({
       orgId,
       automationId: automation.id,
       automationSessionId: automationSession.id,
@@ -251,20 +259,13 @@ async function dispatchContinuousReview(
       deliveryId: input.deliveryId,
       normalizedEvent: prEvent,
       checkRunId,
-    }, {
-      idempotencyKey: `run:${run.id}`,
     });
-
-    if (handle.id || checkRunId) {
-      const { updateAutomationRun } = await import("@/lib/automations/actions");
-      await updateAutomationRun(run.id, {
-        ...(handle.id ? { triggerRunId: handle.id } : {}),
-        ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
-      });
-    }
   } catch (err) {
-    console.log("[router] Failed to trigger task — cancelling check:", err instanceof Error ? err.message : String(err));
-    // Cancel the eagerly-created check so it doesn't stay in_progress forever
+    console.error(
+      `[router] Failed to dispatch PR review for automation ${automation.id}:`,
+      err instanceof Error ? err.message : err,
+    );
+    // Cancel the eagerly-created check
     if (checkRunId) {
       try {
         const { failCheck } = await import("@/lib/reviews/github");

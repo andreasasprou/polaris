@@ -235,7 +235,6 @@ export async function hibernateSession(input: {
 export async function createTurn(input: {
   sessionId: string;
   requestId: string;
-  triggerRunId?: string;
   runtimeId?: string;
   source: string;
   prompt: string;

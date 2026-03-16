@@ -1,23 +1,11 @@
 "use client";
 
 import { useMemo, useEffect, useState, useCallback, useRef } from "react";
-import { useRealtimeRunWithStreams } from "@trigger.dev/react-hooks";
 import {
   consolidateEvents,
   type ChatItem,
 } from "@/lib/sandbox-agent/event-types";
 import type { SandboxAgentEvent } from "@/lib/sandbox-agent/SandboxAgentClient";
-import type { EventStreamMap } from "@/lib/trigger/types";
-import type { interactiveSessionTask } from "@/trigger/interactive-session";
-
-const TRIGGER_TERMINAL_STATES = [
-  "CANCELED",
-  "FAILED",
-  "COMPLETED",
-  "CRASHED",
-  "SYSTEM_FAILURE",
-  "TIMED_OUT",
-];
 
 type RawEvent = {
   id: string;
@@ -29,63 +17,65 @@ type RawEvent = {
 };
 
 type UseSessionChatOptions = {
-  /** SDK session ID for fetching historical events from DB. */
+  /** SDK session ID for fetching events from DB. */
   sdkSessionId: string | null;
-  /** Current Trigger.dev run ID for realtime subscription. */
-  triggerRunId: string | null;
-  /** Access token for the current run (run-scoped). */
-  accessToken: string | null;
-  /** Whether the session is in a terminal state (failed, stopped, completed). */
+  /** Session status — determines poll interval. */
+  sessionStatus: string | null;
+  /** Whether the session is in a terminal state. */
   terminal?: boolean;
 };
 
 type UseSessionChatReturn = {
-  /** Consolidated chat items from all sources (DB + realtime). */
+  /** Consolidated chat items. */
   items: ChatItem[];
   /** Whether the agent is currently working. */
   turnInProgress: boolean;
-  /** Trigger.dev run status (QUEUED, EXECUTING, COMPLETED, etc.). */
-  runStatus: string | null;
-  /** App-level session status from run metadata. */
-  sessionStatus: string | null;
-  /** Current setup phase (shown during provisioning). */
-  setupStep: string | null;
   /** Whether the initial DB fetch is loading. */
   loading: boolean;
-  /** Error from either source. */
+  /** Error from fetching. */
   error: Error | null;
+  /** Trigger a manual refresh. */
+  refresh: () => void;
 };
+
+// Poll intervals by session status
+function getPollInterval(status: string | null): number {
+  switch (status) {
+    case "active":
+    case "creating":
+    case "snapshotting":
+      return 2000;
+    case "idle":
+    case "hibernated":
+    case "stopped":
+    case "failed":
+    case "completed":
+      return 0; // No polling for stable states
+    default:
+      return 0;
+  }
+}
 
 /**
  * Unified hook for session event display.
  *
- * Merges two sources:
- * 1. DB events (historical, all past turns) — fetched once on mount
- * 2. Realtime events (current turn) — streamed via Trigger.dev SSE
- *
- * Events are deduplicated by eventIndex (realtime wins on conflict)
- * and consolidated into displayable ChatItems.
+ * Fetches events from DB via polling. Poll interval depends on session status:
+ * - 2s during active/creating/snapshotting
+ * - 0 (no polling) for stable states
  */
 export function useSessionChat({
   sdkSessionId,
-  triggerRunId,
-  accessToken,
+  sessionStatus,
   terminal,
 }: UseSessionChatOptions): UseSessionChatReturn {
-  // ── DB layer: historical events ──
   const [dbEvents, setDbEvents] = useState<RawEvent[]>([]);
-  const [dbLoading, setDbLoading] = useState(false);
-  const [dbError, setDbError] = useState<Error | null>(null);
-  const prevRunStatusRef = useRef<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const mountedRef = useRef(true);
 
-  const fetchDbEvents = useCallback(async () => {
+  const fetchEvents = useCallback(async () => {
     if (!sdkSessionId) return;
-    setDbLoading(true);
-    setDbError(null);
     try {
-      // Paginate through all events — sessions with many tool calls
-      // can easily exceed a single page. Without full pagination,
-      // tail events (including the final response) get lost on refresh.
       const pageSize = 500;
       let allItems: RawEvent[] = [];
       let offset = 0;
@@ -99,86 +89,53 @@ export function useSessionChat({
         const items: RawEvent[] = data.items ?? [];
         allItems = allItems.concat(items);
 
-        if (items.length < pageSize) break; // last page
+        if (items.length < pageSize) break;
         offset += pageSize;
       }
 
-      setDbEvents(allItems);
+      if (mountedRef.current) {
+        setDbEvents(allItems);
+        setError(null);
+      }
     } catch (err) {
-      setDbError(err instanceof Error ? err : new Error(String(err)));
-    } finally {
-      setDbLoading(false);
+      if (mountedRef.current) {
+        setError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   }, [sdkSessionId]);
 
-  // Fetch DB events on mount / when sdkSessionId changes
+  // Initial fetch
   useEffect(() => {
-    fetchDbEvents();
-  }, [fetchDbEvents]);
+    mountedRef.current = true;
+    setLoading(true);
+    fetchEvents().finally(() => {
+      if (mountedRef.current) setLoading(false);
+    });
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [fetchEvents]);
 
-  // ── Realtime layer: current turn events ──
-  const realtimeEnabled = !!triggerRunId && !!accessToken;
-
-  const { run, streams, error: realtimeError } = useRealtimeRunWithStreams<
-    typeof interactiveSessionTask,
-    EventStreamMap
-  >(triggerRunId ?? "", {
-    accessToken: accessToken ?? "",
-    enabled: realtimeEnabled,
-  });
-
-  const realtimeEvents = (streams?.events ?? []) as SandboxAgentEvent[];
-
-  // Re-fetch DB events when the realtime run reaches a terminal state
-  // (ensures final events from the completed turn are captured)
-  const runStatus = run?.status ?? null;
+  // Polling
+  const pollInterval = getPollInterval(sessionStatus);
   useEffect(() => {
-    const prev = prevRunStatusRef.current;
-    prevRunStatusRef.current = runStatus;
+    if (!pollInterval) return;
+    const timer = setInterval(fetchEvents, pollInterval);
+    return () => clearInterval(timer);
+  }, [fetchEvents, pollInterval]);
 
-    if (
-      runStatus &&
-      TRIGGER_TERMINAL_STATES.includes(runStatus) &&
-      prev &&
-      !TRIGGER_TERMINAL_STATES.includes(prev)
-    ) {
-      // Small delay to let the persist driver flush
-      const timer = setTimeout(fetchDbEvents, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [runStatus, fetchDbEvents]);
-
-  // ── Merge: DB events + realtime events, dedup by eventIndex ──
   const { items, turnInProgress } = useMemo(() => {
-    const eventMap = new Map<number, SandboxAgentEvent>();
-
-    // DB events first (lower priority)
-    for (const event of dbEvents) {
-      eventMap.set(event.eventIndex, event as unknown as SandboxAgentEvent);
-    }
-
-    // Realtime events overwrite (higher priority — fresher data)
-    for (const event of realtimeEvents) {
-      eventMap.set(event.eventIndex, event);
-    }
-
-    const sorted = [...eventMap.values()].sort(
-      (a, b) => a.eventIndex - b.eventIndex,
-    );
-
+    const sorted = [...dbEvents]
+      .sort((a, b) => a.eventIndex - b.eventIndex)
+      .map((e) => e as unknown as SandboxAgentEvent);
     return consolidateEvents(sorted, { terminal });
-  }, [dbEvents, realtimeEvents, terminal]);
-
-  // ── Metadata from realtime ──
-  const meta = run?.metadata as Record<string, string> | undefined;
+  }, [dbEvents, terminal]);
 
   return {
     items,
     turnInProgress,
-    runStatus,
-    sessionStatus: meta?.status ?? null,
-    setupStep: meta?.setupStep ?? null,
-    loading: dbLoading && items.length === 0,
-    error: dbError ?? realtimeError ?? null,
+    loading: loading && items.length === 0,
+    error,
+    refresh: fetchEvents,
   };
 }

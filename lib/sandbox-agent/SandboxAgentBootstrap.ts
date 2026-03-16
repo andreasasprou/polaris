@@ -5,6 +5,7 @@ import { buildSessionEnv } from "./credentials";
 
 const SANDBOX_AGENT_VERSION = "0.3.2";
 const DEFAULT_PORT = 2468;
+const PROXY_PORT = 2469;
 
 /**
  * Installs and starts the sandbox-agent server inside a Vercel Sandbox.
@@ -123,6 +124,46 @@ export class SandboxAgentBootstrap {
         `export PATH="$HOME/bin:$PATH" && exec sandbox-agent server --no-token --host 0.0.0.0 --port ${port}`,
       ],
       env,
+      detached: true,
+    });
+
+    return this.sandbox.domain(port);
+  }
+
+  // ── Proxy Installation & Start ──
+
+  /**
+   * Install the REST proxy into the sandbox.
+   * Writes the bundled proxy.js file to /tmp/polaris-proxy.js.
+   */
+  async installProxy(proxyBundle: string): Promise<void> {
+    // Write proxy bundle into the project directory via writeFiles API.
+    // Path is relative to sandbox cwd (project root).
+    await this.sandbox.writeFiles([
+      { path: ".polaris-proxy.js", content: Buffer.from(proxyBundle) },
+    ]);
+  }
+
+  /**
+   * Start the REST proxy as a background process.
+   * Returns the proxy base URL (e.g. https://sandbox-id.sbx.vercel.app:2469).
+   *
+   * Must be called after installProxy() and start() (agent server must be running).
+   */
+  async startProxy(
+    env: Record<string, string> = {},
+    port: number = PROXY_PORT,
+  ): Promise<string> {
+    await this.sandbox.runCommand({
+      cmd: "sh",
+      args: [
+        "-c",
+        `exec node .polaris-proxy.js`,
+      ],
+      env: {
+        ...env,
+        PROXY_PORT: String(port),
+      },
       detached: true,
     });
 

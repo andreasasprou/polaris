@@ -18,9 +18,12 @@ export async function createJob(input: {
   timeoutSeconds?: number;
   hmacKey?: string;
 }) {
+  const timeoutAt = input.timeoutSeconds != null
+    ? new Date(Date.now() + input.timeoutSeconds * 1000)
+    : undefined;
   const [row] = await db
     .insert(jobs)
-    .values(input)
+    .values({ ...input, timeoutAt })
     .onConflictDoNothing() // Idempotent by (session_id, request_id)
     .returning();
   return row ?? null;

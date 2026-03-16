@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { sandboxSnapshots } from "./schema";
 import { eq, and, desc } from "drizzle-orm";
-import { logger } from "@trigger.dev/sdk/v3";
 import type { AgentType } from "@/lib/sandbox-agent/types";
 import type { SandboxSource } from "@/lib/sandbox/types";
 
@@ -25,8 +24,7 @@ export async function getActiveSnapshot(
 
 /**
  * Resolve the sandbox source for an agent type.
- * Returns an existing snapshot if available, otherwise builds one first.
- * Always returns a snapshot source — no git fallback needed.
+ * Returns an existing snapshot if available, otherwise falls back to git.
  */
 export async function resolveSnapshotSource(
   agentType: AgentType,
@@ -37,13 +35,7 @@ export async function resolveSnapshotSource(
     return { type: "snapshot", snapshotId: existing };
   }
 
-  // No snapshot — build one now (first-time setup)
-  logger.info("No snapshot found, building one", { agentType });
-
-  const { buildSnapshotTask } = await import("@/trigger/build-snapshot");
-  const result = await buildSnapshotTask
-    .triggerAndWait({ agentType })
-    .unwrap();
-
-  return { type: "snapshot", snapshotId: result.snapshotId };
+  // No snapshot available — fall back to git source
+  console.log(`[snapshots] No snapshot found for ${agentType}, using git source`);
+  return { type: "git" };
 }

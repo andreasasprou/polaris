@@ -123,6 +123,10 @@ async function processCallback(input: {
         result,
       });
       await appendJobEvent(jobId, "agent_completed", attemptId);
+
+      // Trigger post-processing (coding task PR creation, review comment, etc.)
+      const { runPostProcessing } = await import("./postprocess");
+      await runPostProcessing(jobId);
       break;
     }
 

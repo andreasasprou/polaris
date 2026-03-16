@@ -98,7 +98,6 @@ export async function createAutomationRun(input: {
 export async function updateAutomationRun(
   id: string,
   input: Partial<{
-    triggerRunId: string;
     status: string;
     agentSessionId: string;
     prUrl: string;
