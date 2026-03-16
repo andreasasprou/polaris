@@ -66,7 +66,7 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     enabled: true,
     compatibleProviders: ["openai"],
     models: [
-      "gpt-5.4",
+      // "gpt-5.4", // Not yet supported by sandbox-agent 0.3.2 binary
       "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
       "gpt-5.2-codex",
@@ -78,7 +78,10 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     thoughtLevels: CODEX_EFFORT_LEVELS,
     defaultMode: {
       autonomous: "full-access",
-      "read-only": "read-only",
+      // Codex native "read-only" uses Landlock to block all shell/git commands,
+      // making it impossible to run diffs for code review. "full-access" is safe
+      // here because the agent runs inside an isolated Vercel Sandbox container.
+      "read-only": "full-access",
       interactive: "auto",
     },
     effortMechanism: "sdk-thought-level",

@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { tasks } from "@trigger.dev/sdk/v3";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
 import { resolveSessionCredentials } from "@/lib/sessions/prompt-dispatch";
-import type { interactiveSessionTask } from "@/trigger/interactive-session";
 
 /**
  * GET /api/interactive-sessions — list interactive sessions for the current org.
@@ -26,6 +24,12 @@ export async function GET() {
 
 /**
  * POST /api/interactive-sessions — create a new interactive session.
+ *
+ * v2: Creates the session record. Sandbox provisioning + first prompt dispatch
+ * happens when the user sends their first message via the prompt endpoint.
+ *
+ * TODO(v2-phase3): Implement sandbox creation + first prompt dispatch here
+ * or defer to the prompt endpoint.
  */
 export async function POST(req: NextRequest) {
   const { session, orgId } = await getSessionWithOrg();
@@ -54,10 +58,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Resolve credentials via shared helper
-  let creds;
+  // Validate credentials exist before creating the session
   try {
-    creds = await resolveSessionCredentials({
+    await resolveSessionCredentials({
       organizationId: orgId,
       agentType: agentType ?? "claude",
       agentSecretId: agentSecretId ?? null,
@@ -70,10 +73,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Resolve org-level sandbox env vars
-  const { getDecryptedEnvVars } = await import("@/lib/sandbox-env/queries");
-  const extraEnv = await getDecryptedEnvVars(orgId);
-
   // Create DB record
   const interactiveSession = await createInteractiveSession({
     organizationId: orgId,
@@ -84,26 +83,5 @@ export async function POST(req: NextRequest) {
     prompt,
   });
 
-  // Trigger the task
-  const handle = await tasks.trigger<typeof interactiveSessionTask>(
-    "interactive-session",
-    {
-      sessionId: interactiveSession.id,
-      orgId,
-      agentType: agentType ?? "claude",
-      agentApiKey: creds.agentApiKey,
-      repositoryOwner: creds.repositoryOwner,
-      repositoryName: creds.repositoryName,
-      defaultBranch: creds.defaultBranch,
-      githubInstallationId: creds.githubInstallationId,
-      prompt,
-      extraEnv: Object.keys(extraEnv).length > 0 ? extraEnv : undefined,
-    },
-    { tags: [`session:${interactiveSession.id}`] },
-  );
-
-  return NextResponse.json({
-    session: interactiveSession,
-    triggerRunId: handle.id,
-  });
+  return NextResponse.json({ session: interactiveSession });
 }

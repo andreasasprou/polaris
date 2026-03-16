@@ -1,20 +1,18 @@
 import { NextResponse } from "next/server";
-import { runs } from "@trigger.dev/sdk/v3";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import {
   getInteractiveSession,
   casSessionStatus,
 } from "@/lib/sessions/actions";
-import { getStatusConfig, LIVE_SESSION_STATUSES, RUN_TERMINAL_STATUSES } from "@/lib/sessions/status";
-import { sessionMessages } from "@/lib/trigger/streams";
-import { serializeSessionError } from "@/lib/errors/session-errors";
+import { getStatusConfig } from "@/lib/sessions/status";
+import { getActiveJobForSession } from "@/lib/jobs/actions";
 
 /**
  * GET /api/interactive-sessions/:sessionId — get session details.
  *
- * If the session is in a "live" state but the Trigger.dev run is terminal,
- * the DB is stale (e.g. onFailure didn't fire). We heal the mismatch before
- * responding so every poll/refresh automatically recovers.
+ * v2: Reconciliation via job status.
+ * If the session is in an active state but has no active job,
+ * the DB is stale — heal before responding.
  */
 export async function GET(
   _req: Request,
@@ -29,38 +27,14 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Reconcile: if session thinks it's live (or still creating) but the run is
-  // dead, heal the DB. Includes "creating" to catch runs that die before setup.
-  if (
-    [...LIVE_SESSION_STATUSES, "creating"].includes(session.status) &&
-    session.triggerRunId
-  ) {
-    try {
-      const run = await runs.retrieve(session.triggerRunId);
-      if (RUN_TERMINAL_STATUSES.has(run.status)) {
-        const healed = await casSessionStatus(
-          sessionId,
-          [...LIVE_SESSION_STATUSES, "creating"],
-          "failed",
-          {
-            error: serializeSessionError({
-              code: "SESSION_TERMINATED",
-              category: "transient",
-              phase: "unknown",
-              message: "Session ended unexpectedly due to a platform issue.",
-              detail: `Trigger.dev run ${run.status.toLowerCase()}`,
-              recoveryHint: "Try sending a new message to restart the session.",
-            }),
-            endedAt: new Date(),
-            triggerRunId: null,
-          },
-        );
-        if (healed) {
-          session = (await getInteractiveSession(sessionId)) ?? session;
-        }
+  // Job-based reconciliation: if active but no nonterminal job, heal to idle
+  if (session.status === "active") {
+    const activeJob = await getActiveJobForSession(sessionId);
+    if (!activeJob) {
+      const healed = await casSessionStatus(sessionId, ["active"], "idle");
+      if (healed) {
+        session = healed;
       }
-    } catch {
-      // Can't reach Trigger.dev API — return stale data rather than failing
     }
   }
 
@@ -69,9 +43,14 @@ export async function GET(
 
 /**
  * DELETE /api/interactive-sessions/:sessionId — stop an active session.
+ *
+ * Two modes:
+ *   - Stop current turn (default): POST /stop to sandbox proxy
+ *     → prompt_failed callback → session returns to idle
+ *   - Terminate session (?terminate=true): CAS → stopped, destroy sandbox, cancel active job
  */
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ sessionId: string }> },
 ) {
   const { orgId } = await getSessionWithOrg();
@@ -90,31 +69,76 @@ export async function DELETE(
     );
   }
 
-  if (!session.triggerRunId) {
-    return NextResponse.json(
-      { error: "No active run" },
-      { status: 400 },
+  const url = new URL(req.url);
+  const terminate = url.searchParams.get("terminate") === "true";
+
+  if (terminate) {
+    // Terminate: CAS → stopped, destroy sandbox, cancel active job
+    const stopped = await casSessionStatus(
+      sessionId,
+      ["active", "idle", "creating"],
+      "stopped",
+      { endedAt: new Date() },
     );
+
+    if (!stopped) {
+      return NextResponse.json(
+        { error: "Session already transitioned" },
+        { status: 409 },
+      );
+    }
+
+    // Cancel active job
+    const activeJob = await getActiveJobForSession(sessionId);
+    if (activeJob) {
+      const { casJobStatus } = await import("@/lib/jobs/actions");
+      await casJobStatus(
+        activeJob.id,
+        ["pending", "accepted", "running"],
+        "cancelled",
+      );
+    }
+
+    // Destroy sandbox (best-effort, async)
+    if (session.sandboxBaseUrl) {
+      // POST /stop to proxy (best-effort)
+      const proxyUrl = session.sandboxBaseUrl.replace(/:2468\b/, ":2469");
+      fetch(`https://${proxyUrl}/stop`, {
+        method: "POST",
+        signal: AbortSignal.timeout(5_000),
+      }).catch(() => {});
+    }
+
+    const { destroySandbox } = await import("@/lib/sessions/sandbox-lifecycle");
+    await destroySandbox(sessionId);
+
+    return NextResponse.json({ ok: true, terminated: true });
   }
 
-  // Verify run is alive before sending stop. If the run died externally,
-  // just mark the session as stopped directly.
+  // Stop current turn: POST /stop to sandbox proxy
+  // The proxy will emit a prompt_failed callback which transitions job to failed
+  // and the session back to idle
+  if (!session.sandboxBaseUrl) {
+    // No sandbox — just CAS to idle
+    await casSessionStatus(sessionId, ["active"], "idle");
+    return NextResponse.json({ ok: true });
+  }
+
+  const proxyUrl = session.sandboxBaseUrl.replace(/:2468\b/, ":2469");
   try {
-    const run = await runs.retrieve(session.triggerRunId);
-    if (RUN_TERMINAL_STATUSES.has(run.status)) {
-      await casSessionStatus(
-        sessionId,
-        [...LIVE_SESSION_STATUSES],
-        "stopped",
-        { endedAt: new Date(), triggerRunId: null },
-      );
-      return NextResponse.json({ ok: true, reconciled: true });
+    const response = await fetch(`https://${proxyUrl}/stop`, {
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!response.ok) {
+      // Proxy stop failed — fallback to CAS idle
+      await casSessionStatus(sessionId, ["active"], "idle");
     }
   } catch {
-    // Can't reach Trigger.dev API — try sending stop anyway
+    // Proxy unreachable — CAS to idle
+    await casSessionStatus(sessionId, ["active"], "idle");
   }
-
-  await sessionMessages.send(session.triggerRunId, { action: "stop" });
 
   return NextResponse.json({ ok: true });
 }

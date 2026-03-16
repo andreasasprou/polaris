@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { dispatchPromptToSession } from "@/lib/sessions/prompt-dispatch";
 
 /**
  * POST /api/interactive-sessions/:sessionId/prompt — send a message.
  *
- * Thin HTTP wrapper over dispatchPromptToSession(). All routing logic
- * (hot/warm/suspended/hibernate/cold) lives in prompt-dispatch.ts.
+ * v2: Dispatches via the job system. Returns { jobId } on 202 Accepted.
+ * TODO(v2-phase3): Full implementation once dispatchPromptToSession is implemented.
  */
 export async function POST(
   req: NextRequest,
@@ -34,58 +35,10 @@ export async function POST(
 
   const result = await dispatchPromptToSession({
     sessionId,
-    orgId,
     prompt,
+    requestId: randomUUID(),
     source: "user",
   });
 
-  if (result.tier === "unavailable") {
-    const status = result.error.includes("not found")
-      ? 404
-      : result.error.includes("already resuming")
-        ? 409
-        : result.error.includes("being saved")
-          ? 425
-          : 400;
-
-    const headers: Record<string, string> = {};
-    if (result.retryAfterMs) {
-      headers["Retry-After"] = String(Math.ceil(result.retryAfterMs / 1000));
-    }
-
-    return NextResponse.json({ error: result.error }, { status, headers });
-  }
-
-  // Map dispatch result to the existing JSON response shape
-  switch (result.tier) {
-    case "hot":
-      return NextResponse.json({ ok: true });
-    case "warm":
-      return NextResponse.json({ ok: true, warm: true });
-    case "suspended":
-      return NextResponse.json({ ok: true, suspended: true });
-    case "hibernate":
-      return NextResponse.json({
-        ok: true,
-        resumed: true,
-        tier: "hibernate",
-        triggerRunId: result.triggerRunId,
-        accessToken: result.accessToken,
-      });
-    case "cold":
-      return NextResponse.json({
-        ok: true,
-        resumed: true,
-        warm: false,
-        triggerRunId: result.triggerRunId,
-        accessToken: result.accessToken,
-      });
-    case "fresh":
-      return NextResponse.json({
-        ok: true,
-        resumed: false,
-        triggerRunId: result.triggerRunId,
-        accessToken: result.accessToken,
-      });
-  }
+  return NextResponse.json({ jobId: result.jobId }, { status: 202 });
 }

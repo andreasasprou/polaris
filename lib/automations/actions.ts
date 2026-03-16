@@ -1,4 +1,4 @@
-import { eq, and, or, lt, isNull } from "drizzle-orm";
+import { eq, and, or, isNull, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automations, automationRuns, automationSessions } from "./schema";
 import type { AutomationSessionMetadata, QueuedReviewRequest } from "@/lib/reviews/types";
@@ -98,7 +98,6 @@ export async function createAutomationRun(input: {
 export async function updateAutomationRun(
   id: string,
   input: Partial<{
-    triggerRunId: string;
     status: string;
     agentSessionId: string;
     prUrl: string;
@@ -206,29 +205,24 @@ export async function swapAutomationSessionInteractiveSession(
 }
 
 /**
- * Try to acquire the review lock. Returns true if acquired.
- * Lock is acquired via CAS: only succeeds if no lock exists or the existing lock expired.
+ * v2: Job-based review lock (no TTL).
+ * Lock held = referenced job is nonterminal. Sweeper handles stuck jobs via timeout_at.
+ * Lock acquire should happen inside a db.transaction() together with job creation.
  */
 export async function tryAcquireAutomationSessionLock(input: {
   automationSessionId: string;
-  runId: string;
-  ttlMs: number;
+  jobId: string;
 }) {
-  const expiresAt = new Date(Date.now() + input.ttlMs);
   const [row] = await db
     .update(automationSessions)
     .set({
-      reviewLockRunId: input.runId,
-      reviewLockExpiresAt: expiresAt,
+      reviewLockJobId: input.jobId,
       updatedAt: new Date(),
     })
     .where(
       and(
         eq(automationSessions.id, input.automationSessionId),
-        or(
-          isNull(automationSessions.reviewLockRunId),
-          lt(automationSessions.reviewLockExpiresAt, new Date()),
-        ),
+        isNull(automationSessions.reviewLockJobId),
       ),
     )
     .returning();
@@ -236,23 +230,22 @@ export async function tryAcquireAutomationSessionLock(input: {
 }
 
 /**
- * Release the review lock. Only releases if the lock is held by the given run.
+ * Release the review lock. Only releases if the lock is held by the given job.
  */
 export async function releaseAutomationSessionLock(input: {
   automationSessionId: string;
-  runId: string;
+  jobId: string;
 }) {
   const [row] = await db
     .update(automationSessions)
     .set({
-      reviewLockRunId: null,
-      reviewLockExpiresAt: null,
+      reviewLockJobId: null,
       updatedAt: new Date(),
     })
     .where(
       and(
         eq(automationSessions.id, input.automationSessionId),
-        eq(automationSessions.reviewLockRunId, input.runId),
+        eq(automationSessions.reviewLockJobId, input.jobId),
       ),
     )
     .returning();

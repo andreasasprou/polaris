@@ -1,47 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runs } from "@trigger.dev/sdk/v3";
-import { eq, and } from "drizzle-orm";
-import { getSessionWithOrg } from "@/lib/auth/session";
-import { db } from "@/lib/db";
-import { interactiveSessions } from "@/lib/sessions/schema";
-import { automationRuns } from "@/lib/automations/schema";
 
+/**
+ * POST /api/tasks/:runId/cancel — legacy Trigger.dev run cancel endpoint.
+ * Replaced by job-based stop in v2. Will be removed.
+ */
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ runId: string }> },
 ) {
-  const { orgId } = await getSessionWithOrg();
-  const { runId } = await params;
-
-  // Verify run belongs to caller's org (check both session and automation run tables)
-  const [session] = await db
-    .select({ id: interactiveSessions.id })
-    .from(interactiveSessions)
-    .where(
-      and(
-        eq(interactiveSessions.triggerRunId, runId),
-        eq(interactiveSessions.organizationId, orgId),
-      ),
-    )
-    .limit(1);
-
-  if (!session) {
-    const [autoRun] = await db
-      .select({ id: automationRuns.id })
-      .from(automationRuns)
-      .where(
-        and(
-          eq(automationRuns.triggerRunId, runId),
-          eq(automationRuns.organizationId, orgId),
-        ),
-      )
-      .limit(1);
-
-    if (!autoRun) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-  }
-
-  await runs.cancel(runId);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json(
+    { error: "Trigger.dev run endpoints are deprecated. Use job-based API." },
+    { status: 410 },
+  );
 }

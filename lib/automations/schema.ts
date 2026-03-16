@@ -61,7 +61,7 @@ export const automationRuns = pgTable(
       .notNull()
       .references(() => automations.id, { onDelete: "cascade" }),
     organizationId: text("organization_id").notNull(),
-    triggerRunId: text("trigger_run_id"),
+    jobId: uuid("job_id"), // v2: link to jobs table instead of Trigger.dev
     status: text("status").default("pending").notNull(), // 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
     source: text("source").notNull(), // 'github' | 'slack' | 'schedule' | 'webhook' | 'sentry'
     externalEventId: text("external_event_id"),
@@ -139,11 +139,10 @@ export const automationSessions = pgTable(
       .default({} as AutomationSessionMetadata)
       .notNull(),
 
-    // Concurrency lock — only one review turn at a time
-    reviewLockRunId: text("review_lock_run_id"),
-    reviewLockExpiresAt: timestamp("review_lock_expires_at", {
-      withTimezone: true,
-    }),
+    // Concurrency lock — only one review at a time.
+    // v2: Job-based lock (no TTL). Lock held = referenced job is nonterminal.
+    // Sweeper handles stuck jobs via timeout_at, which transitively releases the lock.
+    reviewLockJobId: uuid("review_lock_job_id"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -165,6 +164,6 @@ export const automationSessions = pgTable(
       table.organizationId,
       table.status,
     ),
-    index("idx_automation_sessions_lock").on(table.reviewLockExpiresAt),
+    index("idx_automation_sessions_lock").on(table.reviewLockJobId),
   ],
 );

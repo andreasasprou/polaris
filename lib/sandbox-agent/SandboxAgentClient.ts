@@ -18,6 +18,10 @@ type ConnectOptions = {
   persist?: SessionPersistDriver;
   replayMaxEvents?: number;
   replayMaxChars?: number;
+  /** Timeout (ms) for the SDK health wait gate. Default: 30 000. */
+  healthTimeoutMs?: number;
+  /** Abort signal — aborts connection if the sandbox dies during connect. */
+  signal?: AbortSignal;
 };
 
 type ExecuteOptions = {
@@ -108,24 +112,60 @@ export class SandboxAgentClient {
       persist: opts.persist,
       replayMaxEvents: opts.replayMaxEvents,
       replayMaxChars: opts.replayMaxChars,
-      waitForHealth: { timeoutMs: 30_000 },
+      waitForHealth: { timeoutMs: opts.healthTimeoutMs ?? 30_000 },
+      signal: opts.signal,
     });
     return new SandboxAgentClient(sdk);
   }
 
   async createSession(config: SessionConfig): Promise<SandboxAgentSession> {
-    const session = await this.sdk.createSession({
-      agent: config.agent,
-      model: config.model,
-      mode: config.mode,
-      ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
-      sessionInit: {
-        cwd: config.cwd,
-        mcpServers: [],
-      },
-    });
+    // Create session with all options — the SDK internally sets mode, model,
+    // and thoughtLevel via ACP RPC after creating the bare session.
+    try {
+      return await this.sdk.createSession({
+        agent: config.agent,
+        model: config.model,
+        mode: config.mode,
+        ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+    } catch (error) {
+      // Some agent binaries reject session/set_config_option for certain options
+      // (e.g. Codex 0.3.2 rejects model/thoughtLevel via this RPC).
+      // Fall back to creating a bare session, then manually set mode via the
+      // direct session/set_mode RPC — mode is critical for read-only reviews.
+      const isRpcParamError =
+        error instanceof Error &&
+        error.message.includes("Invalid parameters");
+      if (!isRpcParamError) throw error;
 
-    return session;
+      const session = await this.sdk.createSession({
+        agent: config.agent,
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+
+      // Best-effort: set mode directly via session/set_mode RPC.
+      // This is a different RPC than session/set_config_option and may be
+      // supported even when the latter fails.
+      if (config.mode) {
+        try {
+          await session.rawSend("session/set_mode", { modeId: config.mode });
+        } catch (modeError) {
+          console.warn(
+            `[SandboxAgentClient] Failed to set mode "${config.mode}" for ${config.agent} session — ` +
+            `agent will use its built-in default. Error: ${modeError instanceof Error ? modeError.message : modeError}`,
+          );
+        }
+      }
+
+      return session;
+    }
   }
 
   /**
@@ -136,19 +176,47 @@ export class SandboxAgentClient {
     sdkSessionId: string,
     config: SessionConfig,
   ): Promise<SandboxAgentSession> {
-    const session = await this.sdk.resumeOrCreateSession({
-      id: sdkSessionId,
-      agent: config.agent,
-      model: config.model,
-      mode: config.mode,
-      ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
-      sessionInit: {
-        cwd: config.cwd,
-        mcpServers: [],
-      },
-    });
+    try {
+      return await this.sdk.resumeOrCreateSession({
+        id: sdkSessionId,
+        agent: config.agent,
+        model: config.model,
+        mode: config.mode,
+        ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+    } catch (error) {
+      // Same fallback as createSession — some binaries reject set_config_option.
+      const isRpcParamError =
+        error instanceof Error &&
+        error.message.includes("Invalid parameters");
+      if (!isRpcParamError) throw error;
 
-    return session;
+      const session = await this.sdk.resumeOrCreateSession({
+        id: sdkSessionId,
+        agent: config.agent,
+        sessionInit: {
+          cwd: config.cwd,
+          mcpServers: [],
+        },
+      });
+
+      if (config.mode) {
+        try {
+          await session.rawSend("session/set_mode", { modeId: config.mode });
+        } catch (modeError) {
+          console.warn(
+            `[SandboxAgentClient] Failed to set mode "${config.mode}" for ${config.agent} resumed session — ` +
+            `agent will use its built-in default. Error: ${modeError instanceof Error ? modeError.message : modeError}`,
+          );
+        }
+      }
+
+      return session;
+    }
   }
 
   /**

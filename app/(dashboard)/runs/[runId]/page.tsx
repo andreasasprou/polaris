@@ -142,8 +142,7 @@ export default function RunDetailPage() {
 function RunSessionChat({ sdkSessionId }: { sdkSessionId: string }) {
   const chat = useSessionChat({
     sdkSessionId,
-    triggerRunId: null,
-    accessToken: null,
+    sessionStatus: "completed",
     terminal: true, // Runs page only shows completed runs
   });
 
