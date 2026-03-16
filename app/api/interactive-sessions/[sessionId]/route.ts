@@ -1,20 +1,17 @@
 import { NextResponse } from "next/server";
-import { runs } from "@trigger.dev/sdk/v3";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import {
   getInteractiveSession,
   casSessionStatus,
 } from "@/lib/sessions/actions";
-import { getStatusConfig, LIVE_SESSION_STATUSES, RUN_TERMINAL_STATUSES } from "@/lib/sessions/status";
-import { sessionMessages } from "@/lib/trigger/streams";
-import { serializeSessionError } from "@/lib/errors/session-errors";
+import { getStatusConfig } from "@/lib/sessions/status";
 
 /**
  * GET /api/interactive-sessions/:sessionId — get session details.
  *
- * If the session is in a "live" state but the Trigger.dev run is terminal,
- * the DB is stale (e.g. onFailure didn't fire). We heal the mismatch before
- * responding so every poll/refresh automatically recovers.
+ * v2: Reconciliation via job status (no Trigger.dev cross-check).
+ * If the session is in an active state but has no active job,
+ * the DB is stale — heal before responding.
  */
 export async function GET(
   _req: Request,
@@ -23,52 +20,24 @@ export async function GET(
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
-  let session = await getInteractiveSession(sessionId);
+  const session = await getInteractiveSession(sessionId);
 
   if (!session || session.organizationId !== orgId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Reconcile: if session thinks it's live (or still creating) but the run is
-  // dead, heal the DB. Includes "creating" to catch runs that die before setup.
-  if (
-    [...LIVE_SESSION_STATUSES, "creating"].includes(session.status) &&
-    session.triggerRunId
-  ) {
-    try {
-      const run = await runs.retrieve(session.triggerRunId);
-      if (RUN_TERMINAL_STATUSES.has(run.status)) {
-        const healed = await casSessionStatus(
-          sessionId,
-          [...LIVE_SESSION_STATUSES, "creating"],
-          "failed",
-          {
-            error: serializeSessionError({
-              code: "SESSION_TERMINATED",
-              category: "transient",
-              phase: "unknown",
-              message: "Session ended unexpectedly due to a platform issue.",
-              detail: `Trigger.dev run ${run.status.toLowerCase()}`,
-              recoveryHint: "Try sending a new message to restart the session.",
-            }),
-            endedAt: new Date(),
-            triggerRunId: null,
-          },
-        );
-        if (healed) {
-          session = (await getInteractiveSession(sessionId)) ?? session;
-        }
-      }
-    } catch {
-      // Can't reach Trigger.dev API — return stale data rather than failing
-    }
-  }
+  // TODO(v2-phase3): Add job-based reconciliation here.
+  // If session is 'active' but no nonterminal job exists, heal to 'idle' or 'failed'.
 
   return NextResponse.json({ session });
 }
 
 /**
  * DELETE /api/interactive-sessions/:sessionId — stop an active session.
+ *
+ * v2: Two modes:
+ *   - Stop current turn (default): POST /stop to sandbox proxy → session returns to idle
+ *   - Terminate session (?terminate=true): CAS → stopped (terminal), destroy sandbox
  */
 export async function DELETE(
   _req: Request,
@@ -90,31 +59,21 @@ export async function DELETE(
     );
   }
 
-  if (!session.triggerRunId) {
+  // TODO(v2-phase3): Implement stop via POST /stop to sandbox proxy.
+  // For now, just CAS to stopped.
+  const stopped = await casSessionStatus(
+    sessionId,
+    ["active", "idle"],
+    "stopped",
+    { endedAt: new Date() },
+  );
+
+  if (!stopped) {
     return NextResponse.json(
-      { error: "No active run" },
-      { status: 400 },
+      { error: "Session already transitioned" },
+      { status: 409 },
     );
   }
-
-  // Verify run is alive before sending stop. If the run died externally,
-  // just mark the session as stopped directly.
-  try {
-    const run = await runs.retrieve(session.triggerRunId);
-    if (RUN_TERMINAL_STATUSES.has(run.status)) {
-      await casSessionStatus(
-        sessionId,
-        [...LIVE_SESSION_STATUSES],
-        "stopped",
-        { endedAt: new Date(), triggerRunId: null },
-      );
-      return NextResponse.json({ ok: true, reconciled: true });
-    }
-  } catch {
-    // Can't reach Trigger.dev API — try sending stop anyway
-  }
-
-  await sessionMessages.send(session.triggerRunId, { action: "stop" });
 
   return NextResponse.json({ ok: true });
 }

@@ -155,11 +155,10 @@ export const interactiveSessionTask = task({
     };
 
     await updateInteractiveSession(sessionId, {
-      triggerRunId: ctx.run.id,
       startedAt: new Date(),
     });
 
-    await setRuntime({ triggerRunId: ctx.run.id });
+    // v2: triggerRunId removed — this file will be deleted in Phase 3
 
     metadata.set("sessionId", sessionId);
     metadata.set("agentType", agentType);

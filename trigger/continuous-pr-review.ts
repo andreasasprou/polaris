@@ -86,8 +86,7 @@ export const continuousPrReviewTask = task({
     const lockAcquired = await timer.time("acquire_lock", () =>
       tryAcquireAutomationSessionLock({
         automationSessionId,
-        runId: automationRunId,
-        ttlMs: 30 * 60 * 1000, // 30 min
+        jobId: automationRunId, // v2: using run ID as job ID placeholder until Phase 3
       }),
     );
 
@@ -285,37 +284,22 @@ export const continuousPrReviewTask = task({
           effortLevel,
         });
 
+        // v2: dispatchPromptToSession signature simplified — this file will be deleted in Phase 3
         const result = await dispatchPromptToSession({
           sessionId: target,
-          orgId,
           prompt: reviewPrompt,
           requestId: requestId_,
           source: "automation",
-          agentType,
-          agentSecretId: automation.agentSecretId ?? undefined,
-          model: reviewAgentConfig.model,
-          modeOverride: reviewAgentConfig.mode,
-          effortLevel,
-          // Don't pass branch: event.headRef — it doesn't exist on origin for fork PRs.
-          // The prompt fetches via refs/pull/<pr>/head and checks out the head SHA instead.
-          modeIntent: "read-only",
         });
 
         return { dispatchResult: result, targetSessionId: target };
       });
 
-      if (dispatchResult.tier === "unavailable") {
-        throw new Error(
-          `Dispatch failed: ${dispatchResult.error} ` +
-          `(sessionId=${targetSessionId.slice(0, 8)}, automationSessionId=${automationSessionId.slice(0, 8)})`,
-        );
-      }
-
       await updateAutomationRun(automationRunId, {
         interactiveSessionId: targetSessionId,
       });
 
-      timer.setMeta("dispatch_tier", dispatchResult.tier);
+      timer.setMeta("dispatch_jobId", dispatchResult.jobId);
 
       // ── 8. Wait for turn completion ──
       const requestId = `review-${automationRunId}`;
@@ -497,7 +481,7 @@ export const continuousPrReviewTask = task({
       // ── 16. Release lock ──
       await releaseAutomationSessionLock({
         automationSessionId,
-        runId: automationRunId,
+        jobId: automationRunId, // v2: using run ID as job ID placeholder until Phase 3
       });
 
       // ── 17. Dispatch queued review (after lock release so it can acquire) ──

@@ -7,8 +7,8 @@ import {
   interactiveSessionTurns,
 } from "./schema";
 // Runtime statuses that indicate a "live" runtime (used for unique index + queries).
-// These are RUNTIME statuses (creating/running/warm/suspended), not session statuses.
-const LIVE_RUNTIME_STATUSES = ["creating", "running", "warm", "suspended"];
+// v2: simplified — no more warm/suspended distinction.
+const LIVE_RUNTIME_STATUSES = ["creating", "running", "idle"];
 
 // ── Interactive Sessions ──
 
@@ -36,7 +36,6 @@ export async function updateInteractiveSession(
     sdkSessionId: string;
     sandboxId: string;
     sandboxBaseUrl: string;
-    triggerRunId: string | null;
     nativeAgentSessionId: string;
     cwd: string;
     latestCheckpointId: string;
@@ -65,7 +64,6 @@ export async function casSessionStatus(
   extra?: Partial<{
     error: string | null;
     endedAt: Date | null;
-    triggerRunId: string | null;
     latestCheckpointId: string;
   }>,
 ) {
@@ -97,8 +95,8 @@ export async function createRuntime(input: {
   sessionId: string;
   sandboxId?: string;
   sandboxBaseUrl?: string;
-  triggerRunId?: string;
   sdkSessionId?: string;
+  epoch: number;
   restoreSource: string;
   restoreSnapshotId?: string;
   status?: string;
@@ -115,7 +113,6 @@ export async function updateRuntime(
   input: Partial<{
     sandboxId: string;
     sandboxBaseUrl: string;
-    triggerRunId: string;
     sdkSessionId: string;
     status: string;
     endedAt: Date;

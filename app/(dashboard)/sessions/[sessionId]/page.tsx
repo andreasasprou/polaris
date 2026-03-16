@@ -147,7 +147,7 @@ function SessionChatInput({
   );
 
   const hasStream = hasStreamAccess && isReady;
-  const canSend = config.canSend && (!config.hasLiveProcess || !turnInProgress);
+  const canSend = config.canSend && !turnInProgress;
   const isBusy = sending || isSending;
 
   // HITL actions via input stream (no-op when stream unavailable)
@@ -169,27 +169,18 @@ function SessionChatInput({
 
       onPendingPrompt?.(text.trim());
 
-      // Route: direct stream send when process is alive and stream ready, else API
-      if (config.sendPath === "stream" && hasStream) {
-        send({ action: "prompt", prompt: text.trim(), nonce: crypto.randomUUID() });
-      } else {
-        setSending(true);
-        try {
-          const result = await sendPromptViaApi(sessionId, text.trim());
-          if (result.ok) {
-            // If the API returned a new run (resume), update immediately
-            if (result.triggerRunId && result.accessToken) {
-              onResumeRun?.(result.triggerRunId, result.accessToken);
-            } else if (!config.hasLiveProcess) {
-              onRefresh();
-            }
-          }
-        } finally {
-          setSending(false);
+      // v2: Always send via API (no more direct stream send)
+      setSending(true);
+      try {
+        const result = await sendPromptViaApi(sessionId, text.trim());
+        if (result.ok) {
+          onRefresh();
         }
+      } finally {
+        setSending(false);
       }
     },
-    [config.sendPath, config.hasLiveProcess, hasStream, isBusy, send, sessionId, onRefresh, onPendingPrompt, onResumeRun],
+    [isBusy, sessionId, onRefresh, onPendingPrompt],
   );
 
   const placeholder = !canSend
@@ -198,9 +189,7 @@ function SessionChatInput({
       : !config.isTerminal
         ? "Starting up..."
         : "Session failed"
-    : config.hasLiveProcess
-      ? "Send a message..."
-      : "Send a message to resume...";
+    : "Send a message...";
 
   return (
     <HitlContext.Provider value={hitlActions}>
@@ -212,7 +201,7 @@ function SessionChatInput({
           placeholder={placeholder}
           disabled={!canSend || isBusy}
           loading={isBusy}
-          working={turnInProgress && config.hasLiveProcess}
+          working={turnInProgress}
         />
       </div>
     </HitlContext.Provider>
@@ -254,8 +243,8 @@ export default function SessionDetailPage() {
   // Unified chat hook — merges DB history + realtime current turn
   const chat = useSessionChat({
     sdkSessionId: session?.sdkSessionId ?? null,
-    triggerRunId: config.isLive ? triggerRunId : null,
-    accessToken: config.isLive ? accessToken : null,
+    triggerRunId: null, // v2: no more Trigger.dev realtime
+    accessToken: null,
     terminal: config.isTerminal,
   });
 

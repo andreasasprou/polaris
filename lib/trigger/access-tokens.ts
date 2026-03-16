@@ -1,42 +1,23 @@
 "use server";
 
-import { auth } from "@trigger.dev/sdk/v3";
-import { getSessionWithOrg } from "@/lib/auth/session";
-import { getInteractiveSession } from "@/lib/sessions/actions";
-
 /**
- * Create a scoped public token for an interactive session.
- * Grants read access to the run + write access to the input stream.
+ * v2: Trigger.dev access tokens are no longer needed.
+ * The sandbox proxy uses HMAC-signed callbacks instead.
+ * These stubs exist to prevent import errors until Phase 3 cleanup.
  */
+
 export async function createSessionAccessToken(
-  sessionId: string,
+  _sessionId: string,
 ): Promise<string> {
-  const { orgId } = await getSessionWithOrg();
-  const session = await getInteractiveSession(sessionId);
-
-  if (!session || session.organizationId !== orgId || !session.triggerRunId) {
-    throw new Error("Session not found");
-  }
-
-  return auth.createPublicToken({
-    scopes: {
-      read: { runs: [session.triggerRunId] },
-      write: { inputStreams: [session.triggerRunId] },
-    },
-    expirationTime: "2h",
-  });
+  throw new Error(
+    "Trigger.dev access tokens are removed in v2. Use job-based API.",
+  );
 }
 
-/**
- * Create a read-only public token for viewing an automation run.
- */
 export async function createRunAccessToken(
-  triggerRunId: string,
+  _triggerRunId: string,
 ): Promise<string> {
-  const { orgId } = await getSessionWithOrg();
-
-  return auth.createPublicToken({
-    scopes: { read: { runs: [triggerRunId] } },
-    expirationTime: "2h",
-  });
+  throw new Error(
+    "Trigger.dev access tokens are removed in v2. Use job-based API.",
+  );
 }

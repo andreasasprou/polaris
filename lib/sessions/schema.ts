@@ -7,8 +7,9 @@ import { secrets } from "@/lib/secrets/schema";
  * Interactive agent sessions — manual, multi-turn sessions started by users.
  * Separate from automation_runs (which are triggered by automations).
  *
- * Status lifecycle:
- *   creating → active → warm → suspended → hibernating → hibernated → resuming → active
+ * v2 Status lifecycle:
+ *   creating → idle → active → idle → snapshotting → hibernated
+ *   hibernated/stopped/failed → (restore/create) → idle → active
  *   Any state → stopped | failed
  */
 export const interactiveSessions = pgTable("interactive_sessions", {
@@ -22,12 +23,14 @@ export const interactiveSessions = pgTable("interactive_sessions", {
   repositoryId: uuid("repository_id").references(() => repositories.id),
   prompt: text("prompt").notNull(),
 
-  // Runtime state (legacy — will migrate to runtimes table in Phase 4)
+  // Runtime state
   status: text("status").default("creating").notNull(),
   sdkSessionId: text("sdk_session_id"),
   sandboxId: text("sandbox_id"),
   sandboxBaseUrl: text("sandbox_base_url"),
-  triggerRunId: text("trigger_run_id"),
+
+  // v2: Epoch fencing — monotonically increasing, incremented on each sandbox create/restore
+  epoch: integer("epoch").notNull().default(0),
 
   // Session continuation
   nativeAgentSessionId: text("native_agent_session_id"),
@@ -59,11 +62,11 @@ export const interactiveSessionRuntimes = pgTable(
       .references(() => interactiveSessions.id),
     sandboxId: text("sandbox_id"),
     sandboxBaseUrl: text("sandbox_base_url"),
-    triggerRunId: text("trigger_run_id"),
     sdkSessionId: text("sdk_session_id"),
-    restoreSource: text("restore_source").notNull(), // 'base_snapshot' | 'hibernate_snapshot' | 'warm_reconnect' | 'fresh'
+    epoch: integer("epoch").notNull(), // Session epoch at creation time — fencing token
+    restoreSource: text("restore_source").notNull(), // 'base_snapshot' | 'hibernate_snapshot' | 'fresh'
     restoreSnapshotId: text("restore_snapshot_id"),
-    status: text("status").default("creating").notNull(), // creating | running | warm | suspended | stopped | failed
+    status: text("status").default("creating").notNull(), // creating | running | idle | stopped | failed
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -73,7 +76,7 @@ export const interactiveSessionRuntimes = pgTable(
     // Enforce: only one live runtime per session
     uniqueIndex("idx_one_live_runtime_per_session")
       .on(table.sessionId)
-      .where(sql`status IN ('creating', 'running', 'warm', 'suspended')`),
+      .where(sql`status IN ('creating', 'running', 'idle')`),
   ],
 );
 
@@ -118,6 +121,9 @@ export const interactiveSessionTurns = pgTable(
       () => interactiveSessionRuntimes.id,
       { onDelete: "set null" },
     ),
+    // v2: Link turns to the job system for correlation
+    jobId: uuid("job_id"),
+    attemptId: uuid("attempt_id"),
     requestId: text("request_id").notNull(),
     source: text("source").notNull(), // 'user' | 'automation'
     status: text("status").default("pending").notNull(), // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
