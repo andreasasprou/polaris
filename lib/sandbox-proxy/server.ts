@@ -189,9 +189,7 @@ export class ProxyServer {
   private async executePromptAsync(request: PromptRequest): Promise<void> {
     const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt } =
       request;
-    const cwd = config.branch
-      ? `/home/user/repo` // Default sandbox repo path
-      : "/home/user/repo";
+    const cwd = config.cwd ?? "/home/user/repo";
 
     try {
       // Connect to sandbox-agent (lazy, first prompt triggers connection)

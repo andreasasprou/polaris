@@ -20,6 +20,7 @@ export type PromptConfig = {
   sdkSessionId?: string;
   nativeAgentSessionId?: string;
   branch?: string;
+  cwd?: string;
   env?: Record<string, string>;
 };
 
