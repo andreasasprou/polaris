@@ -146,11 +146,16 @@ export async function ensureSandboxReady(
       "@/lib/sandbox/snapshots/queries"
     );
     const snap = await getSnap(credentials.agentType);
-    // Only install from scratch if no snapshot was used
     if (!snap) {
+      // No snapshot — install sandbox-agent from scratch
       await bootstrap.install();
-      await bootstrap.installAgent(credentials.agentType, sessionEnv);
     }
+    // Always install the agent CLI (snapshot may have sandbox-agent
+    // but not the specific agent CLI like claude/codex)
+    await bootstrap.installAgent(credentials.agentType, sessionEnv);
+  } else {
+    // Snapshot restore — ensure agent CLI is available
+    await bootstrap.installAgent(credentials.agentType, sessionEnv);
   }
 
   // Configure git
