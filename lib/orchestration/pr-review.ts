@@ -235,7 +235,7 @@ export async function dispatchPrReview(
   const { casSessionStatus } = await import("@/lib/sessions/actions");
   const cas = await casSessionStatus(
     targetSessionId,
-    ["idle", "hibernated", "stopped", "failed"],
+    ["creating", "idle", "hibernated", "stopped", "failed"],
     "active",
   );
   if (!cas) {

@@ -48,9 +48,10 @@ export async function dispatchPromptToSession(input: {
   }
 
   // CAS to active (serializes concurrent sends)
+  // "creating" is included because new sessions from the router start in that state
   const cas = await casSessionStatus(
     sessionId,
-    ["idle", "hibernated", "stopped", "failed"],
+    ["creating", "idle", "hibernated", "stopped", "failed"],
     "active",
   );
   if (!cas) {

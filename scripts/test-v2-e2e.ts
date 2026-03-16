@@ -1140,7 +1140,7 @@ async function testWebhookRouting() {
     assert(!!repoId, "Repository created");
   });
 
-  await test("matchesGitHubTrigger — exact event match", () => {
+  await test("matchesGitHubTrigger — exact event match", async () => {
     const config = { events: ["pull_request.opened", "pull_request.synchronize"] };
     assert(
       matchesGitHubTrigger("pull_request", "opened", undefined, config),
@@ -1160,7 +1160,7 @@ async function testWebhookRouting() {
     );
   });
 
-  await test("matchesGitHubTrigger — prefix match", () => {
+  await test("matchesGitHubTrigger — prefix match", async () => {
     const config = { events: ["pull_request"] };
     assert(
       matchesGitHubTrigger("pull_request", "opened", undefined, config),
@@ -1172,7 +1172,7 @@ async function testWebhookRouting() {
     );
   });
 
-  await test("matchesGitHubTrigger — branch filter", () => {
+  await test("matchesGitHubTrigger — branch filter", async () => {
     const config = { events: ["push"], branches: ["main"] };
     assert(
       matchesGitHubTrigger("push", undefined, "refs/heads/main", config),
@@ -1184,7 +1184,7 @@ async function testWebhookRouting() {
     );
   });
 
-  await test("matchesGitHubTrigger — issue_comment matches PR automation", () => {
+  await test("matchesGitHubTrigger — issue_comment matches PR automation", async () => {
     const config = { events: ["pull_request.opened", "pull_request.synchronize"] };
     assert(
       matchesGitHubTrigger("issue_comment", "created", undefined, config),
@@ -1451,7 +1451,9 @@ async function testAutomationSessionLocking() {
     const request = {
       deliveryId: randomUUID(),
       headSha: "abc123",
-      reason: "synchronize",
+      reason: "synchronize" as const,
+      requestedAt: new Date().toISOString(),
+      mode: "incremental" as const,
     };
 
     await setPendingReviewRequest(automationSession.id, request);
