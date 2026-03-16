@@ -70,6 +70,6 @@ async function getProxyUrl(sessionId: string): Promise<string> {
     throw new Error(`Session ${sessionId} has no sandbox URL`);
   }
 
-  // Rewrite agent server port (2468) to proxy port (2469)
-  return session.sandboxBaseUrl.replace(/:2468\b/, ":2469");
+  // sandboxBaseUrl is already the proxy URL (stored by ensureSandboxReady)
+  return session.sandboxBaseUrl;
 }

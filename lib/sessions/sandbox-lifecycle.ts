@@ -180,15 +180,17 @@ export async function ensureSandboxReady(
   });
 
   // Update runtime + session
+  // Store the proxy URL as sandboxBaseUrl since all v2 communication
+  // goes through the proxy (port 2469), not the agent server directly.
   await updateRuntime(runtime.id, {
     sandboxId: sandbox.sandboxId,
-    sandboxBaseUrl: serverUrl,
+    sandboxBaseUrl: proxyBaseUrl,
     status: "running",
   });
 
   await updateInteractiveSession(sessionId, {
     sandboxId: sandbox.sandboxId,
-    sandboxBaseUrl: serverUrl,
+    sandboxBaseUrl: proxyBaseUrl,
   });
 
   return {

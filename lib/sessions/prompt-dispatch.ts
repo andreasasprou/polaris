@@ -131,9 +131,8 @@ export async function dispatchPromptToSession(input: {
   });
 
   // POST /prompt to sandbox proxy
-  const proxyUrl = sandboxAlive
-    ? sandboxBaseUrl.replace(/:2468\b/, ":2469") // Rewrite agent URL to proxy port
-    : sandboxBaseUrl; // Already the proxy URL from ensureSandboxReady
+  // sandboxBaseUrl is already the proxy URL (stored as proxy URL by ensureSandboxReady)
+  const proxyUrl = sandboxBaseUrl;
 
   try {
     const response = await fetch(`${proxyUrl}/prompt`, {
@@ -185,9 +184,8 @@ export async function dispatchPromptToSession(input: {
  */
 async function probeSandboxHealth(baseUrl: string): Promise<boolean> {
   try {
-    // Probe the proxy health endpoint
-    const proxyUrl = baseUrl.replace(/:2468\b/, ":2469");
-    const response = await fetch(`${proxyUrl}/health`, {
+    // sandboxBaseUrl is already the proxy URL
+    const response = await fetch(`${baseUrl}/health`, {
       signal: AbortSignal.timeout(5_000),
     });
     return response.ok;

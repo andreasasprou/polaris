@@ -246,12 +246,11 @@ export async function dispatchPrReview(
   let epoch = session.epoch;
   let sandboxId = session.sandboxId;
 
-  // Check if sandbox is alive
+  // Check if sandbox is alive (sandboxBaseUrl is already the proxy URL)
   let sandboxAlive = false;
   if (sandboxBaseUrl) {
     try {
-      const proxyUrl = sandboxBaseUrl.replace(/:2468\b/, ":2469");
-      const resp = await fetch(`${proxyUrl}/health`, {
+      const resp = await fetch(`${sandboxBaseUrl}/health`, {
         signal: AbortSignal.timeout(5_000),
       });
       sandboxAlive = resp.ok;
@@ -333,9 +332,8 @@ export async function dispatchPrReview(
   });
 
   // POST /prompt to sandbox proxy
-  const proxyUrl = sandboxAlive
-    ? sandboxBaseUrl.replace(/:2468\b/, ":2469")
-    : sandboxBaseUrl;
+  // sandboxBaseUrl is already the proxy URL
+  const proxyUrl = sandboxBaseUrl;
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
   const callbackUrl = appUrl
