@@ -136,7 +136,7 @@ export async function dispatchPromptToSession(input: {
     : sandboxBaseUrl; // Already the proxy URL from ensureSandboxReady
 
   try {
-    const response = await fetch(`https://${proxyUrl}/prompt`, {
+    const response = await fetch(`${proxyUrl}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -187,7 +187,7 @@ async function probeSandboxHealth(baseUrl: string): Promise<boolean> {
   try {
     // Probe the proxy health endpoint
     const proxyUrl = baseUrl.replace(/:2468\b/, ":2469");
-    const response = await fetch(`https://${proxyUrl}/health`, {
+    const response = await fetch(`${proxyUrl}/health`, {
       signal: AbortSignal.timeout(5_000),
     });
     return response.ok;

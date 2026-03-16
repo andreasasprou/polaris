@@ -18,7 +18,7 @@ export async function replyPermission(
   const proxyUrl = await getProxyUrl(sessionId);
 
   const response = await fetch(
-    `https://${proxyUrl}/permissions/${encodeURIComponent(permissionId)}/reply`,
+    `${proxyUrl}/permissions/${encodeURIComponent(permissionId)}/reply`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -44,7 +44,7 @@ export async function replyQuestion(
   const proxyUrl = await getProxyUrl(sessionId);
 
   const response = await fetch(
-    `https://${proxyUrl}/questions/${encodeURIComponent(questionId)}/reply`,
+    `${proxyUrl}/questions/${encodeURIComponent(questionId)}/reply`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

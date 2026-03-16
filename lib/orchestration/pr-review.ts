@@ -251,7 +251,7 @@ export async function dispatchPrReview(
   if (sandboxBaseUrl) {
     try {
       const proxyUrl = sandboxBaseUrl.replace(/:2468\b/, ":2469");
-      const resp = await fetch(`https://${proxyUrl}/health`, {
+      const resp = await fetch(`${proxyUrl}/health`, {
         signal: AbortSignal.timeout(5_000),
       });
       sandboxAlive = resp.ok;
@@ -343,7 +343,7 @@ export async function dispatchPrReview(
     : "http://localhost:3001/api/callbacks";
 
   try {
-    const response = await fetch(`https://${proxyUrl}/prompt`, {
+    const response = await fetch(`${proxyUrl}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

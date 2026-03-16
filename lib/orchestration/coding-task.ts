@@ -137,7 +137,7 @@ export async function dispatchCodingTask(
     });
 
     // POST /prompt to proxy
-    const response = await fetch(`https://${proxyBaseUrl}/prompt`, {
+    const response = await fetch(`${proxyBaseUrl}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
