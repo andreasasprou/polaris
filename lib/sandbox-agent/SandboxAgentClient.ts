@@ -156,8 +156,11 @@ export class SandboxAgentClient {
       if (config.mode) {
         try {
           await session.rawSend("session/set_mode", { modeId: config.mode });
-        } catch {
-          // Mode setting not supported — agent uses its built-in defaults
+        } catch (modeError) {
+          console.warn(
+            `[SandboxAgentClient] Failed to set mode "${config.mode}" for ${config.agent} session — ` +
+            `agent will use its built-in default. Error: ${modeError instanceof Error ? modeError.message : modeError}`,
+          );
         }
       }
 
@@ -204,8 +207,11 @@ export class SandboxAgentClient {
       if (config.mode) {
         try {
           await session.rawSend("session/set_mode", { modeId: config.mode });
-        } catch {
-          // Mode setting not supported — agent uses its built-in defaults
+        } catch (modeError) {
+          console.warn(
+            `[SandboxAgentClient] Failed to set mode "${config.mode}" for ${config.agent} resumed session — ` +
+            `agent will use its built-in default. Error: ${modeError instanceof Error ? modeError.message : modeError}`,
+          );
         }
       }
 

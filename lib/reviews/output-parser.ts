@@ -157,18 +157,15 @@ function tryParseLenient(block: string): ParsedReviewOutput | null {
       P2: findings.filter((f) => f.severity === "P2").length,
     };
 
-    // Try to parse reviewState strictly; fall back to synthesized state from findings
+    // Try to parse reviewState strictly; fall back to synthesized state from findings.
+    // Agents commonly emit openIssues as string[] (IDs only) instead of object[] —
+    // rehydrate those from current findings before discarding them.
     const reviewStateParsed = ReviewStateSchema.safeParse(data.reviewState);
     const reviewState = reviewStateParsed.success
       ? reviewStateParsed.data
       : {
           lastReviewedSha: data.reviewState?.lastReviewedSha ?? null,
-          openIssues: findings.map((f) => ({
-            id: f.id,
-            file: f.file,
-            severity: f.severity,
-            summary: f.title,
-          })),
+          openIssues: rehydrateOpenIssues(data.reviewState?.openIssues, findings),
           resolvedIssues: [],
           reviewCount: data.reviewState?.reviewCount ?? 0,
         };
@@ -193,6 +190,49 @@ function normalizeVerdict(v: string): ReviewVerdict | null {
   if (upper === "ATTENTION") return "ATTENTION";
   if (upper === "APPROVE") return "APPROVE";
   return null;
+}
+
+/**
+ * Rehydrate openIssues from agent output. Agents commonly emit:
+ * - object[] (ideal) — validate each entry
+ * - string[] (IDs only) — match against current findings to recover full objects
+ * Falls back to synthesizing from findings if nothing is recoverable.
+ */
+function rehydrateOpenIssues(
+  rawOpenIssues: unknown,
+  findings: ReviewFinding[],
+): Array<{ id: string; file: string; severity: "P0" | "P1" | "P2"; summary?: string }> {
+  if (!Array.isArray(rawOpenIssues) || rawOpenIssues.length === 0) {
+    // Nothing from agent — synthesize from current findings
+    return findings.map((f) => ({
+      id: f.id, file: f.file, severity: f.severity, summary: f.title,
+    }));
+  }
+
+  const findingsById = new Map(findings.map((f) => [f.id, f]));
+
+  return rawOpenIssues.map((item, i) => {
+    // Already a usable object
+    if (typeof item === "object" && item !== null && typeof item.id === "string") {
+      return {
+        id: item.id,
+        file: (item as Record<string, unknown>).file as string ?? "unknown",
+        severity: normalizeSeverity(String((item as Record<string, unknown>).severity ?? "P2")),
+        summary: String((item as Record<string, unknown>).summary ?? (item as Record<string, unknown>).title ?? ""),
+      };
+    }
+    // String ID — try to rehydrate from matching finding
+    if (typeof item === "string") {
+      const finding = findingsById.get(item);
+      if (finding) {
+        return { id: finding.id, file: finding.file, severity: finding.severity, summary: finding.title };
+      }
+      // Preserve the ID even without a matching finding
+      return { id: item, file: "unknown", severity: "P2" as const, summary: "" };
+    }
+    // Unknown shape — create placeholder
+    return { id: `open-issue-${i + 1}`, file: "unknown", severity: "P2" as const, summary: "" };
+  });
 }
 
 function normalizeSeverity(s: string): "P0" | "P1" | "P2" {
