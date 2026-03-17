@@ -499,6 +499,16 @@ function JobLifecycle({ jobId }: { jobId: string }) {
 
 // ── Sandbox Logs ──
 
+type ProcessInfo = {
+  id: string;
+  command: string;
+  args: string[];
+  status: string;
+  owner: string;
+  pid: number | null;
+  exitCode: number | null;
+};
+
 type LogEntry = {
   sequence: number;
   stream: string;
@@ -506,8 +516,14 @@ type LogEntry = {
   data: string;
 };
 
+type SandboxLogsData = {
+  processes: ProcessInfo[] | null;
+  logs: Record<string, LogEntry[]>;
+  error?: string;
+};
+
 function SandboxLogs({ sessionId }: { sessionId: string }) {
-  const [logs, setLogs] = useState<LogEntry[] | null>(null);
+  const [data, setData] = useState<SandboxLogsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -516,30 +532,21 @@ function SandboxLogs({ sessionId }: { sessionId: string }) {
     setLoading(true);
     setError(null);
     try {
-      // First check if sandbox is available
-      const infoRes = await fetch(`/api/sessions/${sessionId}/logs`);
-      if (!infoRes.ok) {
-        const data = await infoRes.json().catch(() => ({}));
-        setError(data.error ?? "Failed to reach sandbox");
+      const res = await fetch(`/api/sessions/${sessionId}/logs`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error ?? "Failed to reach sandbox");
         return;
       }
-
-      // TODO: Once process discovery is available via sandbox-agent,
-      // auto-detect the agent process ID. For now, surface the
-      // availability status so users know logs are reachable.
-      const data = await infoRes.json();
-      if (data.status === "available") {
-        setLogs([]);
-        setError(
-          "Sandbox is reachable. Process log discovery requires a process ID — use the sandbox-agent API directly for now.",
-        );
-      }
+      setData(await res.json());
     } catch {
       setError("Failed to fetch logs");
     } finally {
       setLoading(false);
     }
   }, [sessionId]);
+
+  const hasLogs = data?.logs && Object.keys(data.logs).length > 0;
 
   return (
     <div>
@@ -548,7 +555,7 @@ function SandboxLogs({ sessionId }: { sessionId: string }) {
         onToggle={(e) => {
           const open = (e.target as HTMLDetailsElement).open;
           setExpanded(open);
-          if (open && logs === null && !loading) {
+          if (open && data === null && !loading) {
             fetchLogs();
           }
         }}
@@ -559,16 +566,66 @@ function SandboxLogs({ sessionId }: { sessionId: string }) {
         <div className="mt-3">
           {loading && (
             <p className="text-sm text-muted-foreground">
-              Checking sandbox availability...
+              Fetching sandbox logs...
             </p>
           )}
           {error && (
             <p className="text-sm text-muted-foreground">{error}</p>
           )}
-          {logs && logs.length > 0 && (
-            <pre className="max-h-96 overflow-auto rounded border bg-muted/30 p-3 font-mono text-xs">
-              {logs.map((entry) => entry.data).join("")}
-            </pre>
+
+          {/* Process list */}
+          {data?.processes && data.processes.length > 0 && (
+            <div className="mb-3 space-y-1 text-sm">
+              {data.processes.map((proc) => (
+                <div key={proc.id} className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {proc.id}
+                  </span>
+                  <span className="font-medium">
+                    {proc.command} {proc.args.join(" ")}
+                  </span>
+                  <span
+                    className={
+                      proc.status === "running"
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {proc.status}
+                  </span>
+                  {proc.exitCode != null && (
+                    <span className="text-xs text-muted-foreground">
+                      exit {proc.exitCode}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Log output per process */}
+          {hasLogs &&
+            Object.entries(data!.logs).map(([procId, entries]) => {
+              const proc = data!.processes?.find((p) => p.id === procId);
+              const label = proc
+                ? `${proc.command} ${proc.args.slice(0, 2).join(" ")}`
+                : procId;
+              return (
+                <details key={procId} className="mb-3" open>
+                  <summary className="cursor-pointer text-sm font-medium">
+                    {label} ({entries.length} entries)
+                  </summary>
+                  <pre className="mt-1 max-h-96 overflow-auto rounded border bg-muted/30 p-3 font-mono text-xs">
+                    {entries.map((e) => e.data).join("")}
+                  </pre>
+                </details>
+              );
+            })}
+
+          {data && !hasLogs && data.processes && (
+            <p className="text-sm text-muted-foreground">
+              No log output captured for these processes.
+            </p>
           )}
         </div>
       </details>

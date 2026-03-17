@@ -6,17 +6,35 @@ import {
   getLatestRuntime,
 } from "@/lib/sessions/actions";
 
+type ProcessInfo = {
+  id: string;
+  command: string;
+  args: string[];
+  status: string;
+  owner: string;
+  pid: number | null;
+  exitCode: number | null;
+  createdAtMs: number;
+};
+
+type LogEntry = {
+  sequence: number;
+  stream: string;
+  timestampMs: number;
+  data: string;
+  encoding: string;
+};
+
 /**
  * GET /api/sessions/[sessionId]/logs
  *
- * Proxies process log requests to the sandbox-agent server via the REST proxy.
- * Uses the sandbox-agent's /v1/processes/{id}/logs API (provider-agnostic).
+ * Fetches process list and logs from the sandbox-agent server via the REST proxy.
+ * Uses sandbox-agent's provider-agnostic /v1/processes API.
  *
- * Query params forwarded to sandbox-agent:
- *   - processId: process ID to fetch logs for (optional — fetches all if omitted)
+ * Query params:
+ *   - processId: fetch logs for a specific process (skips discovery)
  *   - stream: stdout | stderr | combined (default: combined)
- *   - tail: number of entries to return from the end
- *   - since: sequence number for resumption
+ *   - tail: number of log entries (default: 200)
  */
 export async function GET(
   req: NextRequest,
@@ -25,95 +43,102 @@ export async function GET(
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
-  // Verify session belongs to org
   const session = await getInteractiveSessionForOrg(sessionId, orgId);
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  // Get the runtime with the proxy URL
   const runtime =
     (await getActiveRuntime(sessionId)) ??
     (await getLatestRuntime(sessionId));
 
   if (!runtime?.sandboxBaseUrl) {
     return NextResponse.json(
-      { error: "No sandbox available", logs: null },
+      { error: "No sandbox available" },
       { status: 404 },
     );
   }
 
-  // Forward query params
   const url = new URL(req.url);
   const processId = url.searchParams.get("processId");
   const stream = url.searchParams.get("stream") ?? "combined";
-  const tail = url.searchParams.get("tail") ?? "500";
-  const since = url.searchParams.get("since");
-
-  // Build the proxy URL
+  const tail = url.searchParams.get("tail") ?? "200";
   const proxyBase = runtime.sandboxBaseUrl;
 
-  if (processId) {
-    // Fetch logs for a specific process
-    const logParams = new URLSearchParams({ stream, tail });
-    if (since) logParams.set("since", since);
-
-    try {
-      const response = await fetch(
-        `${proxyBase}/processes/${encodeURIComponent(processId)}/logs?${logParams}`,
-        { signal: AbortSignal.timeout(15_000) },
-      );
-
-      if (!response.ok) {
-        return NextResponse.json(
-          {
-            error: "Failed to fetch process logs",
-            status: response.status,
-            detail: await response.text().catch(() => ""),
-          },
-          { status: response.status },
-        );
-      }
-
-      const data = await response.json();
-      return NextResponse.json(data);
-    } catch (err) {
-      return NextResponse.json(
-        {
-          error: "Sandbox unreachable",
-          detail: err instanceof Error ? err.message : String(err),
-          logs: null,
-        },
-        { status: 502 },
-      );
-    }
-  }
-
-  // No processId — fetch process info for the specific process
-  // Try to get the process list by querying a well-known process
   try {
-    const response = await fetch(`${proxyBase}/health`, {
-      signal: AbortSignal.timeout(5_000),
+    // If a specific processId is requested, fetch its logs directly
+    if (processId) {
+      const logs = await fetchProcessLogs(proxyBase, processId, stream, tail);
+      return NextResponse.json({ processes: null, logs });
+    }
+
+    // Otherwise: discover processes, then fetch logs for each
+    const processRes = await fetch(`${proxyBase}/processes`, {
+      signal: AbortSignal.timeout(10_000),
     });
 
-    if (!response.ok) {
+    if (!processRes.ok) {
       return NextResponse.json(
-        { error: "Sandbox unreachable", logs: null },
+        { error: "Failed to list processes", status: processRes.status },
         { status: 502 },
       );
     }
+
+    const { processes } = (await processRes.json()) as {
+      processes: ProcessInfo[];
+    };
+
+    // Fetch logs for each running process (limit to first 5 to avoid overload)
+    const logsPerProcess: Record<string, LogEntry[]> = {};
+    const toFetch = processes.slice(0, 5);
+
+    await Promise.all(
+      toFetch.map(async (proc) => {
+        try {
+          const logs = await fetchProcessLogs(
+            proxyBase,
+            proc.id,
+            stream,
+            tail,
+          );
+          if (logs.length > 0) {
+            logsPerProcess[proc.id] = logs;
+          }
+        } catch {
+          // Skip processes whose logs aren't available
+        }
+      }),
+    );
 
     return NextResponse.json({
-      sandboxId: runtime.sandboxId,
-      proxyUrl: proxyBase,
-      agentServerUrl: runtime.agentServerUrl,
-      status: "available",
-      hint: "Pass ?processId=<id> to fetch logs for a specific process. Use the sandbox-agent /v1/processes API to discover process IDs.",
+      processes,
+      logs: logsPerProcess,
     });
-  } catch {
+  } catch (err) {
     return NextResponse.json(
-      { error: "Sandbox unreachable", logs: null },
+      {
+        error: "Sandbox unreachable",
+        detail: err instanceof Error ? err.message : String(err),
+      },
       { status: 502 },
     );
   }
+}
+
+async function fetchProcessLogs(
+  proxyBase: string,
+  processId: string,
+  stream: string,
+  tail: string,
+): Promise<LogEntry[]> {
+  const logParams = new URLSearchParams({ stream, tail });
+  const response = await fetch(
+    `${proxyBase}/processes/${encodeURIComponent(processId)}/logs?${logParams}`,
+    { signal: AbortSignal.timeout(15_000) },
+  );
+
+  if (!response.ok) return [];
+
+  const data = (await response.json()) as { entries?: LogEntry[] };
+  return data.entries ?? [];
 }
