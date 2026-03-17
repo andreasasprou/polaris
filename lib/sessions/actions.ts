@@ -28,6 +28,16 @@ export async function createInteractiveSession(input: {
   return row;
 }
 
+/**
+ * Delete an interactive session by ID.
+ * Used to clean up orphan sessions created during race conditions.
+ */
+export async function deleteInteractiveSession(id: string) {
+  await db
+    .delete(interactiveSessions)
+    .where(eq(interactiveSessions.id, id));
+}
+
 export async function updateInteractiveSession(
   id: string,
   input: Partial<{

@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/status-badge";
+import { VerdictBadge } from "@/components/verdict-badge";
 
 type Run = {
   id: string;
@@ -19,23 +20,45 @@ type Run = {
   automationName: string | null;
   status: string;
   source: string;
-  agentSessionId: string | null;
+  interactiveSessionId: string | null;
   prUrl: string | null;
   branchName: string | null;
   summary: string | null;
   error: string | null;
+  verdict: string | null;
+  reviewScope: string | null;
+  jobId: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
 };
 
 function formatDuration(start: string | null, end: string | null): string {
-  if (!start) return "—";
+  if (!start) return "\u2014";
   const s = new Date(start).getTime();
   const e = end ? new Date(end).getTime() : Date.now();
   const secs = Math.round((e - s) / 1000);
   if (secs < 60) return `${secs}s`;
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function ResultCell({ run }: { run: Run }) {
+  if (run.verdict) {
+    return <VerdictBadge verdict={run.verdict} />;
+  }
+  if (run.prUrl) {
+    return (
+      <a
+        href={run.prUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary hover:underline"
+      >
+        PR
+      </a>
+    );
+  }
+  return <span className="text-muted-foreground">{"\u2014"}</span>;
 }
 
 export default function RunsPage() {
@@ -73,7 +96,7 @@ export default function RunsPage() {
                 <TableHead>Source</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Duration</TableHead>
-                <TableHead>PR</TableHead>
+                <TableHead>Result</TableHead>
                 <TableHead>Created</TableHead>
               </TableRow>
             </TableHeader>
@@ -98,18 +121,7 @@ export default function RunsPage() {
                     {formatDuration(run.startedAt, run.completedAt)}
                   </TableCell>
                   <TableCell>
-                    {run.prUrl ? (
-                      <a
-                        href={run.prUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        PR
-                      </a>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <ResultCell run={run} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(run.createdAt).toLocaleString()}

@@ -142,8 +142,59 @@ export async function createAutomationSession(input: {
   const [row] = await db
     .insert(automationSessions)
     .values(input)
+    .onConflictDoNothing()
     .returning();
-  return row;
+  return row ?? null;
+}
+
+/**
+ * Atomically find or create an automation session + its backing interactive session.
+ * Handles the TOCTOU race: if a concurrent request creates the session between
+ * our read and write, we clean up the orphan interactive session and return the winner.
+ */
+export async function findOrCreateAutomationSession(input: {
+  automationId: string;
+  organizationId: string;
+  repositoryId: string;
+  scopeKey: string;
+  agentType: string;
+  agentSecretId?: string;
+  metadata: AutomationSessionMetadata;
+}): Promise<{ automationSession: NonNullable<Awaited<ReturnType<typeof findAutomationSessionByScope>>>; created: boolean }> {
+  // 1. Check for existing
+  const existing = await findAutomationSessionByScope(input.automationId, input.scopeKey);
+  if (existing) return { automationSession: existing, created: false };
+
+  // 2. Create interactive session
+  const { createInteractiveSession, deleteInteractiveSession } = await import("@/lib/sessions/actions");
+  const interactiveSession = await createInteractiveSession({
+    organizationId: input.organizationId,
+    createdBy: "automation",
+    agentType: input.agentType,
+    agentSecretId: input.agentSecretId,
+    repositoryId: input.repositoryId,
+    prompt: "(initial PR review — prompt will be sent by orchestrator)",
+  });
+
+  // 3. Try to insert automation session (onConflictDoNothing)
+  const automationSession = await createAutomationSession({
+    automationId: input.automationId,
+    interactiveSessionId: interactiveSession.id,
+    organizationId: input.organizationId,
+    repositoryId: input.repositoryId,
+    scopeKey: input.scopeKey,
+    metadata: input.metadata,
+  });
+
+  if (automationSession) {
+    return { automationSession, created: true };
+  }
+
+  // 4. Race lost — clean up orphan interactive session, return the winner
+  await deleteInteractiveSession(interactiveSession.id);
+  const winner = await findAutomationSessionByScope(input.automationId, input.scopeKey);
+  if (!winner) throw new Error("Automation session vanished after conflict");
+  return { automationSession: winner, created: false };
 }
 
 export async function findAutomationSessionByScope(
