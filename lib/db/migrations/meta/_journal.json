@@ -22,6 +22,13 @@
       "when": 1773744670968,
       "tag": "0002_shorten-fk-names",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1773868800000,
+      "tag": "0003_add-agent-server-url",
+      "breakpoints": true
     }
   ]
 }

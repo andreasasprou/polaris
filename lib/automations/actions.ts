@@ -177,20 +177,27 @@ export async function findOrCreateAutomationSession(input: {
   });
 
   // 3. Try to insert automation session (onConflictDoNothing)
-  const automationSession = await createAutomationSession({
-    automationId: input.automationId,
-    interactiveSessionId: interactiveSession.id,
-    organizationId: input.organizationId,
-    repositoryId: input.repositoryId,
-    scopeKey: input.scopeKey,
-    metadata: input.metadata,
-  });
+  let automationSession;
+  try {
+    automationSession = await createAutomationSession({
+      automationId: input.automationId,
+      interactiveSessionId: interactiveSession.id,
+      organizationId: input.organizationId,
+      repositoryId: input.repositoryId,
+      scopeKey: input.scopeKey,
+      metadata: input.metadata,
+    });
+  } catch (err) {
+    // Non-conflict DB error — clean up the orphan interactive session
+    await deleteInteractiveSession(interactiveSession.id);
+    throw err;
+  }
 
   if (automationSession) {
     return { automationSession, created: true };
   }
 
-  // 4. Race lost — clean up orphan interactive session, return the winner
+  // 4. Race lost (conflict) — clean up orphan interactive session, return the winner
   await deleteInteractiveSession(interactiveSession.id);
   const winner = await findAutomationSessionByScope(input.automationId, input.scopeKey);
   if (!winner) throw new Error("Automation session vanished after conflict");

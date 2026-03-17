@@ -37,6 +37,7 @@ export async function readRequestBody(
 
     totalBytes += value.byteLength;
     if (totalBytes > maxBytes) {
+      await reader.cancel();
       throw new BodyTooLargeError(maxBytes, totalBytes);
     }
 

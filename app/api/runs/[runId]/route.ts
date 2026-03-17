@@ -46,7 +46,7 @@ export async function GET(
     })
     .from(automationRuns)
     .leftJoin(automations, eq(automationRuns.automationId, automations.id))
-    .leftJoin(repositories, eq(automations.repositoryId, repositories.id))
+    .leftJoin(repositories, and(eq(automations.repositoryId, repositories.id), eq(repositories.organizationId, orgId)))
     .leftJoin(
       interactiveSessions,
       eq(automationRuns.interactiveSessionId, interactiveSessions.id),

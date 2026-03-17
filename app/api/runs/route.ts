@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     })
     .from(automationRuns)
     .leftJoin(automations, eq(automationRuns.automationId, automations.id))
-    .leftJoin(repositories, eq(automations.repositoryId, repositories.id))
+    .leftJoin(repositories, and(eq(automations.repositoryId, repositories.id), eq(repositories.organizationId, orgId)))
     .where(and(...conditions))
     .orderBy(desc(automationRuns.createdAt))
     .limit(limit);

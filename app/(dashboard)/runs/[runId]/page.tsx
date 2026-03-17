@@ -53,12 +53,19 @@ export default function RunDetailPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/runs/${runId}`)
+    const controller = new AbortController();
+    setLoading(true);
+    setRun(null);
+    fetch(`/api/runs/${runId}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         setRun(data.run ?? null);
-        setLoading(false);
-      });
+      })
+      .catch(() => {
+        // Aborted or network error — leave run as null
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
   }, [runId]);
 
   if (loading) {
@@ -170,7 +177,7 @@ function ReviewMetadataCards({ run }: { run: Run }) {
           </p>
         </MetadataCard>
       </div>
-      {(run.severityCounts || run.reviewFromSha || run.reviewSequence) && (
+      {(run.severityCounts || (run.reviewFromSha && run.reviewToSha) || run.reviewSequence != null) && (
         <div className="grid gap-4 sm:grid-cols-3">
           {run.severityCounts && (
             <MetadataCard label="Severity">
