@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -131,6 +131,10 @@ export default function RunDetailPage() {
       </div>
 
       {run.jobId && <JobLifecycle jobId={run.jobId} />}
+
+      {run.interactiveSessionId && (
+        <SandboxLogs sessionId={run.interactiveSessionId} />
+      )}
     </div>
   );
 }
@@ -489,6 +493,85 @@ function JobLifecycle({ jobId }: { jobId: string }) {
           </div>
         </details>
       )}
+    </div>
+  );
+}
+
+// ── Sandbox Logs ──
+
+type LogEntry = {
+  sequence: number;
+  stream: string;
+  timestampMs: number;
+  data: string;
+};
+
+function SandboxLogs({ sessionId }: { sessionId: string }) {
+  const [logs, setLogs] = useState<LogEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const fetchLogs = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // First check if sandbox is available
+      const infoRes = await fetch(`/api/sessions/${sessionId}/logs`);
+      if (!infoRes.ok) {
+        const data = await infoRes.json().catch(() => ({}));
+        setError(data.error ?? "Failed to reach sandbox");
+        return;
+      }
+
+      // TODO: Once process discovery is available via sandbox-agent,
+      // auto-detect the agent process ID. For now, surface the
+      // availability status so users know logs are reachable.
+      const data = await infoRes.json();
+      if (data.status === "available") {
+        setLogs([]);
+        setError(
+          "Sandbox is reachable. Process log discovery requires a process ID — use the sandbox-agent API directly for now.",
+        );
+      }
+    } catch {
+      setError("Failed to fetch logs");
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId]);
+
+  return (
+    <div>
+      <details
+        open={expanded}
+        onToggle={(e) => {
+          const open = (e.target as HTMLDetailsElement).open;
+          setExpanded(open);
+          if (open && logs === null && !loading) {
+            fetchLogs();
+          }
+        }}
+      >
+        <summary className="cursor-pointer text-lg font-medium">
+          Sandbox Logs
+        </summary>
+        <div className="mt-3">
+          {loading && (
+            <p className="text-sm text-muted-foreground">
+              Checking sandbox availability...
+            </p>
+          )}
+          {error && (
+            <p className="text-sm text-muted-foreground">{error}</p>
+          )}
+          {logs && logs.length > 0 && (
+            <pre className="max-h-96 overflow-auto rounded border bg-muted/30 p-3 font-mono text-xs">
+              {logs.map((entry) => entry.data).join("")}
+            </pre>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

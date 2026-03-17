@@ -60,6 +60,7 @@ export const interactiveSessionRuntimes = pgTable(
     sessionId: uuid("session_id").notNull(),
     sandboxId: text("sandbox_id"),
     sandboxBaseUrl: text("sandbox_base_url"),
+    agentServerUrl: text("agent_server_url"), // sandbox-agent server URL (port 2468) for process logs
     sdkSessionId: text("sdk_session_id"),
     epoch: integer("epoch").notNull(), // Session epoch at creation time — fencing token
     restoreSource: text("restore_source").notNull(), // 'base_snapshot' | 'hibernate_snapshot' | 'fresh'

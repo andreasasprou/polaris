@@ -122,6 +122,7 @@ export async function createRuntime(input: {
   sessionId: string;
   sandboxId?: string;
   sandboxBaseUrl?: string;
+  agentServerUrl?: string;
   sdkSessionId?: string;
   epoch: number;
   restoreSource: string;
@@ -140,6 +141,7 @@ export async function updateRuntime(
   input: Partial<{
     sandboxId: string;
     sandboxBaseUrl: string;
+    agentServerUrl: string;
     sdkSessionId: string;
     status: string;
     endedAt: Date;
@@ -163,6 +165,20 @@ export async function getActiveRuntime(sessionId: string) {
         inArray(interactiveSessionRuntimes.status, LIVE_RUNTIME_STATUSES),
       ),
     )
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Get the most recent runtime for a session (any status).
+ * Used for log retrieval — logs may be available even after runtime ends.
+ */
+export async function getLatestRuntime(sessionId: string) {
+  const [row] = await db
+    .select()
+    .from(interactiveSessionRuntimes)
+    .where(eq(interactiveSessionRuntimes.sessionId, sessionId))
+    .orderBy(sql`created_at DESC`)
     .limit(1);
   return row ?? null;
 }
