@@ -657,10 +657,14 @@ export class ProxyServer {
 
       res.end();
     } catch (err) {
-      sendJson(res, 502, {
-        error: "Failed to reach sandbox-agent server",
-        detail: err instanceof Error ? err.message : String(err),
-      });
+      if (!res.headersSent) {
+        sendJson(res, 502, {
+          error: "Failed to reach sandbox-agent server",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      } else {
+        res.end();
+      }
     }
   }
 }

@@ -69,7 +69,7 @@ export async function GET(
     // If a specific processId is requested, fetch its logs directly
     if (processId) {
       const logs = await fetchProcessLogs(proxyBase, processId, stream, tail);
-      return NextResponse.json({ processes: null, logs });
+      return NextResponse.json({ processes: null, logs: { [processId]: logs } });
     }
 
     // Otherwise: discover processes, then fetch logs for each
