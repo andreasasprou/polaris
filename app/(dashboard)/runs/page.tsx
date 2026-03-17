@@ -28,6 +28,8 @@ type Run = {
   verdict: string | null;
   reviewScope: string | null;
   jobId: string | null;
+  repoOwner: string | null;
+  repoName: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -93,7 +95,7 @@ export default function RunsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Automation</TableHead>
-                <TableHead>Source</TableHead>
+                <TableHead>Repository</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>Result</TableHead>
@@ -111,8 +113,10 @@ export default function RunsPage() {
                       {run.automationName ?? "Unknown"}
                     </Link>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {run.source}
+                  <TableCell className="font-mono text-sm text-muted-foreground">
+                    {run.repoOwner && run.repoName
+                      ? `${run.repoOwner}/${run.repoName}`
+                      : run.source}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={run.status} />

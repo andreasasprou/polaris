@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automationRuns, automations } from "@/lib/automations/schema";
+import { repositories } from "@/lib/integrations/schema";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { getSessionWithOrg } from "@/lib/auth/session";
 
@@ -39,9 +40,13 @@ export async function GET(
       reviewFromSha: automationRuns.reviewFromSha,
       reviewToSha: automationRuns.reviewToSha,
       githubCommentId: automationRuns.githubCommentId,
+      // Repo info
+      repoOwner: repositories.owner,
+      repoName: repositories.name,
     })
     .from(automationRuns)
     .leftJoin(automations, eq(automationRuns.automationId, automations.id))
+    .leftJoin(repositories, eq(automations.repositoryId, repositories.id))
     .leftJoin(
       interactiveSessions,
       eq(automationRuns.interactiveSessionId, interactiveSessions.id),

@@ -38,6 +38,9 @@ type Run = {
   reviewFromSha: string | null;
   reviewToSha: string | null;
   githubCommentId: string | null;
+  // Repo info
+  repoOwner: string | null;
+  repoName: string | null;
 };
 
 function isReviewRun(run: Run): boolean {
@@ -138,8 +141,12 @@ function ReviewMetadataCards({ run }: { run: Run }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-4">
-        <MetadataCard label="Source">
-          <p className="font-medium">{run.source}</p>
+        <MetadataCard label="Repository">
+          <p className="font-mono text-sm">
+            {run.repoOwner && run.repoName
+              ? `${run.repoOwner}/${run.repoName}`
+              : run.source}
+          </p>
         </MetadataCard>
         <MetadataCard label="Verdict">
           {run.verdict ? (
