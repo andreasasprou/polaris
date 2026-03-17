@@ -122,6 +122,8 @@ export default function RunDetailPage() {
           <RunSessionChat
             sdkSessionId={run.sdkSessionId}
             sessionStatus={run.sessionStatus}
+            runStartedAt={run.startedAt}
+            runCompletedAt={run.completedAt}
           />
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -263,9 +265,13 @@ function MetadataCard({
 function RunSessionChat({
   sdkSessionId,
   sessionStatus,
+  runStartedAt,
+  runCompletedAt,
 }: {
   sdkSessionId: string;
   sessionStatus: string | null;
+  runStartedAt: string | null;
+  runCompletedAt: string | null;
 }) {
   const terminal = sessionStatus
     ? TERMINAL_SESSION_STATUSES.has(sessionStatus)
@@ -275,6 +281,10 @@ function RunSessionChat({
     sdkSessionId,
     sessionStatus,
     terminal,
+    // Scope events to this run's time window so continuous-review runs
+    // don't bleed into each other (many runs share one interactive session).
+    filterStartMs: runStartedAt ? new Date(runStartedAt).getTime() : undefined,
+    filterEndMs: runCompletedAt ? new Date(runCompletedAt).getTime() : undefined,
   });
 
   return (

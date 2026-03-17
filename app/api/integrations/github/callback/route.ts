@@ -84,7 +84,8 @@ export async function GET(req: NextRequest) {
     accountLogin = account && "login" in account ? account.login : (account?.name ?? null);
     accountType = account && "type" in account ? account.type : null;
   } catch {
-    return redirectWithError(baseUrl, fallbackPath, "installation_lookup_failed");
+    // Best-effort — accountLogin/accountType are metadata enrichment, not required.
+    // The flow only needs installationId which we already have from the callback.
   }
 
   let orgCreated = false;

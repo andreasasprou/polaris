@@ -1,5 +1,3 @@
-const textDecoder = new TextDecoder();
-
 export class BodyTooLargeError extends Error {
   constructor(
     public readonly maxBytes: number,
@@ -27,6 +25,7 @@ export async function readRequestBody(
   }
 
   const reader = req.body.getReader();
+  const decoder = new TextDecoder();
   let totalBytes = 0;
   let body = "";
 
@@ -41,9 +40,9 @@ export async function readRequestBody(
       throw new BodyTooLargeError(maxBytes, totalBytes);
     }
 
-    body += textDecoder.decode(value, { stream: true });
+    body += decoder.decode(value, { stream: true });
   }
 
-  body += textDecoder.decode();
+  body += decoder.decode();
   return body;
 }

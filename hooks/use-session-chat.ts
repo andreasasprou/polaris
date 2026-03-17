@@ -23,6 +23,10 @@ type UseSessionChatOptions = {
   sessionStatus: string | null;
   /** Whether the session is in a terminal state. */
   terminal?: boolean;
+  /** Filter events to only those after this timestamp (ms). Used to scope runs. */
+  filterStartMs?: number;
+  /** Filter events to only those before this timestamp (ms). Used to scope runs. */
+  filterEndMs?: number;
 };
 
 type UseSessionChatReturn = {
@@ -67,6 +71,8 @@ export function useSessionChat({
   sdkSessionId,
   sessionStatus,
   terminal,
+  filterStartMs,
+  filterEndMs,
 }: UseSessionChatOptions): UseSessionChatReturn {
   const [dbEvents, setDbEvents] = useState<RawEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -125,11 +131,19 @@ export function useSessionChat({
   }, [fetchEvents, pollInterval]);
 
   const { items, turnInProgress } = useMemo(() => {
-    const sorted = [...dbEvents]
+    let filtered = dbEvents;
+    if (filterStartMs != null || filterEndMs != null) {
+      filtered = dbEvents.filter((e) => {
+        if (filterStartMs != null && e.createdAt < filterStartMs) return false;
+        if (filterEndMs != null && e.createdAt > filterEndMs) return false;
+        return true;
+      });
+    }
+    const sorted = [...filtered]
       .sort((a, b) => a.eventIndex - b.eventIndex)
       .map((e) => e as unknown as SandboxAgentEvent);
     return consolidateEvents(sorted, { terminal });
-  }, [dbEvents, terminal]);
+  }, [dbEvents, terminal, filterStartMs, filterEndMs]);
 
   return {
     items,
