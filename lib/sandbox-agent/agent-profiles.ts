@@ -66,13 +66,10 @@ const PROFILES: Record<AgentType, AgentProfile> = {
     enabled: true,
     compatibleProviders: ["openai"],
     models: [
-      // "gpt-5.4", // Not yet supported by sandbox-agent 0.3.2 binary
+      "gpt-5.4",
       "gpt-5.3-codex",
       "gpt-5.3-codex-spark",
-      "gpt-5.2-codex",
-      "gpt-5.1-codex-max",
       "gpt-5.2",
-      "gpt-5.1-codex-mini",
     ],
     modes: ["read-only", "auto", "full-access"],
     thoughtLevels: CODEX_EFFORT_LEVELS,
