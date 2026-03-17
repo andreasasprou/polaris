@@ -13,40 +13,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  CheckCircleIcon,
-  AlertCircleIcon,
-  CopyIcon,
-  CheckIcon,
-} from "lucide-react";
+import { AlertCircleIcon } from "lucide-react";
+import { CodexOAuthInstructions } from "@/components/codex-oauth-instructions";
 
 type AgentProvider = "anthropic" | "openai";
-
-const CODEX_AUTH_FILE_CMD = `base64 < ~/.codex/auth.json | tr -d '\\n'`;
-const CODEX_AUTH_KEYCHAIN_CMD = `security find-generic-password -s "Codex Auth" -w | base64 | tr -d '\\n'`;
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  async function handleCopy() {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      className="size-6 shrink-0 p-0 text-muted-foreground hover:text-foreground"
-      onClick={handleCopy}
-      aria-label={copied ? "Copied" : "Copy command"}
-    >
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </Button>
-  );
-}
 
 export function StepApiKey({
   onContinue,
@@ -57,27 +27,21 @@ export function StepApiKey({
   const [openaiMode, setOpenaiMode] = useState<"api-key" | "chatgpt-oauth">("api-key");
   const [value, setValue] = useState("");
   const [validating, setValidating] = useState(false);
-  const [validated, setValidated] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [secretId, setSecretId] = useState<string | null>(null);
 
   function handleProviderChange(p: AgentProvider) {
     setProvider(p);
     setOpenaiMode("api-key");
     setValue("");
-    setValidated(false);
     setError(null);
-    setSecretId(null);
   }
 
   async function handleValidate(e: React.FormEvent) {
     e.preventDefault();
     setValidating(true);
     setError(null);
-    setValidated(false);
 
     try {
-      // Create the secret (validation happens server-side)
       const res = await fetch("/api/secrets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -94,8 +58,7 @@ export function StepApiKey({
       }
 
       const data = await res.json();
-      setSecretId(data.secret.id);
-      setValidated(true);
+      onContinue(data.secret.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Validation failed");
     } finally {
@@ -134,7 +97,6 @@ export function StepApiKey({
             onValueChange={(v) => {
               setOpenaiMode(v as "api-key" | "chatgpt-oauth");
               setValue("");
-              setValidated(false);
               setError(null);
             }}
           >
@@ -149,7 +111,7 @@ export function StepApiKey({
                   id="api-key"
                   type="password"
                   value={value}
-                  onChange={(e) => { setValue(e.target.value); setValidated(false); setError(null); }}
+                  onChange={(e) => { setValue(e.target.value); setError(null); }}
                   placeholder="sk-..."
                   required
                   disabled={validating}
@@ -163,37 +125,15 @@ export function StepApiKey({
                   <Textarea
                     id="oauth-key"
                     value={value}
-                    onChange={(e) => { setValue(e.target.value); setValidated(false); setError(null); }}
+                    onChange={(e) => { setValue(e.target.value); setError(null); }}
                     placeholder="Paste base64-encoded auth.json..."
-                    className="font-mono text-xs"
+                    className="max-h-32 font-mono text-xs"
                     rows={3}
                     required
                     disabled={validating}
                   />
                 </div>
-                <div className="rounded-md border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
-                  <p className="mb-2">
-                    Run{" "}
-                    <code className="rounded bg-muted px-1 py-0.5 font-mono">codex auth</code>{" "}
-                    first, then paste the output of:
-                  </p>
-                  <div className="flex flex-col gap-1.5">
-                    <div>
-                      <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">From file</p>
-                      <div className="flex items-center gap-2 rounded bg-muted px-3 py-2 font-mono">
-                        <code className="flex-1 select-all break-all text-foreground">{CODEX_AUTH_FILE_CMD}</code>
-                        <CopyButton text={CODEX_AUTH_FILE_CMD} />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">From macOS Keychain</p>
-                      <div className="flex items-center gap-2 rounded bg-muted px-3 py-2 font-mono">
-                        <code className="flex-1 select-all break-all text-foreground">{CODEX_AUTH_KEYCHAIN_CMD}</code>
-                        <CopyButton text={CODEX_AUTH_KEYCHAIN_CMD} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <CodexOAuthInstructions />
               </div>
             </TabsContent>
           </Tabs>
@@ -204,7 +144,7 @@ export function StepApiKey({
               id="api-key-anthropic"
               type="password"
               value={value}
-              onChange={(e) => { setValue(e.target.value); setValidated(false); setError(null); }}
+              onChange={(e) => { setValue(e.target.value); setError(null); }}
               placeholder="sk-ant-..."
               required
               disabled={validating}
@@ -219,28 +159,16 @@ export function StepApiKey({
           </div>
         )}
 
-        {validated ? (
-          <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-2 rounded-md bg-green-500/10 px-3 py-2 text-sm text-green-500">
-              <CheckCircleIcon className="size-4 shrink-0" />
-              Credentials validated
-            </div>
-            <Button type="button" onClick={() => secretId && onContinue(secretId)}>
-              Continue
-            </Button>
-          </div>
-        ) : (
-          <Button type="submit" disabled={validating || !value.trim()}>
-            {validating ? (
-              <>
-                <Spinner data-icon="inline-start" />
-                Validating...
-              </>
-            ) : (
-              "Validate & save"
-            )}
-          </Button>
-        )}
+        <Button type="submit" disabled={validating || !value.trim()}>
+          {validating ? (
+            <>
+              <Spinner data-icon="inline-start" />
+              Validating...
+            </>
+          ) : (
+            "Validate & save"
+          )}
+        </Button>
       </form>
     </div>
   );
