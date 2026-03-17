@@ -1,9 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BodyTooLargeError, readRequestBody } from "@/lib/http/request-body";
 import { verifyWebhookSignature } from "@/lib/integrations/github";
 import { routeGitHubEvent } from "@/lib/routing/trigger-router";
 
+const MAX_GITHUB_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024;
+
 export async function POST(req: NextRequest) {
-  const payload = await req.text();
+  let payload: string;
+  try {
+    payload = await readRequestBody(req, MAX_GITHUB_WEBHOOK_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+    }
+    throw error;
+  }
+
   const signature = req.headers.get("x-hub-signature-256");
   const deliveryId = req.headers.get("x-github-delivery");
   const eventType = req.headers.get("x-github-event");

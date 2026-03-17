@@ -1,19 +1,9 @@
 import { NextResponse } from "next/server";
-import { App } from "octokit";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
 import { db } from "@/lib/db";
+import { createGitHubApp } from "@/lib/integrations/github";
 import { repositories } from "@/lib/integrations/schema";
-
-function getPrivateKey(): string {
-  if (process.env.GITHUB_APP_PRIVATE_KEY_B64) {
-    return Buffer.from(process.env.GITHUB_APP_PRIVATE_KEY_B64, "base64").toString("utf-8");
-  }
-  if (process.env.GITHUB_APP_PRIVATE_KEY) {
-    return process.env.GITHUB_APP_PRIVATE_KEY;
-  }
-  throw new Error("Set GITHUB_APP_PRIVATE_KEY_B64 or GITHUB_APP_PRIVATE_KEY");
-}
 
 export async function GET() {
   const { orgId } = await getSessionWithOrg();
@@ -24,10 +14,7 @@ export async function GET() {
     return NextResponse.json({ repos: [] });
   }
 
-  const app = new App({
-    appId: process.env.GITHUB_APP_ID!,
-    privateKey: getPrivateKey(),
-  });
+  const app = createGitHubApp();
 
   const allRepos: Array<{
     installationId: string;

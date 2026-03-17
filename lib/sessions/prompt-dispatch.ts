@@ -6,6 +6,7 @@
  */
 
 import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
+import { RequestError } from "@/lib/errors/request-error";
 import {
   createJob,
   createJobAttempt,
@@ -13,7 +14,7 @@ import {
 } from "@/lib/jobs/actions";
 import {
   casSessionStatus,
-  getInteractiveSession,
+  getInteractiveSessionForOrg,
   createTurn,
 } from "./actions";
 import { ensureSandboxReady } from "./sandbox-lifecycle";
@@ -29,21 +30,23 @@ export type DispatchResult = {
  * Tier 2: If sandbox is dead/missing, provision a new one, then Tier 1.
  */
 export async function dispatchPromptToSession(input: {
+  organizationId: string;
   sessionId: string;
   prompt: string;
   requestId: string;
   source: string;
 }): Promise<DispatchResult> {
-  const { sessionId, prompt, requestId, source } = input;
+  const { organizationId, sessionId, prompt, requestId, source } = input;
 
-  const session = await getInteractiveSession(sessionId);
-  if (!session) throw new Error(`Session not found: ${sessionId}`);
+  const session = await getInteractiveSessionForOrg(sessionId, organizationId);
+  if (!session) throw new RequestError("Session not found", 404);
 
   // Check for existing active job (prevents double dispatch)
   const existingJob = await getActiveJobForSession(sessionId);
   if (existingJob) {
-    throw new Error(
+    throw new RequestError(
       `Session ${sessionId} already has an active job: ${existingJob.id}`,
+      409,
     );
   }
 
@@ -55,8 +58,9 @@ export async function dispatchPromptToSession(input: {
     "active",
   );
   if (!cas) {
-    throw new Error(
+    throw new RequestError(
       `Cannot dispatch to session ${sessionId}: status is ${session.status}`,
+      409,
     );
   }
 
@@ -90,7 +94,7 @@ export async function dispatchPromptToSession(input: {
   if (!sandboxBaseUrl) {
     // Rollback CAS
     await casSessionStatus(sessionId, ["active"], "idle");
-    throw new Error("No sandbox URL available after provisioning");
+    throw new RequestError("No sandbox URL available after provisioning", 502);
   }
 
   // Create job + attempt + turn
@@ -112,7 +116,7 @@ export async function dispatchPromptToSession(input: {
   if (!job) {
     // Idempotent conflict — job already exists for this request
     await casSessionStatus(sessionId, ["active"], "idle");
-    throw new Error(`Job already exists for request ${requestId}`);
+    throw new RequestError(`Job already exists for request ${requestId}`, 409);
   }
 
   const attempt = await createJobAttempt({
@@ -167,7 +171,7 @@ export async function dispatchPromptToSession(input: {
     });
     await casJobStatus(job.id, ["pending"], "failed_retryable");
     await casSessionStatus(sessionId, ["active"], "idle");
-    throw new Error(`Proxy returned ${response.status}: ${body}`);
+    throw new RequestError(`Proxy returned ${response.status}: ${body}`, 502);
   } catch (err) {
     if (err instanceof Error && err.name === "TimeoutError") {
       // Dispatch unknown — sweeper will reconcile
@@ -216,14 +220,26 @@ export async function resolveSessionCredentials(session: {
   let agentApiKey: string | undefined;
 
   if (session.agentSecretId) {
-    const { getDecryptedSecretForOrg } = await import("@/lib/secrets/queries");
-    agentApiKey =
-      (await getDecryptedSecretForOrg(session.agentSecretId, session.organizationId)) ?? undefined;
+    const { findSecretByIdAndOrg } = await import("@/lib/secrets/queries");
+    const secret = await findSecretByIdAndOrg(
+      session.agentSecretId,
+      session.organizationId,
+    );
+    if (!secret) {
+      throw new RequestError("Secret not found", 404);
+    }
+    if (secret.revokedAt) {
+      throw new RequestError("This API key has been revoked", 400);
+    }
+
+    const { decrypt } = await import("@/lib/credentials/encryption");
+    agentApiKey = decrypt(secret.encryptedValue);
   }
 
   if (!agentApiKey) {
-    throw new Error(
+    throw new RequestError(
       "No agent API key configured. Add one in Settings → Secrets.",
+      400,
     );
   }
 
@@ -233,25 +249,34 @@ export async function resolveSessionCredentials(session: {
   let githubInstallationId: number | undefined;
 
   if (session.repositoryId) {
-    const { findRepositoryById, findGithubInstallationById } = await import(
+    const { findRepositoryByIdAndOrg, findGithubInstallationByIdAndOrg } = await import(
       "@/lib/integrations/queries"
     );
-    const repo = await findRepositoryById(session.repositoryId);
-    if (repo) {
-      repositoryOwner = repo.owner;
-      repositoryName = repo.name;
-      defaultBranch = repo.defaultBranch;
-      const installation = await findGithubInstallationById(
-        repo.githubInstallationId,
-      );
-      if (installation) {
-        githubInstallationId = installation.installationId;
-      }
+    const repo = await findRepositoryByIdAndOrg(
+      session.repositoryId,
+      session.organizationId,
+    );
+    if (!repo) {
+      throw new RequestError("Repository not found", 404);
     }
+
+    repositoryOwner = repo.owner;
+    repositoryName = repo.name;
+    defaultBranch = repo.defaultBranch;
+
+    const installation = await findGithubInstallationByIdAndOrg(
+      repo.githubInstallationId,
+      session.organizationId,
+    );
+    if (!installation) {
+      throw new RequestError("GitHub installation not found", 404);
+    }
+
+    githubInstallationId = installation.installationId;
   }
 
   if (!repositoryOwner || !repositoryName || !githubInstallationId) {
-    throw new Error("Could not resolve repository for resume");
+    throw new RequestError("Could not resolve repository for resume", 400);
   }
 
   return {

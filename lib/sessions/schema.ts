@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, integer, bigint, uniqueIndex, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, bigint, uniqueIndex, index, jsonb, foreignKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
@@ -57,9 +57,7 @@ export const interactiveSessionRuntimes = pgTable(
   "interactive_session_runtimes",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    sessionId: uuid("session_id")
-      .notNull()
-      .references(() => interactiveSessions.id),
+    sessionId: uuid("session_id").notNull(),
     sandboxId: text("sandbox_id"),
     sandboxBaseUrl: text("sandbox_base_url"),
     sdkSessionId: text("sdk_session_id"),
@@ -77,6 +75,11 @@ export const interactiveSessionRuntimes = pgTable(
     uniqueIndex("idx_one_live_runtime_per_session")
       .on(table.sessionId)
       .where(sql`status IN ('creating', 'running', 'idle')`),
+    foreignKey({
+      name: "interactive_session_runtimes_session_fk",
+      columns: [table.sessionId],
+      foreignColumns: [interactiveSessions.id],
+    }),
   ],
 );
 
@@ -87,12 +90,8 @@ export const interactiveSessionCheckpoints = pgTable(
   "interactive_session_checkpoints",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    sessionId: uuid("session_id")
-      .notNull()
-      .references(() => interactiveSessions.id),
-    runtimeId: uuid("runtime_id").references(
-      () => interactiveSessionRuntimes.id,
-    ),
+    sessionId: uuid("session_id").notNull(),
+    runtimeId: uuid("runtime_id"),
     snapshotId: text("snapshot_id").notNull(),
     baseCommitSha: text("base_commit_sha"),
     lastEventIndex: integer("last_event_index"),
@@ -102,6 +101,18 @@ export const interactiveSessionCheckpoints = pgTable(
       .notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
   },
+  (table) => [
+    foreignKey({
+      name: "interactive_session_checkpoints_session_fk",
+      columns: [table.sessionId],
+      foreignColumns: [interactiveSessions.id],
+    }),
+    foreignKey({
+      name: "interactive_session_checkpoints_runtime_fk",
+      columns: [table.runtimeId],
+      foreignColumns: [interactiveSessionRuntimes.id],
+    }),
+  ],
 );
 
 /**
@@ -117,10 +128,7 @@ export const interactiveSessionTurns = pgTable(
     sessionId: uuid("session_id")
       .notNull()
       .references(() => interactiveSessions.id, { onDelete: "cascade" }),
-    runtimeId: uuid("runtime_id").references(
-      () => interactiveSessionRuntimes.id,
-      { onDelete: "set null" },
-    ),
+    runtimeId: uuid("runtime_id"),
     // v2: Link turns to the job system for correlation
     jobId: uuid("job_id"),
     attemptId: uuid("attempt_id"),
@@ -149,5 +157,10 @@ export const interactiveSessionTurns = pgTable(
       table.sessionId,
       table.status,
     ),
+    foreignKey({
+      name: "interactive_session_turns_runtime_fk",
+      columns: [table.runtimeId],
+      foreignColumns: [interactiveSessionRuntimes.id],
+    }).onDelete("set null"),
   ],
 );

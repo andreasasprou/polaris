@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { RequestError } from "@/lib/errors/request-error";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
 import { resolveSessionCredentials } from "@/lib/sessions/prompt-dispatch";
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Could not resolve credentials" },
-      { status: 400 },
+      { status: err instanceof RequestError ? err.status : 400 },
     );
   }
 

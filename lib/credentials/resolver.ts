@@ -1,9 +1,9 @@
 import { findAutomationById } from "@/lib/automations/queries";
-import { findRepositoryById } from "@/lib/integrations/queries";
+import {
+  findGithubInstallationByIdAndOrg,
+  findRepositoryByIdAndOrg,
+} from "@/lib/integrations/queries";
 import { getDecryptedSecretForOrg, findSecretByIdAndOrg } from "@/lib/secrets/queries";
-import { db } from "@/lib/db";
-import { githubInstallations } from "@/lib/integrations/schema";
-import { eq } from "drizzle-orm";
 import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export type ResolvedCredentials = {
@@ -47,16 +47,15 @@ export async function resolveCredentials(
 
   // Resolve repository — verify org ownership
   if (!automation.repositoryId) return null;
-  const repo = await findRepositoryById(automation.repositoryId);
-  if (!repo || repo.organizationId !== orgId) return null;
+  const repo = await findRepositoryByIdAndOrg(automation.repositoryId, orgId);
+  if (!repo) return null;
 
   // Look up the numeric GitHub installation ID — verify org ownership
-  const [installation] = await db
-    .select()
-    .from(githubInstallations)
-    .where(eq(githubInstallations.id, repo.githubInstallationId))
-    .limit(1);
-  if (!installation || installation.organizationId !== orgId) return null;
+  const installation = await findGithubInstallationByIdAndOrg(
+    repo.githubInstallationId,
+    orgId,
+  );
+  if (!installation) return null;
 
   return {
     agentApiKey,

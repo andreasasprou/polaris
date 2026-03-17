@@ -32,9 +32,18 @@ export function verifyCallback(
   hmacKey: string,
 ): boolean {
   const expected = signCallback(payload, hmacKey);
-  // Constant-time comparison to prevent timing attacks
+  if (!/^[0-9a-f]+$/i.test(signature) || signature.length % 2 !== 0) {
+    return false;
+  }
+
+  const signatureBuffer = Buffer.from(signature, "hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  if (signatureBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
   return crypto.timingSafeEqual(
-    Buffer.from(signature, "hex"),
-    Buffer.from(expected, "hex"),
+    signatureBuffer,
+    expectedBuffer,
   );
 }

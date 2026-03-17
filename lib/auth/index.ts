@@ -6,6 +6,9 @@ import { db } from "@/lib/db";
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
+  account: {
+    encryptOAuthTokens: true,
+  },
   emailAndPassword: {
     enabled: true,
   },

@@ -3,12 +3,24 @@ import { runSweep } from "@/lib/jobs/sweeper";
 
 // Vercel Cron handler — runs every 2 minutes.
 // Configure in vercel.json crons array with path "/api/cron/sweeper".
-export async function GET() {
-  // Verify cron secret in production
+export async function GET(req: Request) {
+  const isDevelopment = process.env.NODE_ENV === "development"
+    || process.env.VERCEL_ENV === "development";
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && !process.env.VERCEL_ENV?.startsWith("development")) {
-    // In production, Vercel automatically validates the Authorization header
-    // for cron jobs configured in vercel.json
+  if (!isDevelopment) {
+    if (!cronSecret) {
+      return NextResponse.json(
+        { ok: false, error: "CRON_SECRET is required outside development" },
+        { status: 500 },
+      );
+    }
+
+    if (req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 },
+      );
+    }
   }
 
   try {

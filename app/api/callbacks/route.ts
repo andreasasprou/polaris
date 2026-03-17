@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BodyTooLargeError, readRequestBody } from "@/lib/http/request-body";
 import { verifyCallback } from "@/lib/jobs/callback-auth";
 import { ingestCallback } from "@/lib/jobs/callbacks";
 import { getJob } from "@/lib/jobs/actions";
 import type { CallbackType } from "@/lib/jobs/status";
+
+const MAX_CALLBACK_BODY_BYTES = 1024 * 1024;
 
 /**
  * POST /api/callbacks
@@ -19,10 +22,15 @@ export async function POST(req: NextRequest) {
     callbackType: CallbackType;
     payload: Record<string, unknown>;
   };
+  let rawBody: string;
 
   try {
-    body = await req.json();
-  } catch {
+    rawBody = await readRequestBody(req, MAX_CALLBACK_BODY_BYTES);
+    body = JSON.parse(rawBody) as typeof body;
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+    }
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 

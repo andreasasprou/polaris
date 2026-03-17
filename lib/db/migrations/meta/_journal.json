@@ -8,6 +8,20 @@
       "when": 1773386537669,
       "tag": "0000_futuristic_wraith",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773744398445,
+      "tag": "0001_reconcile-schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773744670968,
+      "tag": "0002_shorten-fk-names",
+      "breakpoints": true
     }
   ]
 }

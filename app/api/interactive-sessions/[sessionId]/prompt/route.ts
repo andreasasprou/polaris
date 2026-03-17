@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { RequestError } from "@/lib/errors/request-error";
+import { getInteractiveSessionForOrg } from "@/lib/sessions/actions";
 import { dispatchPromptToSession } from "@/lib/sessions/prompt-dispatch";
 
 /**
@@ -15,6 +17,11 @@ export async function POST(
 ) {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
+
+  const session = await getInteractiveSessionForOrg(sessionId, orgId);
+  if (!session) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const body = await req.json();
   const { prompt } = body;
@@ -33,12 +40,20 @@ export async function POST(
     );
   }
 
-  const result = await dispatchPromptToSession({
-    sessionId,
-    prompt,
-    requestId: randomUUID(),
-    source: "user",
-  });
+  try {
+    const result = await dispatchPromptToSession({
+      organizationId: orgId,
+      sessionId,
+      prompt,
+      requestId: randomUUID(),
+      source: "user",
+    });
 
-  return NextResponse.json({ jobId: result.jobId }, { status: 202 });
+    return NextResponse.json({ jobId: result.jobId }, { status: 202 });
+  } catch (error) {
+    if (error instanceof RequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 }

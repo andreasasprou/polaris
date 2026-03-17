@@ -89,6 +89,23 @@ export async function getInteractiveSession(id: string) {
   return row ?? null;
 }
 
+export async function getInteractiveSessionForOrg(
+  id: string,
+  organizationId: string,
+) {
+  const [row] = await db
+    .select()
+    .from(interactiveSessions)
+    .where(
+      and(
+        eq(interactiveSessions.id, id),
+        eq(interactiveSessions.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
 // ── Runtimes ──
 
 export async function createRuntime(input: {

@@ -4,20 +4,13 @@ import { headers } from "next/headers";
 import { APIError } from "better-auth";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { hasOrganizationMembership } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
+import { createGitHubApp } from "@/lib/integrations/github";
+import { findGithubInstallationsByInstallationId } from "@/lib/integrations/queries";
 import { githubInstallations } from "@/lib/integrations/schema";
 import { verifyState } from "@/lib/integrations/github-state";
-
-function getPrivateKey(): string {
-  if (process.env.GITHUB_APP_PRIVATE_KEY_B64) {
-    return Buffer.from(process.env.GITHUB_APP_PRIVATE_KEY_B64, "base64").toString("utf-8");
-  }
-  if (process.env.GITHUB_APP_PRIVATE_KEY) {
-    return process.env.GITHUB_APP_PRIVATE_KEY;
-  }
-  throw new Error("Set GITHUB_APP_PRIVATE_KEY_B64 or GITHUB_APP_PRIVATE_KEY");
-}
 
 function toSlug(name: string): string {
   return name
@@ -26,16 +19,24 @@ function toSlug(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
+function redirectWithError(baseUrl: string, path: string, error: string) {
+  return NextResponse.redirect(new URL(`${path}?error=${error}`, baseUrl));
+}
+
 export async function GET(req: NextRequest) {
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  const installationId = req.nextUrl.searchParams.get("installation_id");
+  const installationIdParam = req.nextUrl.searchParams.get("installation_id");
   const state = req.nextUrl.searchParams.get("state");
 
-  if (!installationId) {
-    return NextResponse.redirect(new URL("/integrations?error=missing_params", baseUrl));
+  const installationId = Number(installationIdParam);
+  if (
+    !installationIdParam
+    || !Number.isInteger(installationId)
+    || installationId <= 0
+  ) {
+    return redirectWithError(baseUrl, "/integrations", "missing_params");
   }
 
-  // Get current session
   const reqHeaders = await headers();
   const session = await auth.api.getSession({
     headers: reqHeaders,
@@ -45,37 +46,47 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login", baseUrl));
   }
 
-  // Try to verify signed state if present
-  let orgId = session.session.activeOrganizationId ?? null;
-  if (state) {
-    const payload = verifyState(state);
-    if (payload) {
-      orgId = payload.orgId;
+  const fallbackPath = session.session.activeOrganizationId
+    ? "/integrations"
+    : "/onboarding";
+
+  if (!state) {
+    return redirectWithError(baseUrl, fallbackPath, "invalid_state");
+  }
+
+  const payload = verifyState(state);
+  if (!payload) {
+    return redirectWithError(baseUrl, fallbackPath, "invalid_state");
+  }
+
+  if (payload.userId !== session.user.id) {
+    return redirectWithError(baseUrl, fallbackPath, "invalid_state");
+  }
+
+  let orgId = payload.orgId;
+  if (orgId) {
+    const hasMembership = await hasOrganizationMembership(session.user.id, orgId);
+    if (!hasMembership) {
+      return redirectWithError(baseUrl, "/integrations", "org_access_denied");
     }
   }
 
-  // Get installation details from GitHub (moved before orgId check so we have accountLogin)
-  const { App } = await import("octokit");
-  const app = new App({
-    appId: process.env.GITHUB_APP_ID!,
-    privateKey: getPrivateKey(),
-  });
+  const app = createGitHubApp();
 
   let accountLogin: string | null = null;
   let accountType: string | null = null;
 
   try {
     const { data: installation } = await app.octokit.rest.apps.getInstallation({
-      installation_id: Number(installationId),
+      installation_id: installationId,
     });
     const account = installation.account;
     accountLogin = account && "login" in account ? account.login : (account?.name ?? null);
     accountType = account && "type" in account ? account.type : null;
   } catch {
-    // Non-critical — we can store the installation without account details
+    return redirectWithError(baseUrl, fallbackPath, "installation_lookup_failed");
   }
 
-  // Auto-create org if user has none
   let orgCreated = false;
   if (!orgId) {
     const orgName = accountLogin ?? session.user.name ?? "My Organization";
@@ -98,29 +109,49 @@ export async function GET(req: NextRequest) {
           slug = `${toSlug(orgName)}-${crypto.randomBytes(3).toString("hex")}`;
           continue;
         }
-        // If not a slug conflict or exhausted retries, redirect with error
-        return NextResponse.redirect(new URL("/onboarding?error=org_creation_failed", baseUrl));
+        return redirectWithError(baseUrl, "/onboarding", "org_creation_failed");
       }
     }
   }
 
   if (!orgId) {
-    return NextResponse.redirect(new URL("/onboarding?error=no_org", baseUrl));
+    return redirectWithError(baseUrl, "/onboarding", "no_org");
   }
 
-  // Upsert the installation
-  await db
-    .insert(githubInstallations)
-    .values({
-      organizationId: orgId,
-      installationId: Number(installationId),
-      accountLogin,
-      accountType,
-      installedBy: session.user.id,
-    })
-    .onConflictDoNothing();
+  const existingInstallations = await findGithubInstallationsByInstallationId(
+    installationId,
+  );
+  const conflictingInstallation = existingInstallations.find(
+    (row) => row.organizationId !== orgId,
+  );
+  if (conflictingInstallation) {
+    return redirectWithError(baseUrl, "/integrations", "installation_already_linked");
+  }
 
-  // Check if onboarding is in progress — redirect back to wizard instead of dashboard
+  const existingInstallation = existingInstallations.find(
+    (row) => row.organizationId === orgId,
+  );
+  if (existingInstallation) {
+    await db
+      .update(githubInstallations)
+      .set({
+        accountLogin,
+        accountType,
+        installedBy: session.user.id,
+      })
+      .where(eq(githubInstallations.id, existingInstallation.id));
+  } else {
+    await db
+      .insert(githubInstallations)
+      .values({
+        organizationId: orgId,
+        installationId,
+        accountLogin,
+        accountType,
+        installedBy: session.user.id,
+      });
+  }
+
   const [orgRow] = await db
     .select({ metadata: organization.metadata })
     .from(organization)
@@ -133,8 +164,6 @@ export async function GET(req: NextRequest) {
   const onboardingComplete = !!meta?.onboardingCompletedAt;
 
   if (!onboardingComplete) {
-    // Legacy orgs (created before onboarding) have no onboardingCompletedAt
-    // but may have existing automations — don't force them into the wizard
     const { count } = await import("drizzle-orm");
     const { automations } = await import("@/lib/automations/schema");
     const [result] = await db

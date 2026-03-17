@@ -6,7 +6,7 @@ import {
   member,
   session as sessionTable,
 } from "@/lib/db/auth-schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 /**
  * Get the current session with a guaranteed active organization ID.
@@ -55,4 +55,22 @@ export async function getSessionWithOrg() {
   }
 
   return { session, orgId: activeOrgId };
+}
+
+export async function hasOrganizationMembership(
+  userId: string,
+  organizationId: string,
+) {
+  const [membership] = await db
+    .select({ id: member.id })
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, userId),
+        eq(member.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+
+  return membership != null;
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationsByOrg } from "@/lib/automations/queries";
 import { createAutomation } from "@/lib/automations/actions";
+import { validateAutomationRelationsForOrg } from "@/lib/automations/validation";
+import { RequestError } from "@/lib/errors/request-error";
 
 export async function GET() {
   const { orgId } = await getSessionWithOrg();
@@ -15,26 +17,39 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
 
-  const automation = await createAutomation({
-    organizationId: orgId,
-    createdBy: session.user.id,
-    name: body.name,
-    triggerType: body.triggerType,
-    triggerConfig: body.triggerConfig,
-    prompt: body.prompt,
-    agentType: body.agentType,
-    model: body.model,
-    agentMode: body.agentMode,
-    repositoryId: body.repositoryId,
-    agentSecretId: body.agentSecretId,
-    maxDurationSeconds: body.maxDurationSeconds,
-    maxConcurrentRuns: body.maxConcurrentRuns,
-    allowPush: body.allowPush,
-    allowPrCreate: body.allowPrCreate,
-    mode: body.mode,
-    modelParams: body.modelParams,
-    prReviewConfig: body.prReviewConfig,
-  });
+  try {
+    const { repositoryId, agentSecretId } = await validateAutomationRelationsForOrg({
+      organizationId: orgId,
+      repositoryId: body.repositoryId ?? null,
+      agentSecretId: body.agentSecretId ?? null,
+    });
 
-  return NextResponse.json({ automation }, { status: 201 });
+    const automation = await createAutomation({
+      organizationId: orgId,
+      createdBy: session.user.id,
+      name: body.name,
+      triggerType: body.triggerType,
+      triggerConfig: body.triggerConfig,
+      prompt: body.prompt,
+      agentType: body.agentType,
+      model: body.model,
+      agentMode: body.agentMode,
+      repositoryId: repositoryId ?? undefined,
+      agentSecretId: agentSecretId ?? undefined,
+      maxDurationSeconds: body.maxDurationSeconds,
+      maxConcurrentRuns: body.maxConcurrentRuns,
+      allowPush: body.allowPush,
+      allowPrCreate: body.allowPrCreate,
+      mode: body.mode,
+      modelParams: body.modelParams,
+      prReviewConfig: body.prReviewConfig,
+    });
+
+    return NextResponse.json({ automation }, { status: 201 });
+  } catch (error) {
+    if (error instanceof RequestError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 }

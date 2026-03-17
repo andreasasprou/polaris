@@ -8,6 +8,7 @@ import {
   jsonb,
   uniqueIndex,
   index,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
@@ -78,10 +79,7 @@ export const automationRuns = pgTable(
       () => automationSessions.id,
       { onDelete: "set null" },
     ),
-    interactiveSessionId: uuid("interactive_session_id").references(
-      () => interactiveSessions.id,
-      { onDelete: "set null" },
-    ),
+    interactiveSessionId: uuid("interactive_session_id"),
     reviewSequence: integer("review_sequence"),
     reviewScope: text("review_scope"), // 'full' | 'incremental' | 'since' | 'reset'
     reviewFromSha: text("review_from_sha"),
@@ -104,6 +102,11 @@ export const automationRuns = pgTable(
   (table) => [
     index("idx_automation_runs_org").on(table.organizationId),
     index("idx_automation_runs_automation_created").on(table.automationId, table.createdAt),
+    foreignKey({
+      name: "automation_runs_interactive_session_fk",
+      columns: [table.interactiveSessionId],
+      foreignColumns: [interactiveSessions.id],
+    }).onDelete("set null"),
   ],
 );
 
@@ -121,9 +124,7 @@ export const automationSessions = pgTable(
     automationId: uuid("automation_id")
       .notNull()
       .references(() => automations.id, { onDelete: "cascade" }),
-    interactiveSessionId: uuid("interactive_session_id")
-      .notNull()
-      .references(() => interactiveSessions.id, { onDelete: "restrict" }),
+    interactiveSessionId: uuid("interactive_session_id").notNull(),
     organizationId: text("organization_id").notNull(),
     repositoryId: uuid("repository_id")
       .notNull()
@@ -165,5 +166,10 @@ export const automationSessions = pgTable(
       table.status,
     ),
     index("idx_automation_sessions_lock").on(table.reviewLockJobId),
+    foreignKey({
+      name: "automation_sessions_interactive_session_fk",
+      columns: [table.interactiveSessionId],
+      foreignColumns: [interactiveSessions.id],
+    }).onDelete("restrict"),
   ],
 );

@@ -18,7 +18,7 @@ export const githubInstallations = pgTable(
     installedBy: text("installed_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique().on(t.organizationId, t.installationId)],
+  (t) => [unique().on(t.installationId)],
 );
 
 export const repositories = pgTable(

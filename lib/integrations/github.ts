@@ -1,6 +1,6 @@
 import { App } from "octokit";
 
-function getPrivateKey(): string {
+export function getGitHubAppPrivateKey(): string {
   if (process.env.GITHUB_APP_PRIVATE_KEY_B64) {
     return Buffer.from(process.env.GITHUB_APP_PRIVATE_KEY_B64, "base64").toString("utf-8");
   }
@@ -10,15 +10,15 @@ function getPrivateKey(): string {
   throw new Error("Set GITHUB_APP_PRIVATE_KEY_B64 or GITHUB_APP_PRIVATE_KEY");
 }
 
-function createApp() {
+export function createGitHubApp() {
   return new App({
     appId: process.env.GITHUB_APP_ID!,
-    privateKey: getPrivateKey(),
+    privateKey: getGitHubAppPrivateKey(),
   });
 }
 
 async function getInstallationId(owner: string, repo: string): Promise<number> {
-  const app = createApp();
+  const app = createGitHubApp();
   const { data } = await app.octokit.rest.apps.getRepoInstallation({
     owner,
     repo,
@@ -27,7 +27,7 @@ async function getInstallationId(owner: string, repo: string): Promise<number> {
 }
 
 export async function getInstallationOctokit(owner: string, repo: string) {
-  const app = createApp();
+  const app = createGitHubApp();
   const installationId = await getInstallationId(owner, repo);
   return app.getInstallationOctokit(installationId);
 }
@@ -36,7 +36,7 @@ export async function getInstallationToken(
   owner: string,
   repo: string,
 ): Promise<string> {
-  const app = createApp();
+  const app = createGitHubApp();
   const installationId = await getInstallationId(owner, repo);
   const { data } = await app.octokit.rest.apps.createInstallationAccessToken({
     installation_id: installationId,
@@ -80,7 +80,7 @@ export async function mintInstallationToken(
   repos?: string[],
   permissions?: Record<string, string>,
 ): Promise<string> {
-  const app = createApp();
+  const app = createGitHubApp();
   const { data } = await app.octokit.rest.apps.createInstallationAccessToken({
     installation_id: installationId,
     ...(repos ? { repositories: repos } : {}),
@@ -94,7 +94,7 @@ export async function mintInstallationToken(
  * Used when we already have the installationId stored in the DB.
  */
 export async function getInstallationOctokitById(installationId: number) {
-  const app = createApp();
+  const app = createGitHubApp();
   return app.getInstallationOctokit(installationId);
 }
 

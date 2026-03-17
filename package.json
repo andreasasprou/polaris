@@ -8,6 +8,7 @@
     "build": "node scripts/vercel-build.mjs",
     "build:next": "next build",
     "start": "next start",
+    "backfill:oauth-tokens": "tsx scripts/backfill-oauth-token-encryption.ts",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit"
@@ -15,7 +16,7 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
     "@sandbox-agent/persist-postgres": "0.3.2",
-"@vercel/sandbox": "^1.8.0",
+    "@vercel/sandbox": "^1.8.0",
     "acp-http-client": "0.3.2",
     "better-auth": "^1.5.4",
     "class-variance-authority": "^0.7.1",
@@ -58,7 +59,7 @@
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "tailwindcss": "^4.1.18",
-"tsx": "^4.21.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

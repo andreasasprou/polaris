@@ -246,7 +246,7 @@ export async function getStuckPostprocessJobs(olderThanMinutes: number = 2) {
     .where(
       and(
         eq(jobs.status, "postprocess_pending"),
-        sql`${jobs.updatedAt} < NOW() - INTERVAL '${sql.raw(String(olderThanMinutes))} minutes'`,
+        sql`${jobs.updatedAt} < NOW() - (${olderThanMinutes} * INTERVAL '1 minute')`,
       ),
     );
 }
