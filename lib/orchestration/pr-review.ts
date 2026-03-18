@@ -360,26 +360,29 @@ export async function dispatchPrReview(
     console.log(`[dispatch] Dispatching review to ${proxyUrl}, callback: ${callbackUrl}, job: ${job.id}, agent: ${resolved.agent}`);
 
     try {
+      const promptBody = {
+        jobId: job.id,
+        attemptId: attempt.id,
+        epoch,
+        prompt: reviewPrompt,
+        callbackUrl,
+        hmacKey,
+        config: {
+          agent: resolved.agent,
+          mode: resolved.mode,
+          model: resolved.model,
+          thoughtLevel: resolved.thoughtLevel,
+          cwd: "/vercel/sandbox",
+        },
+      };
       const response = await fetch(`${proxyUrl}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jobId: job.id,
-          attemptId: attempt.id,
-          epoch,
-          prompt: reviewPrompt,
-          callbackUrl,
-          hmacKey,
-          config: {
-            agent: resolved.agent,
-            mode: resolved.mode,
-            model: resolved.model,
-            thoughtLevel: resolved.thoughtLevel,
-            cwd: "/vercel/sandbox",
-          },
-        }),
+        body: JSON.stringify(promptBody),
         signal: AbortSignal.timeout(30_000),
       });
+
+      console.log(`[dispatch] POST ${proxyUrl}/prompt → ${response.status} (content-type: ${response.headers.get("content-type")})`);
 
       if (response.status === 202) {
         // Set handedOff FIRST — the sandbox already owns execution.
