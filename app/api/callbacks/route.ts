@@ -14,6 +14,7 @@ const MAX_CALLBACK_BODY_BYTES = 1024 * 1024;
  * Verifies the signature, then ingests the callback into the job state machine.
  */
 export async function POST(req: NextRequest) {
+  console.log(`[callbacks] Received callback from ${req.headers.get("x-forwarded-for") ?? "unknown"}`);
   let body: {
     jobId: string;
     attemptId: string;

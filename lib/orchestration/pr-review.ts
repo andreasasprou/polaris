@@ -357,6 +357,8 @@ export async function dispatchPrReview(
       ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/api/callbacks`
       : "http://localhost:3001/api/callbacks";
 
+    console.log(`[dispatch] Dispatching review to ${proxyUrl}, callback: ${callbackUrl}, job: ${job.id}, agent: ${resolved.agent}`);
+
     try {
       const response = await fetch(`${proxyUrl}/prompt`, {
         method: "POST",
