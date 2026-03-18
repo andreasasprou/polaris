@@ -108,7 +108,7 @@ export class ProxyServer {
     // GET /processes/* — proxy to sandbox-agent server for process logs
     if (method === "GET" && path.startsWith("/processes")) {
       return this.proxyToAgent(req, res, `/v1${path}`);
-      }
+    }
 
     sendJson(res, 404, { error: "Not found" });
   }

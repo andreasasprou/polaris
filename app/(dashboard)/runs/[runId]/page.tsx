@@ -54,18 +54,24 @@ export default function RunDetailPage() {
 
   useEffect(() => {
     const controller = new AbortController();
+    let current = true;
     setLoading(true);
     setRun(null);
     fetch(`/api/runs/${runId}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
-        setRun(data.run ?? null);
+        if (current) setRun(data.run ?? null);
       })
       .catch(() => {
         // Aborted or network error — leave run as null
       })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+    return () => {
+      current = false;
+      controller.abort();
+    };
   }, [runId]);
 
   if (loading) {
