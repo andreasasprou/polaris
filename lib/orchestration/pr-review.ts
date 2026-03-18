@@ -263,14 +263,18 @@ export async function dispatchPrReview(
     let epoch = session.epoch;
     let sandboxId = session.sandboxId;
 
-    // Check if sandbox is alive
+    // Check if sandbox is alive — validate response body, not just status.
+    // Stopped Vercel sandboxes return 200 with HTML, not JSON.
     let sandboxAlive = false;
     if (sandboxBaseUrl) {
       try {
         const resp = await fetch(`${sandboxBaseUrl}/health`, {
           signal: AbortSignal.timeout(5_000),
         });
-        sandboxAlive = resp.ok;
+        if (resp.ok) {
+          const body = await resp.json().catch(() => null);
+          sandboxAlive = body?.ok === true;
+        }
       } catch {
         sandboxAlive = false;
       }
