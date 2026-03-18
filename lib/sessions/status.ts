@@ -7,6 +7,7 @@
  * v2 Status lifecycle:
  *   creating → idle → active → idle → snapshotting → hibernated
  *   hibernated/stopped/failed → (restore/create) → idle
+ *   active → idle (on prompt_complete/prompt_failed callback, or sweeper healing)
  *   Any state → stopped | failed
  */
 
