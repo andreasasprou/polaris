@@ -167,8 +167,10 @@ export async function ensureSandboxReady(
   // Install + start REST proxy
   const fs = await import("node:fs");
   const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
   const proxyBundlePath = path.resolve(
-    import.meta.dirname,
+    currentDir,
     "../sandbox-proxy/dist/proxy.js",
   );
   const proxyBundle = fs.readFileSync(proxyBundlePath, "utf-8");
