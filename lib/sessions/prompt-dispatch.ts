@@ -50,6 +50,15 @@ export async function dispatchPromptToSession(input: {
     );
   }
 
+  // Heal stale active state before CAS — if sandbox died and session
+  // was never reconciled, we'd otherwise reject with 409.
+  if (session.status === "active") {
+    const activeJob = await getActiveJobForSession(sessionId);
+    if (!activeJob) {
+      await casSessionStatus(sessionId, ["active"], "idle");
+    }
+  }
+
   // CAS to active (serializes concurrent sends)
   // "creating" is included because new sessions from the router start in that state
   const cas = await casSessionStatus(

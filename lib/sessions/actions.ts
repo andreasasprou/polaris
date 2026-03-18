@@ -170,6 +170,23 @@ export async function getActiveRuntime(sessionId: string) {
 }
 
 /**
+ * Find sessions stuck in 'active' with no nonterminal job.
+ * Used by the sweeper to heal stale state.
+ */
+export async function getStaleActiveSessions() {
+  const rows = await db.execute(sql`
+    SELECT s.id FROM interactive_sessions s
+    WHERE s.status = 'active'
+    AND NOT EXISTS (
+      SELECT 1 FROM jobs j
+      WHERE j.session_id = s.id
+      AND j.status NOT IN ('completed', 'failed_terminal', 'cancelled')
+    )
+  `);
+  return rows.rows as { id: string }[];
+}
+
+/**
  * Get the most recent runtime for a session (any status).
  * Used for log retrieval — logs may be available even after runtime ends.
  */

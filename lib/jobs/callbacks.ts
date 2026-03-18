@@ -124,6 +124,14 @@ async function processCallback(input: {
       });
       await appendJobEvent(jobId, "agent_completed", attemptId);
 
+      // Transition session active → idle so it's available for next dispatch.
+      // Must happen before postprocessing (which may dispatch a queued review).
+      const completedJob = await getJob(jobId);
+      if (completedJob?.sessionId) {
+        const { casSessionStatus } = await import("@/lib/sessions/actions");
+        await casSessionStatus(completedJob.sessionId, ["active"], "idle");
+      }
+
       // Trigger post-processing (coding task PR creation, review comment, etc.)
       const { runPostProcessing } = await import("./postprocess");
       await runPostProcessing(jobId);
@@ -168,6 +176,12 @@ async function processCallback(input: {
         error,
         reason,
       });
+
+      // Heal session so next dispatch can proceed
+      if (job.sessionId) {
+        const { casSessionStatus } = await import("@/lib/sessions/actions");
+        await casSessionStatus(job.sessionId, ["active"], "idle");
+      }
       break;
     }
 
