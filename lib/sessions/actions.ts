@@ -180,7 +180,7 @@ export async function getStaleActiveSessions() {
     AND NOT EXISTS (
       SELECT 1 FROM jobs j
       WHERE j.session_id = s.id
-      AND j.status NOT IN ('completed', 'failed_terminal', 'cancelled')
+      AND j.status NOT IN ('completed', 'failed_terminal', 'failed_retryable', 'cancelled')
     )
   `);
   return rows.rows as { id: string }[];
