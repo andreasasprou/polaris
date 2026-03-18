@@ -84,7 +84,8 @@ export async function GET(req: NextRequest) {
     accountLogin = account && "login" in account ? account.login : (account?.name ?? null);
     accountType = account && "type" in account ? account.type : null;
   } catch {
-    return redirectWithError(baseUrl, fallbackPath, "installation_lookup_failed");
+    // Best-effort — accountLogin/accountType are metadata enrichment, not required.
+    // The flow only needs installationId which we already have from the callback.
   }
 
   let orgCreated = false;
@@ -132,13 +133,14 @@ export async function GET(req: NextRequest) {
     (row) => row.organizationId === orgId,
   );
   if (existingInstallation) {
+    // Only overwrite metadata fields if enrichment succeeded — don't clear
+    // previously populated values with null on transient GitHub API failures.
+    const updates: Record<string, unknown> = { installedBy: session.user.id };
+    if (accountLogin != null) updates.accountLogin = accountLogin;
+    if (accountType != null) updates.accountType = accountType;
     await db
       .update(githubInstallations)
-      .set({
-        accountLogin,
-        accountType,
-        installedBy: session.user.id,
-      })
+      .set(updates)
       .where(eq(githubInstallations.id, existingInstallation.id));
   } else {
     await db

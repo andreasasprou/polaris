@@ -142,8 +142,66 @@ export async function createAutomationSession(input: {
   const [row] = await db
     .insert(automationSessions)
     .values(input)
+    .onConflictDoNothing()
     .returning();
-  return row;
+  return row ?? null;
+}
+
+/**
+ * Atomically find or create an automation session + its backing interactive session.
+ * Handles the TOCTOU race: if a concurrent request creates the session between
+ * our read and write, we clean up the orphan interactive session and return the winner.
+ */
+export async function findOrCreateAutomationSession(input: {
+  automationId: string;
+  organizationId: string;
+  repositoryId: string;
+  scopeKey: string;
+  agentType: string;
+  agentSecretId?: string;
+  metadata: AutomationSessionMetadata;
+}): Promise<{ automationSession: NonNullable<Awaited<ReturnType<typeof findAutomationSessionByScope>>>; created: boolean }> {
+  // 1. Check for existing
+  const existing = await findAutomationSessionByScope(input.automationId, input.scopeKey);
+  if (existing) return { automationSession: existing, created: false };
+
+  // 2. Create interactive session
+  const { createInteractiveSession, deleteInteractiveSession } = await import("@/lib/sessions/actions");
+  const interactiveSession = await createInteractiveSession({
+    organizationId: input.organizationId,
+    createdBy: "automation",
+    agentType: input.agentType,
+    agentSecretId: input.agentSecretId,
+    repositoryId: input.repositoryId,
+    prompt: "(initial PR review — prompt will be sent by orchestrator)",
+  });
+
+  // 3. Try to insert automation session (onConflictDoNothing)
+  let automationSession;
+  try {
+    automationSession = await createAutomationSession({
+      automationId: input.automationId,
+      interactiveSessionId: interactiveSession.id,
+      organizationId: input.organizationId,
+      repositoryId: input.repositoryId,
+      scopeKey: input.scopeKey,
+      metadata: input.metadata,
+    });
+  } catch (err) {
+    // Non-conflict DB error — clean up the orphan interactive session
+    await deleteInteractiveSession(interactiveSession.id);
+    throw err;
+  }
+
+  if (automationSession) {
+    return { automationSession, created: true };
+  }
+
+  // 4. Race lost (conflict) — clean up orphan interactive session, return the winner
+  await deleteInteractiveSession(interactiveSession.id);
+  const winner = await findAutomationSessionByScope(input.automationId, input.scopeKey);
+  if (!winner) throw new Error("Automation session vanished after conflict");
+  return { automationSession: winner, created: false };
 }
 
 export async function findAutomationSessionByScope(
@@ -250,6 +308,41 @@ export async function releaseAutomationSessionLock(input: {
     )
     .returning();
   return row != null;
+}
+
+/**
+ * Force-release a review lock regardless of which job holds it.
+ * Used by the sweeper to clean up stale locks.
+ */
+export async function forceReleaseAutomationSessionLock(
+  automationSessionId: string,
+) {
+  await db
+    .update(automationSessions)
+    .set({ reviewLockJobId: null, updatedAt: new Date() })
+    .where(eq(automationSessions.id, automationSessionId));
+}
+
+/**
+ * Find automation sessions with stale review locks.
+ *
+ * The lock column stores `automationRunId` (not job.id). A lock is stale when
+ * the referenced automation run is terminal or doesn't exist. We only check
+ * the automation_runs table since that's what the lock key references.
+ */
+export async function getStaleReviewLocks() {
+  const { sql } = await import("drizzle-orm");
+  const rows = await db.execute(sql`
+    SELECT as2.id AS automation_session_id, as2.review_lock_job_id
+    FROM automation_sessions as2
+    WHERE as2.review_lock_job_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM automation_runs ar
+      WHERE ar.id = as2.review_lock_job_id::uuid
+      AND ar.status IN ('pending', 'running')
+    )
+  `);
+  return rows.rows as { automation_session_id: string; review_lock_job_id: string }[];
 }
 
 /**

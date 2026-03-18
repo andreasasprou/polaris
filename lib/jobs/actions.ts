@@ -1,7 +1,7 @@
-import { eq, and, inArray, sql, isNull, notInArray } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, sql, isNull, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { interactiveSessions } from "@/lib/sessions/schema";
-import { jobs, jobAttempts, jobEvents } from "./schema";
+import { jobs, jobAttempts, jobEvents, callbackInbox } from "./schema";
 import type { JobStatus, AttemptStatus, JobType, JobEventType } from "./status";
 
 // ── Jobs ──
@@ -72,9 +72,11 @@ export async function casJobStatus(
 
 /**
  * Get the active (non-terminal) job for a session.
+ * failed_retryable is treated as terminal here because the session
+ * has already been healed to idle — the sweeper handles retry.
  */
 export async function getActiveJobForSession(sessionId: string) {
-  const terminalStatuses: JobStatus[] = ["completed", "failed_terminal", "cancelled"];
+  const terminalStatuses: JobStatus[] = ["completed", "failed_terminal", "failed_retryable", "cancelled"];
   const [row] = await db
     .select()
     .from(jobs)
@@ -263,4 +265,74 @@ export async function getDispatchUnknownAttempts() {
     .from(jobAttempts)
     .innerJoin(jobs, eq(jobAttempts.jobId, jobs.id))
     .where(eq(jobAttempts.status, "dispatch_unknown"));
+}
+
+// ── Org-scoped queries (for API endpoints) ──
+
+/**
+ * Get a job by ID, scoped to an organization. Returns null if not found or wrong org.
+ */
+export async function getJobForOrg(jobId: string, orgId: string) {
+  const [row] = await db
+    .select({
+      id: jobs.id,
+      type: jobs.type,
+      status: jobs.status,
+      sessionId: jobs.sessionId,
+      automationId: jobs.automationId,
+      automationRunId: jobs.automationRunId,
+      requestId: jobs.requestId,
+      maxAttempts: jobs.maxAttempts,
+      timeoutSeconds: jobs.timeoutSeconds,
+      result: jobs.result,
+      sideEffectsCompleted: jobs.sideEffectsCompleted,
+      createdAt: jobs.createdAt,
+      updatedAt: jobs.updatedAt,
+      timeoutAt: jobs.timeoutAt,
+    })
+    .from(jobs)
+    .where(and(eq(jobs.id, jobId), eq(jobs.organizationId, orgId)))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Get all attempts for a job, ordered by attempt number.
+ */
+export async function getJobAttempts(jobId: string) {
+  return db
+    .select()
+    .from(jobAttempts)
+    .where(eq(jobAttempts.jobId, jobId))
+    .orderBy(asc(jobAttempts.attemptNumber));
+}
+
+/**
+ * Get all events for a job, ordered chronologically.
+ */
+export async function getJobEvents(jobId: string) {
+  return db
+    .select()
+    .from(jobEvents)
+    .where(eq(jobEvents.jobId, jobId))
+    .orderBy(asc(jobEvents.createdAt));
+}
+
+/**
+ * Get all callbacks for a job, ordered by receive time.
+ * Excludes raw payload to avoid returning large data.
+ */
+export async function getJobCallbacks(jobId: string) {
+  return db
+    .select({
+      id: callbackInbox.id,
+      callbackType: callbackInbox.callbackType,
+      processed: callbackInbox.processed,
+      processedAt: callbackInbox.processedAt,
+      processError: callbackInbox.processError,
+      receivedAt: callbackInbox.receivedAt,
+    })
+    .from(callbackInbox)
+    .where(eq(callbackInbox.jobId, jobId))
+    .orderBy(asc(callbackInbox.receivedAt));
 }

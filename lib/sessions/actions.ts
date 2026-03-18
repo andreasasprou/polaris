@@ -28,6 +28,16 @@ export async function createInteractiveSession(input: {
   return row;
 }
 
+/**
+ * Delete an interactive session by ID.
+ * Used to clean up orphan sessions created during race conditions.
+ */
+export async function deleteInteractiveSession(id: string) {
+  await db
+    .delete(interactiveSessions)
+    .where(eq(interactiveSessions.id, id));
+}
+
 export async function updateInteractiveSession(
   id: string,
   input: Partial<{
@@ -112,6 +122,7 @@ export async function createRuntime(input: {
   sessionId: string;
   sandboxId?: string;
   sandboxBaseUrl?: string;
+  agentServerUrl?: string;
   sdkSessionId?: string;
   epoch: number;
   restoreSource: string;
@@ -130,6 +141,7 @@ export async function updateRuntime(
   input: Partial<{
     sandboxId: string;
     sandboxBaseUrl: string;
+    agentServerUrl: string;
     sdkSessionId: string;
     status: string;
     endedAt: Date;
@@ -153,6 +165,37 @@ export async function getActiveRuntime(sessionId: string) {
         inArray(interactiveSessionRuntimes.status, LIVE_RUNTIME_STATUSES),
       ),
     )
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Find sessions stuck in 'active' with no nonterminal job.
+ * Used by the sweeper to heal stale state.
+ */
+export async function getStaleActiveSessions() {
+  const rows = await db.execute(sql`
+    SELECT s.id FROM interactive_sessions s
+    WHERE s.status = 'active'
+    AND NOT EXISTS (
+      SELECT 1 FROM jobs j
+      WHERE j.session_id = s.id
+      AND j.status NOT IN ('completed', 'failed_terminal', 'failed_retryable', 'cancelled')
+    )
+  `);
+  return rows.rows as { id: string }[];
+}
+
+/**
+ * Get the most recent runtime for a session (any status).
+ * Used for log retrieval — logs may be available even after runtime ends.
+ */
+export async function getLatestRuntime(sessionId: string) {
+  const [row] = await db
+    .select()
+    .from(interactiveSessionRuntimes)
+    .where(eq(interactiveSessionRuntimes.sessionId, sessionId))
+    .orderBy(sql`created_at DESC`)
     .limit(1);
   return row ?? null;
 }

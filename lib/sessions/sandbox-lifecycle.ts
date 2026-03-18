@@ -190,6 +190,7 @@ export async function ensureSandboxReady(
   await updateRuntime(runtime.id, {
     sandboxId: sandbox.sandboxId,
     sandboxBaseUrl: proxyBaseUrl,
+    agentServerUrl: serverUrl,
     status: "running",
   });
 

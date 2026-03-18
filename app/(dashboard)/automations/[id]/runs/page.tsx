@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/status-badge";
+import { VerdictBadge } from "@/components/verdict-badge";
 
 type Run = {
   id: string;
@@ -20,21 +21,45 @@ type Run = {
   automationName: string | null;
   status: string;
   source: string;
-  agentSessionId: string | null;
+  interactiveSessionId: string | null;
   prUrl: string | null;
   summary: string | null;
+  verdict: string | null;
+  reviewScope: string | null;
+  jobId: string | null;
+  repoOwner: string | null;
+  repoName: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
 };
 
 function formatDuration(start: string | null, end: string | null): string {
-  if (!start) return "—";
+  if (!start) return "\u2014";
   const s = new Date(start).getTime();
   const e = end ? new Date(end).getTime() : Date.now();
   const secs = Math.round((e - s) / 1000);
   if (secs < 60) return `${secs}s`;
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function ResultCell({ run }: { run: Run }) {
+  if (run.verdict) {
+    return <VerdictBadge verdict={run.verdict} />;
+  }
+  if (run.prUrl) {
+    return (
+      <a
+        href={run.prUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary hover:underline"
+      >
+        PR
+      </a>
+    );
+  }
+  return <span className="text-muted-foreground">{"\u2014"}</span>;
 }
 
 export default function AutomationRunsPage() {
@@ -67,16 +92,18 @@ export default function AutomationRunsPage() {
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : runs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No runs yet for this automation.</p>
+        <p className="text-sm text-muted-foreground">
+          No runs yet for this automation.
+        </p>
       ) : (
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Status</TableHead>
-                <TableHead>Source</TableHead>
+                <TableHead>Repository</TableHead>
                 <TableHead>Duration</TableHead>
-                <TableHead>PR</TableHead>
+                <TableHead>Result</TableHead>
                 <TableHead>Created</TableHead>
               </TableRow>
             </TableHeader>
@@ -88,25 +115,16 @@ export default function AutomationRunsPage() {
                       <StatusBadge status={run.status} />
                     </Link>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {run.source}
+                  <TableCell className="font-mono text-sm text-muted-foreground">
+                    {run.repoOwner && run.repoName
+                      ? `${run.repoOwner}/${run.repoName}`
+                      : run.source}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {formatDuration(run.startedAt, run.completedAt)}
                   </TableCell>
                   <TableCell>
-                    {run.prUrl ? (
-                      <a
-                        href={run.prUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        PR
-                      </a>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <ResultCell run={run} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {new Date(run.createdAt).toLocaleString()}

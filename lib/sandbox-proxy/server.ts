@@ -105,6 +105,11 @@ export class ProxyServer {
       return;
     }
 
+    // GET /processes/* — proxy to sandbox-agent server for process logs
+    if (method === "GET" && path.startsWith("/processes")) {
+      return this.proxyToAgent(req, res, `/v1${path}`);
+    }
+
     sendJson(res, 404, { error: "Not found" });
   }
 
@@ -609,6 +614,57 @@ export class ProxyServer {
       console.log(`[proxy] Found ${pending.length} pending outbox entries`);
       // These will be picked up by the sweeper via GET /outbox
       // since we don't have the callbackUrl/hmacKey for generic replay
+    }
+  }
+
+  // ── Process logs proxy ──
+
+  /**
+   * Proxy GET requests to the sandbox-agent server (localhost:2468).
+   * Used for process logs and process info.
+   */
+  private async proxyToAgent(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    agentPath: string,
+  ): Promise<void> {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const queryString = url.search;
+    const targetUrl = `http://localhost:2468${agentPath}${queryString}`;
+
+    try {
+      const response = await fetch(targetUrl, {
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      // Forward status and content-type
+      const contentType = response.headers.get("content-type") ?? "application/json";
+      res.writeHead(response.status, { "Content-Type": contentType });
+
+      if (response.body) {
+        // Stream the response body through (supports SSE for follow=true)
+        const reader = response.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+
+      res.end();
+    } catch (err) {
+      if (!res.headersSent) {
+        sendJson(res, 502, {
+          error: "Failed to reach sandbox-agent server",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      } else {
+        res.end();
+      }
     }
   }
 }

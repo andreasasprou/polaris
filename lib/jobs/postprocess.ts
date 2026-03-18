@@ -392,10 +392,13 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (automationSessionId) {
       const pending = await clearPendingReviewRequest(automationSessionId);
 
-      if (job.id) {
+      // Lock is acquired with automationRunId (not job.id) in pr-review.ts,
+      // so release must use the same key.
+      const lockKey = automationRunId ?? job.id;
+      if (lockKey) {
         await releaseAutomationSessionLock({
           automationSessionId,
-          jobId: job.id,
+          jobId: lockKey,
         });
       }
 

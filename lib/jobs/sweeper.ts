@@ -5,11 +5,11 @@
  * to prevent concurrent sweeps.
  *
  * Responsibilities:
- * - Timed-out jobs → failed_terminal
+ * - Timed-out jobs → failed_terminal + heal session
  * - dispatch_unknown attempts → probe sandbox GET /status, reconcile
  * - Stuck postprocess_pending → retry
- * - Idle sessions (>N min) → snapshot + hibernate
- * - Dead sandbox detection → mark session failed
+ * - Stale active sessions (no nonterminal job) → idle
+ * - Stale review locks (terminal/missing job) → release
  */
 
 import { sql } from "drizzle-orm";
@@ -34,6 +34,8 @@ export async function runSweep(): Promise<{
   timedOut: number;
   unknownReconciled: number;
   postprocessRetried: number;
+  staleSessionsHealed: number;
+  staleLocksReleased: number;
 }> {
   // Try advisory lock — skip if another sweep is running
   const lockRows = await db.execute(
@@ -43,15 +45,29 @@ export async function runSweep(): Promise<{
 
   if (!lockResult?.acquired) {
     console.log("[sweeper] Another sweep is running — skipping");
-    return { timedOut: 0, unknownReconciled: 0, postprocessRetried: 0 };
+    return {
+      timedOut: 0,
+      unknownReconciled: 0,
+      postprocessRetried: 0,
+      staleSessionsHealed: 0,
+      staleLocksReleased: 0,
+    };
   }
 
   try {
     const timedOut = await sweepTimedOutJobs();
     const unknownReconciled = await sweepDispatchUnknown();
     const postprocessRetried = await sweepStuckPostprocess();
+    const staleSessionsHealed = await sweepStaleActiveSessions();
+    const staleLocksReleased = await sweepStaleReviewLocks();
 
-    return { timedOut, unknownReconciled, postprocessRetried };
+    return {
+      timedOut,
+      unknownReconciled,
+      postprocessRetried,
+      staleSessionsHealed,
+      staleLocksReleased,
+    };
   } finally {
     // Release advisory lock
     await db.execute(
@@ -61,7 +77,7 @@ export async function runSweep(): Promise<{
 }
 
 /**
- * Mark timed-out jobs as failed_terminal.
+ * Mark timed-out jobs as failed_terminal and heal their sessions.
  */
 async function sweepTimedOutJobs(): Promise<number> {
   const jobs = await getTimedOutJobs();
@@ -79,6 +95,16 @@ async function sweepTimedOutJobs(): Promise<number> {
       });
       count++;
       console.log(`[sweeper] Timed out job ${job.id}`);
+
+      // Heal session: active → idle so next dispatch can proceed
+      if (job.sessionId) {
+        try {
+          const { casSessionStatus } = await import("@/lib/sessions/actions");
+          await casSessionStatus(job.sessionId, ["active"], "idle");
+        } catch {
+          // Best-effort
+        }
+      }
     }
   }
 
@@ -158,6 +184,51 @@ async function sweepStuckPostprocess(): Promise<number> {
         err instanceof Error ? err.message : err,
       );
     }
+  }
+
+  return count;
+}
+
+/**
+ * Heal sessions stuck in 'active' with no nonterminal job.
+ * This catches cases where the sandbox died and the callback never arrived.
+ */
+async function sweepStaleActiveSessions(): Promise<number> {
+  const { getStaleActiveSessions, casSessionStatus } = await import(
+    "@/lib/sessions/actions"
+  );
+  const staleSessions = await getStaleActiveSessions();
+  let count = 0;
+
+  for (const session of staleSessions) {
+    const healed = await casSessionStatus(session.id, ["active"], "idle");
+    if (healed) {
+      count++;
+      console.log(`[sweeper] Healed stale active session ${session.id}`);
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Release review locks held by terminal or nonexistent jobs/runs.
+ * This catches cases where dispatchPrReview failed after lock acquisition
+ * but before the try-finally was in place (legacy), or edge cases where
+ * the lock key (automationRunId) doesn't match any active entity.
+ */
+async function sweepStaleReviewLocks(): Promise<number> {
+  const { getStaleReviewLocks, forceReleaseAutomationSessionLock } =
+    await import("@/lib/automations/actions");
+  const staleLocks = await getStaleReviewLocks();
+  let count = 0;
+
+  for (const lock of staleLocks) {
+    await forceReleaseAutomationSessionLock(lock.automation_session_id);
+    count++;
+    console.log(
+      `[sweeper] Released stale review lock on ${lock.automation_session_id}`,
+    );
   }
 
   return count;

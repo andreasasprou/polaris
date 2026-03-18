@@ -115,11 +115,9 @@ async function dispatchContinuousReview(
 ): Promise<boolean> {
   const { normalizePREvent } = await import("@/lib/reviews/github-events");
   const {
-    createAutomationSession,
-    findAutomationSessionByScope,
+    findOrCreateAutomationSession,
     updateAutomationSession,
   } = await import("@/lib/automations/actions");
-  const { createInteractiveSession } = await import("@/lib/sessions/actions");
 
   // Normalize the event
   const prEvent = normalizePREvent(
@@ -159,57 +157,44 @@ async function dispatchContinuousReview(
   // Scope key: unique per automation + PR
   const scopeKey = `github-pr:${automation.repositoryId}:${prEvent.prNumber}`;
 
-  // Find or create automation session
-  let automationSession = await findAutomationSessionByScope(automation.id, scopeKey);
-  console.log("[router] Automation session lookup:", { scopeKey, found: !!automationSession, sessionId: automationSession?.id });
-
-  if (!automationSession) {
-    // PR closed without an existing session — nothing to do
-    if (!prEvent.isOpen) return false;
-
-    // Create a new interactive session for this PR
-    const interactiveSession = await createInteractiveSession({
-      organizationId: orgId,
-      createdBy: "automation",
-      agentType: automation.agentType ?? "claude",
-      agentSecretId: automation.agentSecretId ?? undefined,
-      repositoryId: automation.repositoryId,
-      prompt: "(initial PR review — prompt will be sent by orchestrator)",
-    });
-
-    automationSession = await createAutomationSession({
-      automationId: automation.id,
-      interactiveSessionId: interactiveSession.id,
-      organizationId: orgId,
-      repositoryId: automation.repositoryId,
-      scopeKey,
-      metadata: {
-        repositoryOwner: prEvent.owner,
-        repositoryName: prEvent.repo,
-        prNumber: prEvent.prNumber,
-        baseRef: prEvent.baseRef,
-        baseSha: prEvent.baseSha,
-        headRef: prEvent.headRef,
-        headSha: prEvent.headSha,
-        lastReviewedSha: null,
-        reviewState: null,
-        reviewCount: 0,
-        lastCommentId: null,
-        lastCheckRunId: null,
-        lastCompletedRunId: null,
-        pendingReviewRequest: null,
-      },
-    });
-  }
-
-  // Handle PR closed/merged
+  // PR closed without an existing session — nothing to do
   if (!prEvent.isOpen) {
-    await updateAutomationSession(automationSession.id, {
+    const { findAutomationSessionByScope } = await import("@/lib/automations/actions");
+    const existing = await findAutomationSessionByScope(automation.id, scopeKey);
+    if (!existing) return false;
+    await updateAutomationSession(existing.id, {
       status: "closed",
       endedAt: new Date(),
     });
     return false;
   }
+
+  // Find or create automation session (race-safe)
+  const { automationSession, created } = await findOrCreateAutomationSession({
+    automationId: automation.id,
+    organizationId: orgId,
+    repositoryId: automation.repositoryId,
+    scopeKey,
+    agentType: automation.agentType ?? "claude",
+    agentSecretId: automation.agentSecretId ?? undefined,
+    metadata: {
+      repositoryOwner: prEvent.owner,
+      repositoryName: prEvent.repo,
+      prNumber: prEvent.prNumber,
+      baseRef: prEvent.baseRef,
+      baseSha: prEvent.baseSha,
+      headRef: prEvent.headRef,
+      headSha: prEvent.headSha,
+      lastReviewedSha: null,
+      reviewState: null,
+      reviewCount: 0,
+      lastCommentId: null,
+      lastCheckRunId: null,
+      lastCompletedRunId: null,
+      pendingReviewRequest: null,
+    },
+  });
+  console.log("[router] Automation session:", { scopeKey, created, sessionId: automationSession.id });
 
   console.log("[router] Creating automation run + dispatching review for PR", prEvent.prNumber);
 
