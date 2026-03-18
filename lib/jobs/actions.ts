@@ -222,7 +222,7 @@ export async function getTimedOutJobs() {
     .from(jobs)
     .where(
       and(
-        inArray(jobs.status, ["accepted", "running"]),
+        inArray(jobs.status, ["pending", "accepted", "running"]),
         sql`${jobs.timeoutAt} < NOW()`,
       ),
     );

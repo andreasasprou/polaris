@@ -86,7 +86,7 @@ async function sweepTimedOutJobs(): Promise<number> {
   for (const job of jobs) {
     const updated = await casJobStatus(
       job.id,
-      ["accepted", "running"],
+      ["pending", "accepted", "running"],
       "failed_terminal",
     );
     if (updated) {
