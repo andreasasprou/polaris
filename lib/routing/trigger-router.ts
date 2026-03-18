@@ -47,11 +47,25 @@ export async function routeGitHubEvent(input: {
   const candidates = await findEnabledAutomationsByTrigger(orgId, "github");
   console.log(`[router] Found ${candidates.length} candidate automation(s) for org ${orgId}`);
 
+  // Extract webhook repository for filtering
+  const webhookRepo = input.payload.repository as { full_name?: string; owner?: { login?: string }; name?: string } | undefined;
+  const webhookRepoFullName = webhookRepo?.full_name
+    ?? (webhookRepo?.owner?.login && webhookRepo?.name ? `${webhookRepo.owner.login}/${webhookRepo.name}` : null);
+
   let triggered = 0;
 
   for (const automation of candidates) {
     const config = automation.triggerConfig as unknown as GitHubTriggerConfig;
     const fullEvent = input.action ? `${input.eventType}.${input.action}` : input.eventType;
+
+    // Filter by repository — only trigger if the automation's repo matches the webhook's repo
+    if (automation.repoOwner && automation.repoName && webhookRepoFullName) {
+      const automationRepoFullName = `${automation.repoOwner}/${automation.repoName}`;
+      if (automationRepoFullName !== webhookRepoFullName) {
+        continue; // Silent skip — not this automation's repo
+      }
+    }
+
     if (!matchesGitHubTrigger(input.eventType, input.action, input.ref, config)) {
       console.log(`[router] Automation ${automation.id} (${automation.name}): event "${fullEvent}" does not match config`, config);
       continue;

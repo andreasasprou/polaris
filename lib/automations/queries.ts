@@ -38,8 +38,29 @@ export async function findEnabledAutomationsByTrigger(
   triggerType: string,
 ) {
   return db
-    .select()
+    .select({
+      id: automations.id,
+      organizationId: automations.organizationId,
+      name: automations.name,
+      triggerType: automations.triggerType,
+      triggerConfig: automations.triggerConfig,
+      prompt: automations.prompt,
+      agentType: automations.agentType,
+      model: automations.model,
+      agentMode: automations.agentMode,
+      repositoryId: automations.repositoryId,
+      agentSecretId: automations.agentSecretId,
+      mode: automations.mode,
+      modelParams: automations.modelParams,
+      prReviewConfig: automations.prReviewConfig,
+      maxDurationSeconds: automations.maxDurationSeconds,
+      enabled: automations.enabled,
+      // Repo info for filtering
+      repoOwner: repositories.owner,
+      repoName: repositories.name,
+    })
     .from(automations)
+    .leftJoin(repositories, eq(automations.repositoryId, repositories.id))
     .where(
       and(
         eq(automations.organizationId, organizationId),
