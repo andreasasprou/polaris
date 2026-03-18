@@ -225,9 +225,22 @@ async function sweepStaleReviewLocks(): Promise<number> {
 
   for (const lock of staleLocks) {
     await forceReleaseAutomationSessionLock(lock.automation_session_id);
+
+    // Also mark the stale run as failed so it doesn't block future sweeps
+    try {
+      const { updateAutomationRun } = await import("@/lib/automations/actions");
+      await updateAutomationRun(lock.review_lock_job_id, {
+        status: "failed",
+        error: "Sweeper: lock held too long without progress",
+        completedAt: new Date(),
+      });
+    } catch {
+      // Run may not exist or already terminal — best effort
+    }
+
     count++;
     console.log(
-      `[sweeper] Released stale review lock on ${lock.automation_session_id}`,
+      `[sweeper] Released stale review lock on ${lock.automation_session_id} (run ${lock.review_lock_job_id})`,
     );
   }
 

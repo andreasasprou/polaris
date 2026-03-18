@@ -340,6 +340,7 @@ export async function getStaleReviewLocks() {
       SELECT 1 FROM automation_runs ar
       WHERE ar.id = as2.review_lock_job_id::uuid
       AND ar.status IN ('pending', 'running')
+      AND ar.created_at > NOW() - INTERVAL '30 minutes'
     )
   `);
   return rows.rows as { automation_session_id: string; review_lock_job_id: string }[];
