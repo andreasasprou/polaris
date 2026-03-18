@@ -72,9 +72,11 @@ export async function casJobStatus(
 
 /**
  * Get the active (non-terminal) job for a session.
+ * failed_retryable is treated as terminal here because the session
+ * has already been healed to idle — the sweeper handles retry.
  */
 export async function getActiveJobForSession(sessionId: string) {
-  const terminalStatuses: JobStatus[] = ["completed", "failed_terminal", "cancelled"];
+  const terminalStatuses: JobStatus[] = ["completed", "failed_terminal", "failed_retryable", "cancelled"];
   const [row] = await db
     .select()
     .from(jobs)

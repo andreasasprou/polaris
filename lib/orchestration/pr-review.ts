@@ -376,10 +376,12 @@ export async function dispatchPrReview(
       });
 
       if (response.status === 202) {
+        // Set handedOff FIRST — the sandbox already owns execution.
+        // If updateAutomationRun throws below, we must NOT release the lock.
+        handedOff = true;
         await updateAutomationRun(automationRunId, {
           interactiveSessionId: targetSessionId,
-        });
-        handedOff = true; // Callback path owns the lock now
+        }).catch(() => {}); // best-effort metadata update
         return { jobId: job.id };
       }
 
@@ -392,9 +394,10 @@ export async function dispatchPrReview(
       throw new Error(`Proxy returned ${response.status}: ${body}`);
     } catch (err) {
       if (err instanceof Error && err.name === "TimeoutError") {
+        // Set handedOff FIRST — execution status is ambiguous, sweeper owns recovery.
+        handedOff = true;
         const { casAttemptStatus } = await import("@/lib/jobs/actions");
-        await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown");
-        handedOff = true; // Job exists, sweeper will handle lock cleanup
+        await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown").catch(() => {});
         return { jobId: job.id };
       }
       throw err;

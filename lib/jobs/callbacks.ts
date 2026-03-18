@@ -119,17 +119,17 @@ async function processCallback(input: {
         resultPayload: result,
         completedAt: new Date(),
       });
-      await casJobStatus(jobId, ["running", "accepted"], "agent_completed", {
+      // CAS job status — only proceed with session healing if this CAS
+      // succeeds, proving we own this transition (not a stale callback).
+      const completedJobRow = await casJobStatus(jobId, ["running", "accepted"], "agent_completed", {
         result,
       });
       await appendJobEvent(jobId, "agent_completed", attemptId);
 
-      // Transition session active → idle so it's available for next dispatch.
-      // Must happen before postprocessing (which may dispatch a queued review).
-      const completedJob = await getJob(jobId);
-      if (completedJob?.sessionId) {
+      if (completedJobRow?.sessionId) {
+        // We own the transition — safe to heal session
         const { casSessionStatus } = await import("@/lib/sessions/actions");
-        await casSessionStatus(completedJob.sessionId, ["active"], "idle");
+        await casSessionStatus(completedJobRow.sessionId, ["active"], "idle");
       }
 
       // Trigger post-processing (coding task PR creation, review comment, etc.)
@@ -158,18 +158,20 @@ async function processCallback(input: {
       const reason = payload.reason as string | undefined;
       const isRetryable = reason !== "user_stop";
 
+      // CAS job status — only heal session if CAS succeeds (ownership check).
+      let jobCasSucceeded = false;
       if (isRetryable) {
-        await casJobStatus(
+        jobCasSucceeded = !!(await casJobStatus(
           jobId,
           ["pending", "accepted", "running"],
           "failed_retryable",
-        );
+        ));
       } else {
-        await casJobStatus(
+        jobCasSucceeded = !!(await casJobStatus(
           jobId,
           ["pending", "accepted", "running"],
           "cancelled",
-        );
+        ));
       }
 
       await appendJobEvent(jobId, "failed", attemptId, {
@@ -177,8 +179,8 @@ async function processCallback(input: {
         reason,
       });
 
-      // Heal session so next dispatch can proceed
-      if (job.sessionId) {
+      // Only heal session if we actually transitioned the job (not a stale callback)
+      if (jobCasSucceeded && job.sessionId) {
         const { casSessionStatus } = await import("@/lib/sessions/actions");
         await casSessionStatus(job.sessionId, ["active"], "idle");
       }

@@ -324,9 +324,11 @@ export async function forceReleaseAutomationSessionLock(
 }
 
 /**
- * Find automation sessions with stale review locks — the lock references
- * a job or run that is terminal or doesn't exist.
- * Used by the sweeper.
+ * Find automation sessions with stale review locks.
+ *
+ * The lock column stores `automationRunId` (not job.id). A lock is stale when
+ * the referenced automation run is terminal or doesn't exist. We only check
+ * the automation_runs table since that's what the lock key references.
  */
 export async function getStaleReviewLocks() {
   const { sql } = await import("drizzle-orm");
@@ -334,11 +336,6 @@ export async function getStaleReviewLocks() {
     SELECT as2.id AS automation_session_id, as2.review_lock_job_id
     FROM automation_sessions as2
     WHERE as2.review_lock_job_id IS NOT NULL
-    AND NOT EXISTS (
-      SELECT 1 FROM jobs j
-      WHERE j.id = as2.review_lock_job_id::uuid
-      AND j.status NOT IN ('completed', 'failed_terminal', 'cancelled')
-    )
     AND NOT EXISTS (
       SELECT 1 FROM automation_runs ar
       WHERE ar.id = as2.review_lock_job_id::uuid
