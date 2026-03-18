@@ -10,8 +10,6 @@ import { VerdictBadge } from "@/components/verdict-badge";
 import { SessionChat } from "@/components/sessions/session-chat";
 import { useSessionChat } from "@/hooks/use-session-chat";
 
-const TERMINAL_SESSION_STATUSES = new Set(["stopped", "completed", "failed"]);
-
 type Run = {
   id: string;
   automationId: string;
@@ -134,7 +132,7 @@ export default function RunDetailPage() {
         {run.sdkSessionId ? (
           <RunSessionChat
             sdkSessionId={run.sdkSessionId}
-            sessionStatus={run.sessionStatus}
+            runStatus={run.status}
             runStartedAt={run.startedAt}
             runCompletedAt={run.completedAt}
           />
@@ -275,24 +273,27 @@ function MetadataCard({
 
 // ── Session chat ──
 
+const TERMINAL_RUN_STATUSES = new Set(["completed", "succeeded", "failed", "cancelled"]);
+
 function RunSessionChat({
   sdkSessionId,
-  sessionStatus,
+  runStatus,
   runStartedAt,
   runCompletedAt,
 }: {
   sdkSessionId: string;
-  sessionStatus: string | null;
+  runStatus: string;
   runStartedAt: string | null;
   runCompletedAt: string | null;
 }) {
-  const terminal = sessionStatus
-    ? TERMINAL_SESSION_STATUSES.has(sessionStatus)
-    : true;
+  // Derive terminal from the RUN status, not the shared session status.
+  // Multiple runs share one interactive session — a completed run should
+  // show as terminal even if the session is still active for another run.
+  const terminal = TERMINAL_RUN_STATUSES.has(runStatus);
 
   const chat = useSessionChat({
     sdkSessionId,
-    sessionStatus,
+    sessionStatus: terminal ? "completed" : "active",
     terminal,
     // Scope events to this run's time window so continuous-review runs
     // don't bleed into each other (many runs share one interactive session).
