@@ -1,0 +1,286 @@
+# @vercel/sandbox Reference — v1.8.0
+# Source: https://www.npmjs.com/package/@vercel/sandbox
+# Polaris usage: Creates isolated Linux MicroVMs for running coding agents (Claude, Codex, etc.)
+# Last updated: 2026-03-19
+# Locked version: 1.8.0
+
+## Quick Summary
+
+@vercel/sandbox provides isolated Linux MicroVMs (Vercel Sandbox) for running
+commands, managing files, and snapshotting state. Polaris uses it to provision
+ephemeral dev environments for AI coding agents. Key classes: Sandbox (VM
+lifecycle), Command/CommandFinished (command execution), NetworkPolicy (auth
+injection). Authentication uses VERCEL_TOKEN + VERCEL_TEAM_ID.
+
+## Used API Surface
+
+### Sandbox class
+
+```typescript
+// Static constructors
+static create(params?: CreateSandboxParams & Credentials): Promise<Sandbox & AsyncDisposable>;
+static get(params: GetSandboxParams & Credentials): Promise<Sandbox>;
+
+// Instance properties
+get sandboxId(): string;
+get status(): "aborted" | "pending" | "running" | "stopping" | "stopped" | "failed" | "snapshotting";
+get networkPolicy(): NetworkPolicy | undefined;
+
+// Command execution (3 overloads)
+runCommand(command: string, args?: string[], opts?: { signal?: AbortSignal }): Promise<CommandFinished>;
+runCommand(params: RunCommandParams & { detached: true }): Promise<Command>;
+runCommand(params: RunCommandParams): Promise<CommandFinished>;
+
+// File operations
+writeFiles(files: { path: string; content: Buffer }[], opts?: { signal?: AbortSignal }): Promise<void>;
+
+// Network
+domain(p: number): string;  // Returns full https:// URL for exposed port
+updateNetworkPolicy(networkPolicy: NetworkPolicy, opts?: { signal?: AbortSignal }): Promise<NetworkPolicy>;
+
+// Lifecycle
+stop(opts?: { signal?: AbortSignal; blocking?: boolean }): Promise<ConvertedSandbox>;
+extendTimeout(duration: number, opts?: { signal?: AbortSignal }): Promise<void>;
+snapshot(opts?: { expiration?: number; signal?: AbortSignal }): Promise<Snapshot>;
+```
+
+### CreateSandboxParams
+
+```typescript
+interface BaseCreateSandboxParams {
+  source?:
+    | { type: "git"; url: string; depth?: number; revision?: string }
+    | { type: "git"; url: string; username: string; password: string; depth?: number; revision?: string }
+    | { type: "tarball"; url: string };
+  ports?: number[];          // Up to 4 ports
+  timeout?: number;          // Milliseconds before auto-terminate
+  resources?: { vcpus: number };  // Memory = 2048 MB per vCPU
+  runtime?: "node24" | "node22" | "python3.13";  // Default: "node24"
+  networkPolicy?: NetworkPolicy;
+  env?: Record<string, string>;
+  signal?: AbortSignal;
+}
+
+// Snapshot source variant (no runtime/source override)
+type CreateSandboxParams = BaseCreateSandboxParams | {
+  source: { type: "snapshot"; snapshotId: string };
+  // ... same fields minus runtime
+};
+```
+
+### RunCommandParams
+
+```typescript
+interface RunCommandParams {
+  cmd: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  sudo?: boolean;               // Default: false
+  detached?: boolean;           // If true, returns Command (not CommandFinished)
+  stdout?: Writable;            // Pipe stdout to stream
+  stderr?: Writable;            // Pipe stderr to stream
+  signal?: AbortSignal;
+}
+```
+
+### Command / CommandFinished
+
+```typescript
+class Command {
+  get cmdId(): string;
+  exitCode: number | null;     // null until command finishes
+
+  // OUTPUT METHODS — these are async! Return Promise<string>, NOT string.
+  stdout(opts?: { signal?: AbortSignal }): Promise<string>;
+  stderr(opts?: { signal?: AbortSignal }): Promise<string>;
+  output(stream?: "stdout" | "stderr" | "both", opts?: { signal?: AbortSignal }): Promise<string>;
+
+  // Iteration
+  logs(opts?: { signal?: AbortSignal }): AsyncGenerator<{ data: string; stream: "stdout" | "stderr" }>;
+
+  // Lifecycle
+  wait(params?: { signal?: AbortSignal }): Promise<CommandFinished>;
+  kill(signal?: Signal, opts?: { abortSignal?: AbortSignal }): Promise<void>;
+}
+
+class CommandFinished extends Command {
+  exitCode: number;  // Always populated (not null)
+  // stdout(), stderr() still async — inherited from Command
+}
+```
+
+### NetworkPolicy types
+
+```typescript
+type NetworkPolicy = "allow-all" | "deny-all" | {
+  allow?: string[] | Record<string, NetworkPolicyRule[]>;
+  subnets?: {
+    allow?: string[];
+    deny?: string[];
+  };
+};
+
+type NetworkPolicyRule = {
+  transform?: NetworkTransformer[];
+};
+
+type NetworkTransformer = {
+  headers?: Record<string, string>;
+};
+```
+
+### Snapshot class
+
+```typescript
+class Snapshot {
+  get snapshotId(): string;
+  get sourceSandboxId(): string;
+  get status(): "failed" | "created" | "deleted";
+  get sizeBytes(): number;
+  get createdAt(): Date;
+  get expiresAt(): Date | undefined;
+  delete(opts?: { signal?: AbortSignal }): Promise<void>;
+}
+```
+
+## Polaris Usage Patterns
+
+### Sandbox creation with git source (lib/sandbox/SandboxManager.ts)
+
+```typescript
+// Git source — credentials via source.password (platform-level clone)
+const sandbox = await Sandbox.create({
+  token: process.env.VERCEL_TOKEN,
+  teamId: process.env.VERCEL_TEAM_ID,
+  projectId: process.env.VERCEL_PROJECT_ID,
+  timeout: 600_000,
+  runtime: "node24",
+  ports: [2468, 2469],
+  env: { ... },
+  networkPolicy: buildGitNetworkPolicy(gitToken),  // Inject auth at network level
+  source: {
+    type: "git",
+    url: repoUrl,
+    username: "x-access-token",
+    password: gitToken,
+    revision: baseBranch,
+  },
+});
+```
+
+### Sandbox creation from snapshot (lib/sandbox/SandboxManager.ts)
+
+```typescript
+const sandbox = await Sandbox.create({
+  token, teamId, projectId, timeout, ports, env,
+  networkPolicy: buildGitNetworkPolicy(gitToken),
+  source: { type: "snapshot", snapshotId },
+});
+```
+
+### Running commands (lib/sandbox/SandboxCommands.ts)
+
+```typescript
+// Non-detached: returns CommandFinished
+const result = await sandbox.runCommand({ cmd, args, cwd, env });
+// IMPORTANT: stdout/stderr are async methods!
+const stdout = await result.stdout();
+const stderr = await result.stderr();
+const exitCode = result.exitCode; // number, always populated
+
+// Detached: returns Command (server stays in background)
+const cmd = await sandbox.runCommand({ cmd: "sh", args: [...], detached: true });
+```
+
+### NetworkPolicy with git auth injection (lib/sandbox/SandboxManager.ts)
+
+```typescript
+function buildGitNetworkPolicy(gitToken: string): NetworkPolicy {
+  const basicAuth = Buffer.from(`x-access-token:${gitToken}`).toString("base64");
+  const rule = [{ transform: [{ headers: { Authorization: `Basic ${basicAuth}` } }] }];
+  return {
+    allow: {
+      "github.com": rule,
+      "*.github.com": rule,
+      "*": [],  // allow all other traffic
+    },
+  };
+}
+```
+
+### Token refresh via updateNetworkPolicy (lib/sandbox/SandboxManager.ts)
+
+```typescript
+await sandbox.updateNetworkPolicy(buildGitNetworkPolicy(newGitToken));
+```
+
+### Getting domain URL for exposed ports (lib/sandbox-agent/SandboxAgentBootstrap.ts)
+
+```typescript
+const serverUrl = sandbox.domain(2468);
+// Returns: "https://<sandbox-id>.sbx.vercel.app:2468"
+```
+
+### Snapshotting for hibernation (lib/sandbox/SandboxManager.ts)
+
+```typescript
+const result = await sandbox.snapshot();
+// result.snapshotId, result.sizeBytes
+// NOTE: snapshot() stops the sandbox automatically
+```
+
+## Gotchas & Hard-Won Knowledge
+
+### 1. stdout() and stderr() are async methods, not properties
+WRONG: `result.stdout` (returns Promise object, not string)
+RIGHT: `await result.stdout()` (returns string)
+Both Command and CommandFinished inherit this async pattern. This is the #1
+source of agent confusion.
+
+### 2. git push writes progress to stderr on SUCCESS
+`git push` outputs transfer progress to stderr even when exitCode === 0.
+Always check `exitCode`, never treat non-empty stderr as an error.
+See: lib/sandbox/GitOperations.ts push() method.
+
+### 3. writeFiles() uses tar extraction — rejects paths outside project dir
+`sandbox.writeFiles()` internally uses tar extraction. Paths that resolve
+outside `/vercel/sandbox` (the project directory) cause tar to exit with
+code 2. For writing to arbitrary locations (e.g. `$HOME/.codex/auth.json`),
+use shell commands via runCommand() instead.
+See: lib/sandbox-agent/SandboxAgentBootstrap.ts provisionCredentialFiles().
+
+### 4. NetworkPolicy requires Basic auth for git HTTPS (not Bearer)
+Git protocol over HTTPS requires `Basic base64(x-access-token:<token>)`.
+Bearer tokens only work for GitHub REST/GraphQL API endpoints.
+Using Bearer for git clone/push/fetch will fail silently with auth errors.
+
+### 5. detached: true returns Command, not CommandFinished
+When `detached: true`, you get a `Command` with `exitCode: null`.
+The command runs in the background. Use `command.wait()` to get the
+CommandFinished with a real exit code. Polaris uses detached mode for
+starting the sandbox-agent server and REST proxy.
+
+### 6. source.username required alongside source.password for git
+The git source type has two variants: one with just url, one with
+url + username + password. You must pass `username: "x-access-token"`
+alongside `password: gitToken` — omitting username causes auth failure.
+
+### 7. sandbox.domain() returns full https:// URL
+`sandbox.domain(port)` returns something like `https://abc123.sbx.vercel.app:2468`,
+NOT just a hostname. No need to prepend https://.
+
+### 8. snapshot() stops the sandbox
+Creating a snapshot automatically stops the sandbox. You cannot continue
+using the sandbox after calling snapshot(). Plan lifecycle accordingly.
+
+## What NOT To Do
+
+- DO NOT access `.stdout` as a property — it is a method: `await result.stdout()`.
+- DO NOT use Bearer auth in NetworkPolicy for git operations — use Basic auth.
+- DO NOT use `writeFiles()` for paths outside the project directory — use shell commands.
+- DO NOT check stderr to determine if git push failed — check exitCode.
+- DO NOT forget `username: "x-access-token"` when using password-authenticated git source.
+- DO NOT call methods on a sandbox after `snapshot()` — it stops the sandbox.
+- DO NOT pass `detached: true` and then read `exitCode` immediately — it will be null.
+- DO NOT omit `token`/`teamId` from Sandbox.create/get — they are required in production.

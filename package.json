@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "check:reference-docs": "tsx scripts/check-reference-versions.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",

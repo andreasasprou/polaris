@@ -33,6 +33,13 @@ When making changes to session lifecycle, UI, or sandbox interaction code:
 - Chat input should be disabled with appropriate placeholder
 - No infinite polling — `pollIntervalMs` should be `0`
 
+## Reference Documentation
+
+Working with niche dependencies? Read the reference doc first:
+- Vercel Sandbox: `docs/references/vercel-sandbox-llms.txt`
+- Sandbox Agent: `docs/references/sandbox-agent-llms.txt`
+- ACP HTTP Client: `docs/references/acp-http-client-llms.txt`
+
 ## Key Commands
 
 - `pnpm typecheck` — must pass before considering work complete
