@@ -275,7 +275,7 @@ This prevents review gaps — a failed review will be retried as a full review o
 
 ## 4. Session Dispatch (Tier System)
 
-**File:** `lib/sessions/prompt-dispatch.ts`
+**File:** `lib/orchestration/prompt-dispatch.ts`
 
 Extracted from the API route, shared by both the UI prompt endpoint and the orchestrator task.
 
@@ -579,7 +579,7 @@ The `requestId` flows from the orchestrator → dispatch → task payload → tu
 |------|-------|-------------|
 | `trigger/continuous-pr-review.ts` | ~350 | `continuousPrReviewTask` — Trigger.dev task |
 | `lib/routing/trigger-router.ts` | ~120 | `routeGitHubEvent()` — webhook dispatcher |
-| `lib/sessions/prompt-dispatch.ts` | ~300 | `dispatchPromptToSession()` — tier routing |
+| `lib/orchestration/prompt-dispatch.ts` | ~300 | `dispatchPromptToSession()` — tier routing |
 | `lib/automations/schema.ts` | ~200 | `automations`, `automationRuns`, `automationSessions` tables |
 | `lib/automations/actions.ts` | ~250 | Session CRUD, lock acquire/release, pending queue |
 | `lib/sessions/schema.ts` | ~150 | `interactiveSessions`, `interactiveSessionTurns` tables |

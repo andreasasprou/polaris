@@ -17,7 +17,7 @@ import {
   casSessionStatus,
   getInteractiveSessionForOrg,
   createTurn,
-} from "./actions";
+} from "@/lib/sessions/actions";
 import { ensureSandboxReady } from "./sandbox-lifecycle";
 
 export type DispatchResult = {

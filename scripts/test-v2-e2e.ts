@@ -198,7 +198,7 @@ async function testCallbackIngestion() {
   console.log("\n── Callback Ingestion ──");
 
   const { createJob, createJobAttempt, getJob } = await import("../lib/jobs/actions");
-  const { ingestCallback } = await import("../lib/jobs/callbacks");
+  const { ingestCallback } = await import("../lib/orchestration/callback-processor");
   const { generateJobHmacKey } = await import("../lib/jobs/callback-auth");
 
   const orgId = `test-org-${randomUUID().slice(0, 8)}`;
@@ -303,8 +303,7 @@ async function testCallbackIngestion() {
 
   await test("Stale epoch rejected", async () => {
     // Create a session with epoch > 1
-    const { createInteractiveSession } = await import("../lib/sessions/actions");
-    const { incrementEpoch } = await import("../lib/jobs/actions");
+    const { createInteractiveSession, incrementEpoch } = await import("../lib/sessions/actions");
 
     const session = await createInteractiveSession({
       organizationId: orgId,
@@ -388,8 +387,8 @@ async function testSessionLifecycle() {
     createRuntime,
     endStaleRuntimes,
     getActiveRuntime,
+    incrementEpoch,
   } = await import("../lib/sessions/actions");
-  const { incrementEpoch } = await import("../lib/jobs/actions");
 
   const orgId = `test-org-${randomUUID().slice(0, 8)}`;
 
@@ -526,7 +525,7 @@ async function testSweeper() {
   });
 
   await test("Run full sweep cycle", async () => {
-    const { runSweep } = await import("../lib/jobs/sweeper");
+    const { runSweep } = await import("../lib/orchestration/sweeper");
     const result = await runSweep();
     assert(
       typeof result.timedOut === "number" &&
@@ -980,7 +979,7 @@ async function testPostProcessingStateMachine() {
   console.log("\n── Post-Processing State Machine ──");
 
   const { createJob, casJobStatus, getJob } = await import("../lib/jobs/actions");
-  const { runPostProcessing } = await import("../lib/jobs/postprocess");
+  const { runPostProcessing } = await import("../lib/orchestration/postprocess");
 
   const orgId = `test-org-${randomUUID().slice(0, 8)}`;
 
@@ -1040,7 +1039,7 @@ async function testPostProcessingStateMachine() {
 
   await test("full callback→postprocess flow via ingestCallback", async () => {
     const { createJobAttempt } = await import("../lib/jobs/actions");
-    const { ingestCallback } = await import("../lib/jobs/callbacks");
+    const { ingestCallback } = await import("../lib/orchestration/callback-processor");
     const { generateJobHmacKey } = await import("../lib/jobs/callback-auth");
 
     const job = await createJob({
@@ -1481,7 +1480,7 @@ async function testHITLCallbackFlow() {
   console.log("\n── HITL Callback Flow ──");
 
   const { createJob, createJobAttempt, getJob } = await import("../lib/jobs/actions");
-  const { ingestCallback } = await import("../lib/jobs/callbacks");
+  const { ingestCallback } = await import("../lib/orchestration/callback-processor");
   const { generateJobHmacKey } = await import("../lib/jobs/callback-auth");
 
   const orgId = `test-org-${randomUUID().slice(0, 8)}`;

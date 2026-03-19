@@ -1,14 +1,14 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { interactiveSessions } from "@/lib/sessions/schema";
-import { callbackInbox, jobs } from "./schema";
+import { callbackInbox, jobs } from "@/lib/jobs/schema";
 import {
   casJobStatus,
   casAttemptStatus,
   appendJobEvent,
   getJob,
-} from "./actions";
-import type { CallbackType } from "./status";
+} from "@/lib/jobs/actions";
+import type { CallbackType } from "@/lib/jobs/status";
 
 type IngestResult =
   | { accepted: true }

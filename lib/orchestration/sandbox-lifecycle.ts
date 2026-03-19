@@ -2,7 +2,6 @@
  * Sandbox Lifecycle Management — v2
  *
  * Manages sandbox provisioning, hibernation, and destruction.
- * Replaces the sandbox lifecycle logic from trigger/interactive-session.ts.
  *
  * Key flows:
  * - ensureSandboxReady: create/restore sandbox, bootstrap agent + proxy
@@ -17,9 +16,9 @@ import { GitOperations } from "@/lib/sandbox/GitOperations";
 import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap";
 import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import type { AgentType } from "@/lib/sandbox-agent/types";
-import { incrementEpoch } from "@/lib/jobs/actions";
 import { useLogger } from "@/lib/evlog";
 import {
+  incrementEpoch,
   getInteractiveSession,
   updateInteractiveSession,
   casSessionStatus,
@@ -29,7 +28,7 @@ import {
   updateRuntime,
   getCheckpoint,
   hibernateSession,
-} from "./actions";
+} from "@/lib/sessions/actions";
 
 const sandboxManager = new SandboxManager();
 

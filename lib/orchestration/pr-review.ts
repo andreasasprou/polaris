@@ -318,7 +318,7 @@ export async function dispatchPrReview(
     });
 
     // Shared primitives
-    const { probeSandboxHealth, buildCallbackUrl } = await import("@/lib/sessions/prompt-dispatch");
+    const { probeSandboxHealth, buildCallbackUrl } = await import("./prompt-dispatch");
     const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
     const callbackUrl = buildCallbackUrl();
 
@@ -340,10 +340,10 @@ export async function dispatchPrReview(
 
       if (!alive) {
         log.set({ dispatch: { [`attempt_${i}_reprovisioning`]: true } });
-        const { resolveSessionCredentials } = await import("@/lib/sessions/prompt-dispatch");
+        const { resolveSessionCredentials } = await import("./prompt-dispatch");
         const creds = await resolveSessionCredentials(session);
 
-        const { ensureSandboxReady } = await import("@/lib/sessions/sandbox-lifecycle");
+        const { ensureSandboxReady } = await import("./sandbox-lifecycle");
         const result = await ensureSandboxReady(targetSessionId, {
           agentApiKey: creds.agentApiKey,
           agentType: session.agentType as AgentType,

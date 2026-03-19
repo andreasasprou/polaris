@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runSweep } from "@/lib/jobs/sweeper";
+import { runSweep } from "@/lib/orchestration/sweeper";
 import { withEvlog, useLogger } from "@/lib/evlog";
 
 // Vercel Cron handler — runs every 2 minutes.

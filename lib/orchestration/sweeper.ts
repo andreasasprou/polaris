@@ -22,7 +22,7 @@ import {
   casJobStatus,
   casAttemptStatus,
   appendJobEvent,
-} from "./actions";
+} from "@/lib/jobs/actions";
 import { runPostProcessing } from "./postprocess";
 import { useLogger } from "@/lib/evlog";
 
@@ -264,7 +264,7 @@ async function sweepRetryableJobs(): Promise<number> {
   let count = 0;
 
   for (const job of retryableJobs) {
-    const { getAttemptsByJob } = await import("./actions");
+    const { getAttemptsByJob } = await import("@/lib/jobs/actions");
     const attempts = await getAttemptsByJob(job.id);
 
     if (attempts.length >= job.maxAttempts) {
@@ -334,7 +334,7 @@ async function retryReviewDispatch(
     getInteractiveSession,
     casSessionStatus,
   } = await import("@/lib/sessions/actions");
-  const { createJobAttempt } = await import("./actions");
+  const { createJobAttempt } = await import("@/lib/jobs/actions");
 
   const payload = job.payload;
   const automationSessionId = payload.automationSessionId as string;
@@ -372,8 +372,8 @@ async function retryReviewDispatch(
     if (!session) throw new Error("Session not found");
 
     const { probeSandboxHealth, buildCallbackUrl, resolveSessionCredentials } =
-      await import("@/lib/sessions/prompt-dispatch");
-    const { ensureSandboxReady } = await import("@/lib/sessions/sandbox-lifecycle");
+      await import("./prompt-dispatch");
+    const { ensureSandboxReady } = await import("./sandbox-lifecycle");
     const { resolveAgentConfig } = await import("@/lib/sandbox-agent/agent-profiles");
     const { generateJobHmacKey } = await import("@/lib/jobs/callback-auth");
 
@@ -518,7 +518,7 @@ async function finalizeFailedReviewJob(
   // Release lock + drain pending queue
   if (automationSessionId && automationRunId) {
     try {
-      const { finalizeReviewRun } = await import("@/lib/orchestration/review-lifecycle");
+      const { finalizeReviewRun } = await import("./review-lifecycle");
       await finalizeReviewRun({
         automationSessionId,
         automationRunId,

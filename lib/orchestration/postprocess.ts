@@ -8,8 +8,8 @@
  * On failure, job stays in postprocess_pending for sweeper retry.
  */
 
-import { casJobStatus, getJob } from "./actions";
-import type { JobStatus } from "./status";
+import { casJobStatus, getJob } from "@/lib/jobs/actions";
+import type { JobStatus } from "@/lib/jobs/status";
 import { useLogger } from "@/lib/evlog";
 
 // ── Main Dispatch ──
@@ -144,7 +144,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
 
     if (job.automationId && changes.changed) {
       try {
-        const { resolveCredentials } = await import("@/lib/credentials/resolver");
+        const { resolveCredentials } = await import("./credential-resolver");
         const creds = await resolveCredentials(job.automationId);
         if (
           creds?.provider === "anthropic" &&
@@ -152,7 +152,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
         ) {
           const metadataCtx = { apiKey: creds.agentApiKey, provider: creds.provider };
           const { generateCommitMessage, generatePrTitle } = await import(
-            "@/lib/orchestration/metadata"
+            "./metadata"
           );
           const [cmResult, prResult] = await Promise.allSettled([
             generateCommitMessage(title, changes.diffSummary, changes.filesChanged, metadataCtx),
@@ -423,7 +423,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
     // 7. Release lock + dispatch queued review (always runs)
     if (automationSessionId) {
       const { finalizeReviewRun } = await import(
-        "@/lib/orchestration/review-lifecycle"
+        "./review-lifecycle"
       );
       await finalizeReviewRun({
         automationSessionId,
@@ -447,7 +447,7 @@ async function markSideEffect(
   effectName: string,
 ): Promise<void> {
   const { db } = await import("@/lib/db");
-  const { jobs } = await import("./schema");
+  const { jobs } = await import("@/lib/jobs/schema");
   const { eq, sql } = await import("drizzle-orm");
 
   await db

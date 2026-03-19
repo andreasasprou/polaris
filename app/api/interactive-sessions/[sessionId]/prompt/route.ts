@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { RequestError } from "@/lib/errors/request-error";
 import { getInteractiveSessionForOrg } from "@/lib/sessions/actions";
-import { dispatchPromptToSession } from "@/lib/sessions/prompt-dispatch";
+import { dispatchPromptToSession } from "@/lib/orchestration/prompt-dispatch";
 import { withEvlog } from "@/lib/evlog";
 
 /**

@@ -110,7 +110,7 @@ export const DELETE = withEvlog(async (
       }).catch(() => {});
     }
 
-    const { destroySandbox } = await import("@/lib/sessions/sandbox-lifecycle");
+    const { destroySandbox } = await import("@/lib/orchestration/sandbox-lifecycle");
     await destroySandbox(sessionId);
 
     return NextResponse.json({ ok: true, terminated: true });

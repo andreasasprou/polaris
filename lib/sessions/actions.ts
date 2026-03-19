@@ -186,6 +186,22 @@ export async function getStaleActiveSessions() {
   return rows.rows as { id: string }[];
 }
 
+// ── Epoch ──
+
+/**
+ * Atomically increment the session epoch and return the new value.
+ * Used when creating/restoring a sandbox to invalidate stale callbacks.
+ */
+export async function incrementEpoch(sessionId: string): Promise<number> {
+  const [row] = await db
+    .update(interactiveSessions)
+    .set({ epoch: sql`epoch + 1` })
+    .where(eq(interactiveSessions.id, sessionId))
+    .returning({ epoch: interactiveSessions.epoch });
+  if (!row) throw new Error(`Session not found: ${sessionId}`);
+  return row.epoch;
+}
+
 /**
  * Get the most recent runtime for a session (any status).
  * Used for log retrieval — logs may be available even after runtime ends.
