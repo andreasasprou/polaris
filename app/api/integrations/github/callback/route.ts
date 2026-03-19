@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { APIError } from "better-auth";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { hasOrganizationMembership } from "@/lib/auth/session";
+import { getAppBaseUrl } from "@/lib/config/urls";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
 import { createGitHubApp } from "@/lib/integrations/github";
@@ -24,11 +25,10 @@ function redirectWithError(baseUrl: string, path: string, error: string) {
   return NextResponse.redirect(new URL(`${path}?error=${error}`, baseUrl));
 }
 
-export const GET = withEvlog(async (req: Request) => {
-  const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  const url = new URL(req.url);
-  const installationIdParam = url.searchParams.get("installation_id");
-  const state = url.searchParams.get("state");
+export const GET = withEvlog(async (req: NextRequest) => {
+  const baseUrl = getAppBaseUrl();
+  const installationIdParam = req.nextUrl.searchParams.get("installation_id");
+  const state = req.nextUrl.searchParams.get("state");
 
   const installationId = Number(installationIdParam);
   if (

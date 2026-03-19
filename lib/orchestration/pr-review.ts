@@ -33,7 +33,7 @@ export type DispatchPrReviewInput = {
 
 export async function dispatchPrReview(
   input: DispatchPrReviewInput,
-): Promise<{ jobId: string; queued?: boolean }> {
+): Promise<{ jobId: string; queued?: boolean; retryDeferred?: boolean }> {
   const {
     orgId,
     automationId,
@@ -188,13 +188,23 @@ export async function dispatchPrReview(
 
     const reviewSequence = (sessionMetadata.reviewCount ?? 0) + 1;
 
-    const [allFiles, guidelines] = await Promise.all([
+    const { fetchPRDiff, fetchCommitRangeDiff } = await import("@/lib/reviews/diff");
+
+    const [allFiles, guidelines, diffResult] = await Promise.all([
       fetchPRFileList(octokit, event.owner, event.repo, event.prNumber, {
         maxFiles: config.maxPromptFiles,
       }),
       loadRepoGuidelines(octokit, event.owner, event.repo, toSha, [], {
         maxBytes: config.maxGuidelinesBytes,
       }),
+      reviewScope === "incremental" && fromSha
+        ? fetchCommitRangeDiff(octokit, event.owner, event.repo, fromSha, toSha, {
+            maxBytes: config.maxPromptDiffBytes,
+          })
+        : fetchPRDiff(octokit, event.owner, event.repo, event.prNumber, {
+            maxBytes: config.maxPromptDiffBytes,
+            maxFiles: config.maxPromptFiles,
+          }),
     ]);
 
     const filteredFiles = filterIgnoredPaths(allFiles, config.ignorePaths ?? []);
@@ -213,6 +223,10 @@ export async function dispatchPrReview(
       reviewSequence,
       fromSha,
       toSha,
+      diffPrepared: {
+        filePath: "/tmp/review-diff.patch",
+        truncated: diffResult.truncated,
+      },
     });
 
     await updateAutomationRun(automationRunId, {
@@ -263,61 +277,7 @@ export async function dispatchPrReview(
       throw new Error(`Cannot dispatch to session ${targetSessionId}: status is ${session.status}`);
     }
 
-    let sandboxBaseUrl = session.sandboxBaseUrl;
-    let epoch = session.epoch;
-    let sandboxId = session.sandboxId;
-
-    // Check if sandbox is alive — validate response body, not just status.
-    // Stopped Vercel sandboxes return 200 with HTML, not JSON.
-    let sandboxAlive = false;
-    let healthCheckDetail: Record<string, unknown> = {};
-    if (sandboxBaseUrl) {
-      try {
-        const resp = await fetch(`${sandboxBaseUrl}/health`, {
-          signal: AbortSignal.timeout(5_000),
-        });
-        const contentType = resp.headers.get("content-type");
-        if (resp.ok) {
-          const body = await resp.json().catch(() => null);
-          sandboxAlive = body?.ok === true;
-          healthCheckDetail = { status: resp.status, contentType, jsonOk: body?.ok, alive: sandboxAlive };
-        } else {
-          healthCheckDetail = { status: resp.status, contentType, alive: false };
-        }
-      } catch (err) {
-        sandboxAlive = false;
-        healthCheckDetail = { error: err instanceof Error ? err.message : String(err), alive: false };
-      }
-    } else {
-      healthCheckDetail = { noUrl: true, alive: false };
-    }
-    log.set({ dispatch: { sandboxHealth: healthCheckDetail, sandboxId } });
-
-    if (!sandboxAlive) {
-      log.set({ dispatch: { reprovisioning: true } });
-      const { resolveSessionCredentials } = await import("@/lib/sessions/prompt-dispatch");
-      const creds = await resolveSessionCredentials(session);
-
-      const { ensureSandboxReady } = await import("@/lib/sessions/sandbox-lifecycle");
-      const result = await ensureSandboxReady(targetSessionId, {
-        agentApiKey: creds.agentApiKey,
-        agentType: session.agentType as AgentType,
-        repositoryOwner: creds.repositoryOwner,
-        repositoryName: creds.repositoryName,
-        defaultBranch: creds.defaultBranch,
-        githubInstallationId: creds.githubInstallationId,
-      });
-      sandboxBaseUrl = result.proxyBaseUrl;
-      epoch = result.epoch;
-      sandboxId = result.sandboxId;
-      log.set({ dispatch: { reprovisionedSandboxId: sandboxId, newProxyUrl: sandboxBaseUrl } });
-    }
-
-    if (!sandboxBaseUrl) {
-      throw new Error("No sandbox URL available after provisioning");
-    }
-
-    // Create review job
+    // 8. Create review job (before dispatch loop — job is the durable boundary)
     const hmacKey = generateJobHmacKey();
     const job = await createJob({
       organizationId: orgId,
@@ -340,7 +300,6 @@ export async function dispatchPrReview(
         reviewScope,
         lastCommentId: sessionMetadata.lastCommentId,
         normalizedEvent: event,
-        sandboxId,
       },
       timeoutSeconds: 1800,
     });
@@ -348,13 +307,6 @@ export async function dispatchPrReview(
     if (!job) {
       throw new Error(`Job already exists for review request review-${automationRunId}`);
     }
-
-    const attempt = await createJobAttempt({
-      jobId: job.id,
-      attemptNumber: 1,
-      epoch,
-      sandboxId: sandboxId ?? undefined,
-    });
 
     // Resolve agent config
     const agentType = (automation.agentType ?? "claude") as AgentType;
@@ -365,20 +317,62 @@ export async function dispatchPrReview(
       effortLevel: automation.modelParams?.effortLevel,
     });
 
-    // POST /prompt to sandbox proxy
-    const proxyUrl = sandboxBaseUrl;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
-    const callbackUrl = appUrl
-      ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/api/callbacks`
-      : "http://localhost:3001/api/callbacks";
+    // Shared primitives
+    const { probeSandboxHealth, buildCallbackUrl } = await import("@/lib/sessions/prompt-dispatch");
+    const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
+    const callbackUrl = buildCallbackUrl();
 
-    log.set({ dispatch: { proxyUrl, callbackUrl, jobId: job.id, agent: resolved.agent } });
+    log.set({ dispatch: { callbackUrl, jobId: job.id, agent: resolved.agent } });
 
-    try {
+    // 9. Dispatch with inline retry — health check adjacent to POST
+    let currentSandboxUrl = session.sandboxBaseUrl;
+    let currentEpoch = session.epoch;
+    let currentSandboxId = session.sandboxId;
+    const MAX_INLINE_ATTEMPTS = 2;
+
+    for (let i = 1; i <= MAX_INLINE_ATTEMPTS; i++) {
+      // Health check right before POST (no metadata gap)
+      const alive = currentSandboxUrl
+        ? await probeSandboxHealth(currentSandboxUrl)
+        : false;
+
+      log.set({ dispatch: { [`attempt_${i}_health`]: { alive, sandboxId: currentSandboxId, sandboxUrl: currentSandboxUrl ? "set" : "none" } } });
+
+      if (!alive) {
+        log.set({ dispatch: { [`attempt_${i}_reprovisioning`]: true } });
+        const { resolveSessionCredentials } = await import("@/lib/sessions/prompt-dispatch");
+        const creds = await resolveSessionCredentials(session);
+
+        const { ensureSandboxReady } = await import("@/lib/sessions/sandbox-lifecycle");
+        const result = await ensureSandboxReady(targetSessionId, {
+          agentApiKey: creds.agentApiKey,
+          agentType: session.agentType as AgentType,
+          repositoryOwner: creds.repositoryOwner,
+          repositoryName: creds.repositoryName,
+          defaultBranch: creds.defaultBranch,
+          githubInstallationId: creds.githubInstallationId,
+        });
+        currentSandboxUrl = result.proxyBaseUrl;
+        currentEpoch = result.epoch;
+        currentSandboxId = result.sandboxId;
+      }
+
+      if (!currentSandboxUrl) {
+        throw new Error("No sandbox URL available after provisioning");
+      }
+
+      // Create attempt only when POST is imminent
+      const attempt = await createJobAttempt({
+        jobId: job.id,
+        attemptNumber: i,
+        epoch: currentEpoch,
+        sandboxId: currentSandboxId ?? undefined,
+      });
+
       const promptBody = {
         jobId: job.id,
         attemptId: attempt.id,
-        epoch,
+        epoch: currentEpoch,
         prompt: reviewPrompt,
         callbackUrl,
         hmacKey,
@@ -389,44 +383,70 @@ export async function dispatchPrReview(
           thoughtLevel: resolved.thoughtLevel,
           cwd: "/vercel/sandbox",
         },
+        contextFiles: [
+          {
+            path: "/tmp/review-diff.patch",
+            content: diffResult.diff,
+          },
+        ],
       };
-      const response = await fetch(`${proxyUrl}/prompt`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(promptBody),
-        signal: AbortSignal.timeout(30_000),
-      });
 
-      log.set({ dispatch: { responseStatus: response.status, contentType: response.headers.get("content-type") } });
+      log.set({ dispatch: { [`attempt_${i}_dispatching`]: { sandboxUrl: currentSandboxUrl, sandboxId: currentSandboxId } } });
 
+      let response: Response | "timeout";
+      try {
+        response = await fetch(`${currentSandboxUrl}/prompt`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(promptBody),
+          signal: AbortSignal.timeout(30_000),
+        });
+      } catch (err) {
+        if (err instanceof Error && err.name === "TimeoutError") {
+          response = "timeout";
+        } else {
+          throw err;
+        }
+      }
+
+      // Timeout — sweeper owns recovery
+      if (response === "timeout") {
+        handedOff = true;
+        await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown").catch(() => {});
+        log.set({ dispatch: { [`attempt_${i}_timeout`]: true } });
+        return { jobId: job.id };
+      }
+
+      log.set({ dispatch: { [`attempt_${i}_response`]: { status: response.status, contentType: response.headers.get("content-type") } } });
+
+      // Success
       if (response.status === 202) {
-        // Set handedOff FIRST — the sandbox already owns execution.
-        // If updateAutomationRun throws below, we must NOT release the lock.
         handedOff = true;
         await updateAutomationRun(automationRunId, {
           interactiveSessionId: targetSessionId,
-        }).catch(() => {}); // best-effort metadata update
+        }).catch(() => {});
         return { jobId: job.id };
       }
 
+      // Non-202: mark attempt failed
       const body = await response.text().catch(() => "");
-      log.set({ dispatch: { failedResponseBody: body.slice(0, 500), sandboxId } });
-      const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
+      log.set({ dispatch: { [`attempt_${i}_failedBody`]: body.slice(0, 500), sandboxId: currentSandboxId } });
       await casAttemptStatus(attempt.id, ["dispatching"], "failed", {
         error: `Proxy returned ${response.status}: ${body}`,
       });
-      await casJobStatus(job.id, ["pending"], "failed_retryable");
-      throw new Error(`Proxy returned ${response.status}: ${body}`);
-    } catch (err) {
-      if (err instanceof Error && err.name === "TimeoutError") {
-        // Set handedOff FIRST — execution status is ambiguous, sweeper owns recovery.
-        handedOff = true;
-        const { casAttemptStatus } = await import("@/lib/jobs/actions");
-        await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown").catch(() => {});
-        return { jobId: job.id };
+
+      if (i < MAX_INLINE_ATTEMPTS) {
+        log.set({ dispatch: { [`attempt_${i}_retrying`]: true } });
+        currentSandboxUrl = null;
+        continue;
       }
-      throw err;
     }
+
+    // Both inline attempts exhausted — defer to sweeper (non-exceptional return)
+    await casJobStatus(job.id, ["pending"], "failed_retryable");
+    handedOff = true; // Lock stays held for sweeper retry
+    log.set({ dispatch: { exhaustedAttempts: true, deferredToSweeper: true } });
+    return { jobId: job.id, retryDeferred: true };
   } catch (err) {
     // Mark run as failed (best-effort)
     await updateAutomationRun(automationRunId, {

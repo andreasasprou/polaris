@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 import { StepIndicator } from "./_components/step-indicator";
 import { StepIntent, type Intent } from "./_components/step-intent";
@@ -41,13 +41,23 @@ function clearState() {
   localStorage.removeItem("polaris_onboarding_step");
 }
 
-export default function OnboardingPage() {
+function OnboardingWizard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isCreateNew = searchParams.get("create") === "true";
   const [loading, setLoading] = useState(true);
   const [state, setState] = useState<WizardState>({ step: 1, intents: [], secretId: null });
 
   useEffect(() => {
     async function init() {
+      // Creating a new org — skip redirect, start fresh
+      if (isCreateNew) {
+        clearState();
+        setState({ step: 1, intents: [], secretId: null });
+        setLoading(false);
+        return;
+      }
+
       // Check if user already has an org with completed onboarding
       try {
         // Use the session's active org if available, otherwise pick the first
@@ -97,7 +107,7 @@ export default function OnboardingPage() {
       setLoading(false);
     }
     init();
-  }, [router]);
+  }, [router, isCreateNew]);
 
   function updateState(partial: Partial<WizardState>) {
     setState((prev) => {
@@ -132,6 +142,7 @@ export default function OnboardingPage() {
 
         {state.step === 2 && (
           <StepGitHub
+            createNew={isCreateNew}
             onContinue={() => updateState({ step: 3 })}
           />
         )}
@@ -158,5 +169,19 @@ export default function OnboardingPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-svh items-center justify-center p-6">
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      }
+    >
+      <OnboardingWizard />
+    </Suspense>
   );
 }

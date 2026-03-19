@@ -7,6 +7,7 @@
 
 import http from "node:http";
 import fs from "node:fs";
+import path from "node:path";
 import type {
   PromptRequest,
   ActivePrompt,
@@ -192,11 +193,21 @@ export class ProxyServer {
    * Execute a prompt asynchronously after returning 202.
    */
   private async executePromptAsync(request: PromptRequest): Promise<void> {
-    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt } =
+    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles } =
       request;
     const cwd = config.cwd ?? "/home/user/repo";
 
     try {
+      // Write context files to sandbox filesystem before starting the agent
+      if (contextFiles?.length) {
+        for (const file of contextFiles) {
+          const dir = path.dirname(file.path);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(file.path, file.content);
+          console.log(`[proxy] Wrote context file: ${file.path} (${Buffer.byteLength(file.content)} bytes)`);
+        }
+      }
+
       // Connect to sandbox-agent (lazy, first prompt triggers connection)
       await this.bridge.connect();
 

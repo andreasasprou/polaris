@@ -17,6 +17,11 @@ export interface BuildReviewPromptInput {
   reviewSequence: number;
   fromSha?: string;
   toSha: string;
+  /** Pre-fetched diff written to the sandbox filesystem */
+  diffPrepared?: {
+    filePath: string;
+    truncated: boolean;
+  };
 }
 
 /**
@@ -57,8 +62,12 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   // 7. Changed files with classification
   sections.push(formatFileList(input.files, input.fileClassifications));
 
-  // 8. Exploration instructions (replaces inline diff)
-  sections.push(formatExplorationInstructions(input));
+  // 8. Diff + exploration instructions
+  if (input.diffPrepared) {
+    sections.push(formatPreparedDiffInstructions(input));
+  } else {
+    sections.push(formatExplorationInstructions(input));
+  }
 
   // 9. Previous state (for incremental)
   if (input.previousState && input.reviewScope !== "reset") {
@@ -191,6 +200,75 @@ function formatFileList(
   });
 
   return `## Changed Files (${files.length})\n\n${lines.join("\n")}`;
+}
+
+function formatPreparedDiffInstructions(input: BuildReviewPromptInput): string {
+  const { diffPrepared } = input;
+  if (!diffPrepared) return "";
+
+  const baseSha = input.event.baseSha;
+  const headSha = input.toSha;
+  const parts: string[] = [`## Prepared Diff`];
+
+  parts.push(
+    `The unified diff for this review has been pre-loaded at \`${diffPrepared.filePath}\`. Start by reading this file to understand the changes.`,
+  );
+
+  if (diffPrepared.truncated) {
+    parts.push(
+      `**Note:** The diff was truncated to fit the prompt budget. Use git commands to explore files not covered by the prepared diff.`,
+    );
+  }
+
+  parts.push(
+    `\n## Exploring Further`,
+    `You have full access to the repository in this sandbox. Use git commands and file reads to explore surrounding context, read full files, or check commit history. Do NOT ask for permission — your tools are pre-approved.`,
+  );
+
+  // Setup commands are still needed for git exploration (repo is shallow)
+  const prNumber = input.event.prNumber;
+  parts.push(`### Setup — run these if you need to explore beyond the diff`);
+  parts.push(
+    `\`\`\`bash`,
+    `# Unshallow and fetch all branches so base branch commits are available`,
+    `git fetch --unshallow 2>/dev/null || git fetch origin`,
+    `# Fetch the PR head (works for forks too)`,
+    `git fetch origin refs/pull/${prNumber}/head`,
+    `# Checkout the PR head commit so file reads reflect the PR's code`,
+    `git checkout ${headSha}`,
+    `\`\`\``,
+  );
+
+  parts.push(`### Useful commands`);
+  parts.push(`**Important:** Always use commit SHAs, not branch names or \`origin/...\` refs (remote refs are not available).`);
+
+  if (input.reviewScope === "incremental" && input.fromSha) {
+    parts.push(
+      `- \`git diff ${input.fromSha} ${headSha} -- <file>\` — diff for a specific file`,
+      `- \`git log ${input.fromSha}..${headSha} --oneline\` — commits in this increment`,
+    );
+  } else {
+    parts.push(
+      `- \`git diff ${baseSha} ${headSha} -- <file>\` — diff for a specific file`,
+      `- \`git log ${baseSha}..${headSha} --oneline\` — all PR commits`,
+    );
+  }
+
+  parts.push(
+    `- \`git show <sha>\` — view a specific commit`,
+    `- Read any file directly to understand surrounding context`,
+  );
+
+  parts.push(
+    `\n### Review strategy`,
+    `1. Read \`${diffPrepared.filePath}\` to understand all changes`,
+    `2. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,
+    `3. Pay special attention to production-classified files`,
+    `4. Check for missing tests, error handling gaps, and security issues`,
+    `5. If the diff was truncated, run the git setup commands and explore the remaining files`,
+  );
+
+  return parts.join("\n");
 }
 
 function formatExplorationInstructions(input: BuildReviewPromptInput): string {

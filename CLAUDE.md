@@ -1,1 +1,60 @@
-AGENTS.md
+<!-- Line budget: 80 lines max. Graduate detailed content to docs/ or ARCHITECTURE.md -->
+# Polaris — Claude Code Instructions
+
+## Architecture Principles
+
+- **No plasters.** Don't patch edge cases with one-off fixes. Design primitives and flows so they handle all states as first-class citizens.
+- **Data produces correct state; UI just renders.** The consolidation/data layer should handle all state transitions (terminal sessions, interrupted tool calls, etc.) so consumers never need special-case logic.
+- **Context parameters over data mutation.** When the data layer needs external context (e.g. "is this session terminal?"), pass it as a parameter — don't inject synthetic events or mutate the event log.
+
+## Codebase Navigation
+
+- **Structural map**: See `ARCHITECTURE.md` for module map, state machines, invariants, and request lifecycle traces.
+- **Deep-dive docs**: `docs/architecture/` — session continuation, event display, v2 architecture.
+- **Execution plans**: `docs/exec-plans/active/` — check before starting complex work.
+- **Reference docs**: `docs/references/` — LLM-optimized API docs for Vercel Sandbox, sandbox-agent, ACP.
+
+## Where to Start
+
+Pick the flow closest to your task. Paths show the recommended reading order:
+
+- **Changing session lifecycle?** `lib/sessions/status.ts` → `lib/sessions/actions.ts` → `lib/sessions/sandbox-lifecycle.ts`
+- **Modifying PR review logic?** `lib/reviews/prompt-builder.ts` → `lib/orchestration/pr-review.ts` → `lib/reviews/output-parser.ts`
+- **Adding a new session status?** Add to `lib/sessions/status.ts` STATUS_CONFIG → Update `hooks/use-session-chat.ts` → Update `components/sessions/session-status.tsx`
+- **Changing sandbox/agent communication?** `lib/sandbox-proxy/server.ts` → `lib/sandbox-proxy/types.ts` → rebuild with `pnpm build:proxy`
+- **Modifying event consolidation?** `lib/sandbox-agent/event-types.ts` (consolidateEvents) → `hooks/use-session-chat.ts` (consumer)
+- **Working with jobs/sweeper?** `lib/jobs/schema.ts` → `lib/jobs/actions.ts` → `lib/jobs/sweeper.ts` → `lib/jobs/callbacks.ts`
+- **Sandbox provisioning/health?** `lib/sandbox/SandboxManager.ts` → `lib/sandbox/SandboxHealthMonitor.ts` → `lib/sandbox/GitOperations.ts`
+
+## Anti-Patterns
+
+These have caused real production bugs — avoid them:
+
+- **Never use Bearer auth for git HTTPS** — use `Basic base64(x-access-token:<token>)`. Bearer fails silently in sandbox.
+- **Never check stderr for git push success** — git writes progress to stderr on success. Check `exitCode === 0`.
+- **Always call `endStaleRuntimes(sessionId)` before `createRuntime()`** — unique constraint `idx_one_live_runtime_per_session` will throw otherwise.
+- **Always wrap CAS + dispatch in try/catch with rollback** — if `tasks.trigger()` throws after CAS, the session gets stuck at "creating" forever.
+- **When adding a new session status, update ALL `statusConfig` locations** — `lib/sessions/status.ts`, `hooks/use-session-chat.ts`, and `components/sessions/session-status.tsx`.
+- **Sandbox proxy is bundled, not live code** — `lib/sandbox-proxy/` runs inside the VM. Changes require rebuilding (`pnpm build:proxy`) and redeploying.
+- **Never use `git diff A..B` syntax** — it's invalid for `git diff`. Use `git diff A B` (separate args) or `git log A..B` for log.
+- **Don't trust `git diff --cached origin/main` in sandbox** — can return empty even with staged changes. Use `git show --stat` as fallback.
+
+## Testing & Verification
+
+**Always verify your own work.** Run `pnpm typecheck` before considering any change complete.
+
+1. **Typecheck**: `pnpm typecheck` must pass.
+2. **Tests**: `pnpm test` (unit + integration) must pass. Use `pnpm test:unit` for fast feedback.
+3. **Visual verification** (UI changes): Use browser automation at `http://localhost:3001`.
+   Verify all session states: active (spinner), completed (checkmarks), failed/stopped (interrupted ■), hibernated/resumed.
+4. **Data verification**: Query `/api/interactive-sessions/[id]` and `/api/sessions/[id]/events` to confirm data consistency.
+5. **Run traces**: Use Trigger.dev MCP `get_run_details` to inspect task execution.
+6. **Terminal session checklist**: `turnInProgress` must be `false`, all pending tool calls show interrupted (not spinner), `pollIntervalMs` must be `0`.
+7. **Full QA matrix**: See `docs/qa-checklist.md` for the complete state matrix and flow test list.
+
+## Key Commands
+
+- `pnpm typecheck` — must pass before considering work complete
+- `pnpm test` — all tests (unit + integration)
+- `pnpm test:unit` — fast unit tests only (no DB)
+- `pnpm dev` — local dev server on port 3001

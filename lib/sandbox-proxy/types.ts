@@ -26,6 +26,13 @@ export type PromptConfig = {
 
 // ── Prompt Request (POST /prompt body) ──
 
+export type ContextFile = {
+  /** Absolute path in the sandbox filesystem */
+  path: string;
+  /** File content (text) */
+  content: string;
+};
+
 export type PromptRequest = {
   jobId: string;
   attemptId: string;
@@ -34,6 +41,8 @@ export type PromptRequest = {
   callbackUrl: string;
   hmacKey: string;
   config: PromptConfig;
+  /** Files to write to the sandbox before starting the agent */
+  contextFiles?: ContextFile[];
 };
 
 // ── Active Prompt (persisted to local file for durable accept) ──

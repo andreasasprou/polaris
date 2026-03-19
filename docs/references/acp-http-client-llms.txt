@@ -1,0 +1,198 @@
+# acp-http-client Reference — v0.3.2
+# Source: https://www.npmjs.com/package/acp-http-client
+# Polaris usage: Low-level ACP transport for native agent resume and direct RPC calls
+# Last updated: 2026-03-19
+# Locked version: 0.3.2
+
+## Quick Summary
+
+acp-http-client is the HTTP transport layer for the Agent Client Protocol (ACP).
+Polaris uses it directly (bypassing the sandbox-agent SDK) for two purposes:
+(1) native session resume via `unstableResumeSession()`, and (2) arbitrary RPC
+calls via `extMethod()`. The sandbox-agent SDK uses it internally, but Polaris
+creates standalone instances for native resume scenarios.
+
+## Used API Surface
+
+### AcpHttpClient class
+
+```typescript
+class AcpHttpClient {
+  constructor(options: AcpHttpClientOptions);
+
+  // Connection lifecycle
+  initialize(request?: Partial<InitializeRequest>): Promise<InitializeResponse>;
+  disconnect(): Promise<void>;
+  get closed(): Promise<void>;
+  get signal(): AbortSignal;
+
+  // Session management
+  newSession(request: NewSessionRequest): Promise<NewSessionResponse>;
+  prompt(request: PromptRequest): Promise<PromptResponse>;
+  cancel(notification: CancelNotification): Promise<void>;
+
+  // Native resume (bypasses SDK text replay)
+  unstableResumeSession(request: ResumeSessionRequest): Promise<ResumeSessionResponse>;
+
+  // Arbitrary JSON-RPC
+  extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>>;
+  extNotification(method: string, params: Record<string, unknown>): Promise<void>;
+
+  // Config
+  setSessionMode(request: SetSessionModeRequest): Promise<SetSessionModeResponse | void>;
+  setSessionConfigOption(request: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse>;
+
+  // Other
+  unstableListSessions(request: ListSessionsRequest): Promise<ListSessionsResponse>;
+  unstableForkSession(request: ForkSessionRequest): Promise<ForkSessionResponse>;
+  unstableSetSessionModel(request: SetSessionModelRequest): Promise<SetSessionModelResponse | void>;
+
+  get clientSideConnection(): ClientSideConnection;
+}
+```
+
+### AcpHttpClientOptions
+
+```typescript
+interface AcpHttpClientOptions {
+  baseUrl: string;
+  token?: string;
+  fetch?: typeof fetch;
+  headers?: HeadersInit;
+  client?: Partial<Client>;               // Callbacks for server-initiated messages
+  onEnvelope?: AcpEnvelopeObserver;        // Observe all JSON-RPC traffic
+  transport?: AcpHttpTransportOptions;
+}
+
+interface AcpHttpTransportOptions {
+  path?: string;                           // e.g. "/v1/acp/<serverId>"
+  bootstrapQuery?: Record<string, QueryValue>;  // e.g. { agent: "claude" }
+}
+
+type AcpEnvelopeObserver = (envelope: AnyMessage, direction: AcpEnvelopeDirection) => void;
+type AcpEnvelopeDirection = "inbound" | "outbound";
+```
+
+### Error classes
+
+```typescript
+class AcpHttpError extends Error {
+  readonly status: number;
+  readonly problem?: ProblemDetails;
+  readonly response: Response;
+}
+
+class AcpRpcError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+}
+```
+
+## Polaris Usage Patterns
+
+### Native resume via AcpHttpClient (lib/sandbox-agent/SandboxAgentClient.ts, lib/sandbox-proxy/acp-bridge.ts)
+
+```typescript
+const serverId = `native-${agent}-${Date.now()}`;
+const eventListeners = new Set<EventCallback>();
+
+const acp = new AcpHttpClient({
+  baseUrl: serverUrl,                          // "https://<sandbox>.sbx.vercel.app:2468"
+  transport: {
+    path: `/v1/acp/${encodeURIComponent(serverId)}`,
+    bootstrapQuery: { agent: "claude" },       // Tells server which agent binary to use
+  },
+  client: {
+    sessionUpdate: async () => {},             // Required stubs for server-initiated messages
+    extNotification: async () => {},
+  },
+  onEnvelope: (envelope, direction) => {
+    if (direction !== "inbound") return;
+    // Forward agent events to listeners
+    for (const listener of eventListeners) {
+      listener({ eventIndex: 0, sender: "agent", payload: envelope });
+    }
+  },
+});
+
+await acp.initialize();
+await acp.unstableResumeSession({
+  sessionId: nativeAgentSessionId,    // The native CLI session ID (e.g. Claude's JSONL ID)
+  cwd: "/vercel/sandbox",
+  mcpServers: [],
+});
+```
+
+### Using extMethod for arbitrary RPC (lib/sandbox-agent/SandboxAgentClient.ts)
+
+```typescript
+// Permission reply
+await acp.extMethod("permission/reply", {
+  permissionId,
+  reply: "once",
+  sessionId: agentSessionId,
+});
+
+// Question reply
+await acp.extMethod("question/reply", {
+  questionId,
+  answers,
+  sessionId: agentSessionId,
+});
+
+// Manual mode set (fallback when setConfigOption fails)
+await acp.extMethod("session/set_mode", {
+  modeId: "plan",
+  sessionId: agentSessionId,
+});
+```
+
+### Sending prompts via AcpHttpClient (lib/sandbox-proxy/acp-bridge.ts)
+
+```typescript
+const response = await acp.prompt({
+  sessionId: agentSessionId,
+  prompt: [{ type: "text", text: "Fix the failing test" }],
+});
+// response.stopReason?: string
+```
+
+## Gotchas & Hard-Won Knowledge
+
+### 1. Transport path must match sandbox-agent server convention
+The path MUST be `/v1/acp/<serverId>` where serverId is a unique connection
+identifier. The `bootstrapQuery: { agent }` tells the server which agent
+binary to spawn. Using wrong path format silently fails or returns 404.
+
+### 2. unstableResumeSession() is the ONLY way to do native resume
+The sandbox-agent SDK's `resumeOrCreateSession()` does text replay (creates
+a new agent session, injects stored events as text). To invoke the native
+agent CLI resume (e.g. `claude --resume <sessionId>`), you MUST bypass the
+SDK and call `AcpHttpClient.unstableResumeSession()` directly. Polaris wraps
+this in `NativeResumedSession` adapter to match the SDK Session interface.
+
+### 3. client callbacks (sessionUpdate, extNotification) must be provided
+When constructing AcpHttpClient for native resume, you must provide at least
+stub implementations for `client.sessionUpdate` and `client.extNotification`.
+Without them, the client will throw when the agent sends server-initiated
+messages (which happens during prompt execution).
+
+### 4. initialize() must be called before any other method
+Always call `await acp.initialize()` after construction and before
+`unstableResumeSession()`, `prompt()`, or any other method. Skipping
+initialization causes protocol errors.
+
+### 5. extMethod sessionId parameter
+When using `extMethod()` for session-scoped RPCs (permission/reply,
+question/reply, session/set_mode), you must include `sessionId` in the
+params object. The ACP server routes the call to the correct agent session
+using this field.
+
+## What NOT To Do
+
+- DO NOT use `acp.newSession()` for resume — use `acp.unstableResumeSession()`.
+- DO NOT skip `acp.initialize()` — it is required before any RPC call.
+- DO NOT omit `client.sessionUpdate` callback — agent messages will throw.
+- DO NOT hardcode the transport path — use the `/v1/acp/<serverId>` pattern with a unique serverId.
+- DO NOT omit `bootstrapQuery: { agent }` — the server needs it to know which agent binary to use.
+- DO NOT forget `sessionId` in extMethod params for session-scoped RPCs.
