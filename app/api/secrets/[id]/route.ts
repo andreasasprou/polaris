@@ -1,12 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findSecretById } from "@/lib/secrets/queries";
 import { revokeSecret, updateSecret } from "@/lib/secrets/actions";
+import { withEvlog } from "@/lib/evlog";
 
-export async function PUT(
-  req: NextRequest,
+export const PUT = withEvlog(async (
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { id } = await params;
 
@@ -42,12 +43,12 @@ export async function PUT(
       { status: isValidation ? 400 : 500 },
     );
   }
-}
+});
 
-export async function DELETE(
-  _req: NextRequest,
+export const DELETE = withEvlog(async (
+  _req: Request,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
 
   const { id } = await params;
@@ -59,4 +60,4 @@ export async function DELETE(
 
   await revokeSecret(id);
   return NextResponse.json({ ok: true });
-}
+});

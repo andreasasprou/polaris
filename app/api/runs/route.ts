@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { desc, eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automationRuns, automations } from "@/lib/automations/schema";
 import { repositories } from "@/lib/integrations/schema";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET(req: NextRequest) {
+export const GET = withEvlog(async (req: Request) => {
   const { orgId } = await getSessionWithOrg();
   const url = new URL(req.url);
   const limit = Number(url.searchParams.get("limit") ?? "50");
@@ -45,4 +46,4 @@ export async function GET(req: NextRequest) {
     .limit(limit);
 
   return NextResponse.json({ runs });
-}
+});

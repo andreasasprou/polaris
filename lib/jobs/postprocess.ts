@@ -10,6 +10,7 @@
 
 import { casJobStatus, getJob } from "./actions";
 import type { JobStatus } from "./status";
+import { useLogger } from "@/lib/evlog";
 
 // ── Main Dispatch ──
 
@@ -40,18 +41,19 @@ export async function runPostProcessing(jobId: string): Promise<void> {
       case "prompt":
         // Interactive session prompts have no post-processing
         break;
-      default:
-        console.warn(`[postprocess] Unknown job type: ${job.type}`);
+      default: {
+        const log = useLogger();
+        log.set({ postprocess: { unknownType: job.type } });
+      }
     }
 
     // CAS to completed
     await casJobStatus(jobId, ["postprocess_pending"], "completed");
   } catch (error) {
     // Leave in postprocess_pending for sweeper retry
-    console.error(
-      `[postprocess] Failed for job ${jobId}:`,
-      error instanceof Error ? error.message : error,
-    );
+    const log = useLogger();
+    log.error(error instanceof Error ? error : new Error(String(error)));
+    log.set({ postprocess: { failed: jobId } });
     throw error;
   }
 }
@@ -93,7 +95,8 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   const sandboxId = payload.sandboxId as string | undefined;
 
   if (!sandboxId || !branchName || !baseSha || !owner || !repo) {
-    console.error("[postprocess] Missing required payload for coding task");
+    const log = useLogger();
+    log.set({ postprocess: { error: "missing_payload", jobId: job.id } });
     if (automationRunId) {
       await updateAutomationRun(automationRunId, {
         status: "failed",
@@ -109,7 +112,8 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   try {
     sandbox = await Sandbox.get({ sandboxId });
   } catch {
-    console.error(`[postprocess] Sandbox ${sandboxId} not found`);
+    const log = useLogger();
+    log.set({ postprocess: { error: "sandbox_not_found", sandboxId } });
     if (automationRunId) {
       await updateAutomationRun(automationRunId, {
         status: "failed",
@@ -190,10 +194,9 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
           prUrl = pr.url;
           await markSideEffect(job.id, "pr_created");
         } catch (err) {
-          console.error(
-            "[postprocess] Failed to create PR:",
-            err instanceof Error ? err.message : err,
-          );
+          const log = useLogger();
+          log.error(err instanceof Error ? err : new Error(String(err)));
+          log.set({ postprocess: { prCreationFailed: true } });
         }
       }
     }
@@ -292,9 +295,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
         });
         await markSideEffect(job.id, "stale_marked");
       } catch (err) {
-        console.warn(
-          `[postprocess] Failed to mark comment stale: ${err instanceof Error ? err.message : err}`,
-        );
+        const log = useLogger();
+        log.set({ postprocess: { staleMarkFailed: err instanceof Error ? err.message : String(err) } });
       }
     }
 
@@ -367,9 +369,9 @@ async function postprocessReview(job: JobRow): Promise<void> {
           }
         }
       } catch (err) {
-        console.error(
-          `[postprocess] Failed to post review comment: ${err instanceof Error ? err.message : err}`,
-        );
+        const log = useLogger();
+        log.error(err instanceof Error ? err : new Error(String(err)));
+        log.set({ postprocess: { commentPostFailed: true } });
       }
     }
 
@@ -403,9 +405,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
         }
         await markSideEffect(job.id, "check_completed");
       } catch (err) {
-        console.warn(
-          `[postprocess] Failed to complete check: ${err instanceof Error ? err.message : err}`,
-        );
+        const log = useLogger();
+        log.set({ postprocess: { checkCompleteFailed: err instanceof Error ? err.message : String(err) } });
       }
     }
 
@@ -471,9 +472,9 @@ async function postprocessReview(job: JobRow): Promise<void> {
             } as never, // Type will be refined when pr-review.ts is created
           });
         } catch (err) {
-          console.error(
-            `[postprocess] Failed to dispatch queued review: ${err instanceof Error ? err.message : err}`,
-          );
+          const log = useLogger();
+          log.error(err instanceof Error ? err : new Error(String(err)));
+          log.set({ postprocess: { queuedReviewDispatchFailed: true } });
         }
       }
     }

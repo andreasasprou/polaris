@@ -3,8 +3,9 @@ import { eq, and, sql, gte, isNotNull, count } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automations, automationRuns } from "@/lib/automations/schema";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
@@ -75,4 +76,4 @@ export async function GET() {
     totalRuns,
     statusBreakdown: statusMap,
   });
-}
+});

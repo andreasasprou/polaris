@@ -1,15 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findEnvVarsByOrg } from "@/lib/sandbox-env/queries";
 import { upsertEnvVar } from "@/lib/sandbox-env/actions";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
   const envVars = await findEnvVarsByOrg(orgId);
   return NextResponse.json({ envVars });
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
   const body = await req.json();
 
@@ -36,4 +37,4 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ envVar }, { status: 201 });
-}
+});

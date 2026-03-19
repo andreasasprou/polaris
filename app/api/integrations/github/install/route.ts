@@ -3,8 +3,9 @@ import { headers } from "next/headers";
 import crypto from "node:crypto";
 import { auth } from "@/lib/auth";
 import { signState } from "@/lib/integrations/github-state";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -27,4 +28,4 @@ export async function GET() {
   const installUrl = `https://github.com/apps/${githubAppSlug}/installations/new?state=${encodeURIComponent(state)}`;
 
   return NextResponse.redirect(installUrl);
-}
+});

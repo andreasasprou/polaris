@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationById, findRunsByAutomation } from "@/lib/automations/queries";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET(
-  _req: NextRequest,
+export const GET = withEvlog(async (
+  _req: Request,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
 
   const { id } = await params;
@@ -17,4 +18,4 @@ export async function GET(
 
   const runs = await findRunsByAutomation(id);
   return NextResponse.json({ runs });
-}
+});

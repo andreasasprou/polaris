@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
@@ -6,11 +6,12 @@ import { RequestError } from "@/lib/errors/request-error";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
 import { resolveSessionCredentials } from "@/lib/sessions/prompt-dispatch";
+import { withEvlog } from "@/lib/evlog";
 
 /**
  * GET /api/interactive-sessions — list interactive sessions for the current org.
  */
-export async function GET() {
+export const GET = withEvlog(async () => {
   const { session, orgId } = await getSessionWithOrg();
 
   const sessions = await db
@@ -21,7 +22,7 @@ export async function GET() {
     .limit(50);
 
   return NextResponse.json({ sessions });
-}
+});
 
 /**
  * POST /api/interactive-sessions — create a new interactive session.
@@ -32,7 +33,7 @@ export async function GET() {
  * TODO(v2-phase3): Implement sandbox creation + first prompt dispatch here
  * or defer to the prompt endpoint.
  */
-export async function POST(req: NextRequest) {
+export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
@@ -85,4 +86,4 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ session: interactiveSession });
-}
+});

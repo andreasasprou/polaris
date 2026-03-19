@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import {
   getInteractiveSessionForOrg,
   getActiveRuntime,
   getLatestRuntime,
 } from "@/lib/sessions/actions";
+import { withEvlog } from "@/lib/evlog";
 
 type ProcessInfo = {
   id: string;
@@ -36,10 +37,10 @@ type LogEntry = {
  *   - stream: stdout | stderr | combined (default: combined)
  *   - tail: number of log entries (default: 200)
  */
-export async function GET(
-  req: NextRequest,
+export const GET = withEvlog(async (
+  req: Request,
   { params }: { params: Promise<{ sessionId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
@@ -123,7 +124,7 @@ export async function GET(
       { status: 502 },
     );
   }
-}
+});
 
 async function fetchProcessLogs(
   proxyBase: string,

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { headers } from "next/headers";
 import { APIError } from "better-auth";
@@ -11,6 +11,7 @@ import { createGitHubApp } from "@/lib/integrations/github";
 import { findGithubInstallationsByInstallationId } from "@/lib/integrations/queries";
 import { githubInstallations } from "@/lib/integrations/schema";
 import { verifyState } from "@/lib/integrations/github-state";
+import { withEvlog } from "@/lib/evlog";
 
 function toSlug(name: string): string {
   return name
@@ -23,10 +24,11 @@ function redirectWithError(baseUrl: string, path: string, error: string) {
   return NextResponse.redirect(new URL(`${path}?error=${error}`, baseUrl));
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withEvlog(async (req: Request) => {
   const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
-  const installationIdParam = req.nextUrl.searchParams.get("installation_id");
-  const state = req.nextUrl.searchParams.get("state");
+  const url = new URL(req.url);
+  const installationIdParam = url.searchParams.get("installation_id");
+  const state = url.searchParams.get("state");
 
   const installationId = Number(installationIdParam);
   if (
@@ -181,4 +183,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard?success=org_created", baseUrl));
   }
   return NextResponse.redirect(new URL("/integrations?success=github_installed", baseUrl));
-}
+});

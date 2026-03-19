@@ -4,6 +4,7 @@ import { createAutomationRun } from "@/lib/automations/actions";
 import { claimDelivery } from "./dedupe";
 import { matchesGitHubTrigger } from "./matchers";
 import type { GitHubTriggerConfig } from "@/lib/automations/types";
+import { useLogger } from "@/lib/evlog";
 
 /**
  * Route an incoming GitHub webhook event to matching automations.
@@ -19,12 +20,13 @@ export async function routeGitHubEvent(input: {
   ref?: string;
   payload: Record<string, unknown>;
 }): Promise<number> {
+  const log = useLogger();
   const dedupeKey = `github:${input.deliveryId}`;
 
   // Look up which org this installation belongs to
   const installation = await findGithubInstallationByInstallationId(input.installationId);
   if (!installation) {
-    console.log("[router] No installation found for ID:", input.installationId);
+    log.set({ router: { outcome: "no_installation", installationId: input.installationId } });
     return 0;
   }
 
@@ -39,13 +41,13 @@ export async function routeGitHubEvent(input: {
     organizationId: orgId,
   });
   if (!claimed) {
-    console.log("[router] Duplicate delivery, skipping:", dedupeKey);
+    log.set({ router: { outcome: "duplicate", dedupeKey } });
     return 0;
   }
 
   // Find matching enabled automations
   const candidates = await findEnabledAutomationsByTrigger(orgId, "github");
-  console.log(`[router] Found ${candidates.length} candidate automation(s) for org ${orgId}`);
+  log.set({ router: { orgId, candidates: candidates.length } });
 
   // Extract webhook repository for filtering
   const webhookRepo = input.payload.repository as { full_name?: string; owner?: { login?: string }; name?: string } | undefined;
@@ -67,10 +69,10 @@ export async function routeGitHubEvent(input: {
     }
 
     if (!matchesGitHubTrigger(input.eventType, input.action, input.ref, config)) {
-      console.log(`[router] Automation ${automation.id} (${automation.name}): event "${fullEvent}" does not match config`, config);
+      log.set({ router: { [`skip_${automation.id}`]: `event "${fullEvent}" does not match` } });
       continue;
     }
-    console.log(`[router] Automation ${automation.id} (${automation.name}): matched event "${fullEvent}", mode=${automation.mode}`);
+    log.set({ router: { [`match_${automation.id}`]: `event "${fullEvent}", mode=${automation.mode}` } });
 
     if (automation.mode === "continuous") {
       const dispatched = await dispatchContinuousReview(
@@ -102,14 +104,13 @@ export async function routeGitHubEvent(input: {
         });
         triggered++;
       } catch (err) {
-        console.error(
-          `[router] Failed to dispatch coding task for automation ${automation.id}:`,
-          err instanceof Error ? err.message : err,
-        );
+        log.error(err instanceof Error ? err : new Error(String(err)));
+        log.set({ router: { [`dispatch_failed_${automation.id}`]: true } });
       }
     }
   }
 
+  log.set({ router: { triggered } });
   return triggered;
 }
 
@@ -127,6 +128,7 @@ async function dispatchContinuousReview(
   },
   dedupeKey: string,
 ): Promise<boolean> {
+  const log = useLogger();
   const { normalizePREvent } = await import("@/lib/reviews/github-events");
   const {
     findOrCreateAutomationSession,
@@ -141,7 +143,7 @@ async function dispatchContinuousReview(
     input.installationId,
   );
   if (!prEvent) {
-    console.log("[router] Could not normalize PR event:", input.eventType, input.action);
+    log.set({ router: { prNormalization: "failed", eventType: input.eventType, action: input.action } });
     return false;
   }
   // Resolve missing PR data for issue_comment events
@@ -161,10 +163,10 @@ async function dispatchContinuousReview(
     prEvent.isOpen = pr.state === "open";
   }
 
-  console.log("[router] Normalized PR event:", { prNumber: prEvent.prNumber, isOpen: prEvent.isOpen, headSha: prEvent.headSha?.slice(0, 8) });
+  log.set({ router: { prNumber: prEvent.prNumber, isOpen: prEvent.isOpen, headSha: prEvent.headSha?.slice(0, 8) } });
 
   if (!automation.repositoryId) {
-    console.log("[router] Automation has no repository, skipping");
+    log.set({ router: { outcome: "no_repository" } });
     return false;
   }
 
@@ -208,9 +210,9 @@ async function dispatchContinuousReview(
       pendingReviewRequest: null,
     },
   });
-  console.log("[router] Automation session:", { scopeKey, created, sessionId: automationSession.id });
+  log.set({ router: { scopeKey, sessionCreated: created, sessionId: automationSession.id } });
 
-  console.log("[router] Creating automation run + dispatching review for PR", prEvent.prNumber);
+  log.set({ router: { dispatchingReview: true, prNumber: prEvent.prNumber } });
 
   // Create run first so we have run.id for the check details URL
   const run = await createAutomationRun({
@@ -244,7 +246,7 @@ async function dispatchContinuousReview(
     });
     checkRunId = check.checkRunId;
   } catch (err) {
-    console.log("[router] Failed to create early check run — dispatch will retry:", err instanceof Error ? err.message : String(err));
+    log.set({ router: { checkCreationFailed: err instanceof Error ? err.message : String(err) } });
   }
 
   if (checkRunId) {
@@ -267,10 +269,8 @@ async function dispatchContinuousReview(
       checkRunId,
     });
   } catch (err) {
-    console.error(
-      `[router] Failed to dispatch PR review for automation ${automation.id}:`,
-      err instanceof Error ? err.message : err,
-    );
+    log.error(err instanceof Error ? err : new Error(String(err)));
+    log.set({ router: { dispatchReviewFailed: automation.id } });
     // Cancel the eagerly-created check — include actual error for diagnosis
     if (checkRunId) {
       try {

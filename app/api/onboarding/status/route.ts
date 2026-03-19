@@ -3,8 +3,9 @@ import { getSessionWithOrg } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
 import { eq } from "drizzle-orm";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   try {
     const { orgId } = await getSessionWithOrg();
 
@@ -25,4 +26,4 @@ export async function GET() {
   } catch {
     return NextResponse.json({ completed: false });
   }
-}
+});

@@ -1,16 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
 import { createSecret } from "@/lib/secrets/actions";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
 
   const secrets = await findSecretsByOrg(orgId);
   return NextResponse.json({ secrets });
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
@@ -48,4 +49,4 @@ export async function POST(req: NextRequest) {
       { status: isValidation ? 400 : 500 },
     );
   }
-}
+});

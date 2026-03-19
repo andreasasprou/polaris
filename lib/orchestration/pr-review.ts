@@ -18,6 +18,7 @@ import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { createJob, createJobAttempt } from "@/lib/jobs/actions";
 import { resolveAgentConfig } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import { useLogger } from "@/lib/evlog";
 
 export type DispatchPrReviewInput = {
   orgId: string;
@@ -357,7 +358,8 @@ export async function dispatchPrReview(
       ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/api/callbacks`
       : "http://localhost:3001/api/callbacks";
 
-    console.log(`[dispatch] Dispatching review to ${proxyUrl}, callback: ${callbackUrl}, job: ${job.id}, agent: ${resolved.agent}`);
+    const log = useLogger();
+    log.set({ dispatch: { proxyUrl, callbackUrl, jobId: job.id, agent: resolved.agent } });
 
     try {
       const promptBody = {
@@ -382,7 +384,7 @@ export async function dispatchPrReview(
         signal: AbortSignal.timeout(30_000),
       });
 
-      console.log(`[dispatch] POST ${proxyUrl}/prompt → ${response.status} (content-type: ${response.headers.get("content-type")})`);
+      log.set({ dispatch: { responseStatus: response.status, contentType: response.headers.get("content-type") } });
 
       if (response.status === 202) {
         // Set handedOff FIRST — the sandbox already owns execution.
