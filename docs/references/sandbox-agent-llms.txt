@@ -1,0 +1,288 @@
+# sandbox-agent Reference — v0.3.2
+# Source: https://www.npmjs.com/package/sandbox-agent
+# Polaris usage: SDK for managing AI coding agent sessions (Claude, Codex) inside Vercel Sandboxes
+# Last updated: 2026-03-19
+# Locked version: 0.3.2
+
+## Quick Summary
+
+sandbox-agent is the TypeScript SDK for the sandbox-agent server — a process
+that runs inside a Vercel Sandbox and brokers communication between Polaris and
+AI coding agents (Claude Code, Codex, etc.) via the Agent Client Protocol (ACP).
+It handles session lifecycle, event persistence, and prompt execution. The server
+binary is installed via curl and started with `--no-token --host 0.0.0.0 --port 2468`.
+
+## Used API Surface
+
+### SandboxAgent class
+
+```typescript
+class SandboxAgent {
+  // Connect to a running sandbox-agent server
+  static connect(options: SandboxAgentConnectOptions): Promise<SandboxAgent>;
+
+  // Session lifecycle
+  createSession(request: SessionCreateRequest): Promise<Session>;
+  resumeOrCreateSession(request: SessionResumeOrCreateRequest): Promise<Session>;
+  destroySession(id: string): Promise<Session>;
+
+  // Event retrieval (paginated)
+  getEvents(request: ListEventsRequest): Promise<ListPage<SessionEvent>>;
+
+  // Cleanup
+  dispose(): Promise<void>;
+}
+```
+
+### SandboxAgentConnectOptions
+
+```typescript
+type SandboxAgentConnectOptions = {
+  baseUrl: string;
+  fetch?: typeof fetch;
+  headers?: HeadersInit;
+  persist?: SessionPersistDriver;
+  replayMaxEvents?: number;
+  replayMaxChars?: number;
+  signal?: AbortSignal;
+  token?: string;
+  waitForHealth?: boolean | { timeoutMs?: number };  // Default: 30s timeout
+};
+```
+
+### SessionCreateRequest / SessionResumeOrCreateRequest
+
+```typescript
+interface SessionCreateRequest {
+  id?: string;               // Optional custom session ID
+  agent: string;             // "claude" | "codex" | "opencode" | "amp"
+  sessionInit?: {
+    cwd: string;
+    mcpServers: [];          // Polaris passes empty array
+  };
+  model?: string;
+  mode?: string;
+  thoughtLevel?: string;
+}
+
+interface SessionResumeOrCreateRequest {
+  id: string;                // REQUIRED — the session ID to resume
+  agent: string;
+  sessionInit?: { cwd: string; mcpServers: [] };
+  model?: string;
+  mode?: string;
+  thoughtLevel?: string;
+}
+```
+
+### Session class
+
+```typescript
+class Session {
+  get id(): string;                    // SDK session ID (local)
+  get agent(): string;
+  get agentSessionId(): string;        // Native agent CLI session ID
+  get lastConnectionId(): string;
+  get createdAt(): number;
+  get destroyedAt(): number | undefined;
+
+  // Send a prompt and wait for completion
+  prompt(prompt: PromptRequest["prompt"]): Promise<PromptResponse>;
+
+  // Subscribe to session events (returns unsubscribe function)
+  onEvent(listener: SessionEventListener): () => void;
+
+  // Raw JSON-RPC call to the agent
+  rawSend(method: string, params?: Record<string, unknown>, options?: SessionSendOptions): Promise<unknown>;
+
+  // Config methods
+  setMode(modeId: string): Promise<SetSessionModeResponse | void>;
+  setConfigOption(configId: string, value: string): Promise<SetSessionConfigOptionResponse>;
+  setModel(model: string): Promise<SetSessionConfigOptionResponse>;
+  setThoughtLevel(thoughtLevel: string): Promise<SetSessionConfigOptionResponse>;
+}
+
+type SessionEventListener = (event: SessionEvent) => void;
+```
+
+### SessionEvent
+
+```typescript
+interface SessionEvent {
+  id: string;
+  eventIndex: number;
+  sessionId: string;
+  createdAt: number;
+  connectionId: string;
+  sender: "client" | "agent";
+  payload: AnyMessage;          // JSON-RPC envelope
+}
+```
+
+### Pagination types
+
+```typescript
+interface ListPage<T> {
+  items: T[];
+  nextCursor?: string;          // Pass as cursor to get next page
+}
+
+interface ListEventsRequest {
+  sessionId: string;
+  cursor?: string;
+  limit?: number;
+}
+```
+
+### SessionPersistDriver interface
+
+```typescript
+interface SessionPersistDriver {
+  getSession(id: string): Promise<SessionRecord | null>;
+  listSessions(request?: ListPageRequest): Promise<ListPage<SessionRecord>>;
+  updateSession(session: SessionRecord): Promise<void>;
+  listEvents(request: ListEventsRequest): Promise<ListPage<SessionEvent>>;
+  insertEvent(event: SessionEvent): Promise<void>;
+}
+```
+
+Polaris uses `@sandbox-agent/persist-postgres` for persistence:
+```typescript
+// lib/sandbox-agent/persist.ts
+import { PostgresSessionPersistDriver } from "@sandbox-agent/persist-postgres";
+new PostgresSessionPersistDriver({
+  connectionString: process.env.DATABASE_URL!,
+  schema: "sandbox_agent",
+});
+```
+
+## Polaris Usage Patterns
+
+### Connecting to the sandbox-agent server (lib/sandbox-agent/SandboxAgentClient.ts)
+
+```typescript
+const sdk = await SandboxAgent.connect({
+  baseUrl: serverUrl,                    // e.g. "https://<sandbox>.sbx.vercel.app:2468"
+  persist: createPersistDriver(),
+  waitForHealth: { timeoutMs: 30_000 },  // Wait for server to be ready
+  signal: abortSignal,                   // Abort if sandbox dies during connect
+});
+```
+
+### Creating a session with fallback (lib/sandbox-agent/SandboxAgentClient.ts)
+
+```typescript
+// Some agents reject session/set_config_option for certain options.
+// Polaris uses a try/catch fallback: full config first, then bare + manual mode set.
+try {
+  return await sdk.createSession({
+    agent: "claude",
+    model: "claude-sonnet-4-20250514",
+    mode: "plan",
+    sessionInit: { cwd: "/vercel/sandbox", mcpServers: [] },
+  });
+} catch (error) {
+  if (!error.message.includes("Invalid parameters")) throw error;
+  // Fallback: bare session + manual mode set via rawSend
+  const session = await sdk.createSession({
+    agent: "claude",
+    sessionInit: { cwd: "/vercel/sandbox", mcpServers: [] },
+  });
+  await session.rawSend("session/set_mode", { modeId: "plan" });
+  return session;
+}
+```
+
+### Resuming a session (text replay) (lib/sandbox-agent/SandboxAgentClient.ts)
+
+```typescript
+const session = await sdk.resumeOrCreateSession({
+  id: previousSdkSessionId,
+  agent: "claude",
+  sessionInit: { cwd: "/vercel/sandbox", mcpServers: [] },
+});
+```
+
+### Reading paginated events (lib/sandbox-agent/SandboxAgentClient.ts)
+
+```typescript
+const allEvents = [];
+let cursor: string | undefined;
+for (;;) {
+  const page = await sdk.getEvents({ sessionId, cursor, limit: 500 });
+  allEvents.push(...page.items);
+  if (!page.nextCursor) break;
+  cursor = page.nextCursor;
+}
+```
+
+### Server installation and startup (lib/sandbox-agent/SandboxAgentBootstrap.ts)
+
+```typescript
+// Install binary
+await commands.runShell(
+  `curl -fsSL https://releases.rivet.dev/sandbox-agent/0.3.2/install.sh | sh`
+);
+
+// Start in detached mode (background process)
+await sandbox.runCommand({
+  cmd: "sh",
+  args: ["-c", `export PATH="$HOME/bin:$PATH" && exec sandbox-agent server --no-token --host 0.0.0.0 --port 2468`],
+  env,
+  detached: true,
+});
+
+const serverUrl = sandbox.domain(2468);
+```
+
+## Gotchas & Hard-Won Knowledge
+
+### 1. resumeOrCreateSession() does TEXT REPLAY, not native resume
+The SDK's `resumeOrCreateSession()` creates a new agent session and injects
+stored events as JSON-RPC text. This is NOT a native CLI resume. The agent
+loses its internal state (file caches, tool state, etc.). For true native
+resume (e.g. `claude --resume`), bypass the SDK entirely and use
+`AcpHttpClient.unstableResumeSession()` directly.
+See: lib/sandbox-agent/SandboxAgentClient.ts nativeResumeSession().
+
+### 2. session.agentSessionId != session.id
+`session.id` is the SDK-level session ID (local to sandbox-agent).
+`session.agentSessionId` is the native CLI session ID (e.g. the JSONL
+session ID used by Claude Code's `--resume` flag). Store both when you
+need to support native resume later.
+
+### 3. Some agents reject session/set_config_option RPC
+Codex (and potentially other agents) may throw "Invalid parameters" when
+the SDK tries to set model/thoughtLevel via the `session/set_config_option`
+RPC. Polaris handles this with a try/catch fallback: create a bare session,
+then manually set mode via the separate `session/set_mode` RPC.
+See: lib/sandbox-agent/SandboxAgentClient.ts createSession().
+
+### 4. getEvents() is paginated — always loop with nextCursor
+`getEvents()` returns `{ items, nextCursor }`. A single call may not return
+all events. Always paginate:
+```
+while (page.nextCursor) { page = await sdk.getEvents({ sessionId, cursor: page.nextCursor }); }
+```
+
+### 5. Server startup flags are critical
+The server MUST be started with `--no-token --host 0.0.0.0 --port 2468`.
+Omitting `--no-token` requires a bearer token for all requests.
+Omitting `--host 0.0.0.0` binds to localhost only (unreachable from outside sandbox).
+Wrap in a shell to ensure `$HOME/bin` is on PATH for the gh CLI.
+
+### 6. Event listeners may fire out of order
+Live `session.onEvent()` callbacks can fire out of order due to async
+persistence. For correct output reconstruction, read persisted events via
+`sdk.getEvents()` after the prompt completes — persisted events are
+guaranteed to be in correct sequence.
+
+## What NOT To Do
+
+- DO NOT assume `resumeOrCreateSession()` does native resume — it does text replay.
+- DO NOT skip the "Invalid parameters" fallback when creating sessions — some agents need it.
+- DO NOT read a single page of getEvents() and assume it is all events — always paginate.
+- DO NOT rely on onEvent() callback order for output reconstruction — use persisted events.
+- DO NOT omit `--no-token` when starting the server — all requests will require auth.
+- DO NOT call `session.setModel()` or `session.setThoughtLevel()` on agents that reject it — use the fallback pattern.
+- DO NOT use `sdk.resumeSession(id)` (without "OrCreate") — it does not accept config options and is not used by Polaris.
