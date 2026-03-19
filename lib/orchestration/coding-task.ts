@@ -90,7 +90,7 @@ export async function dispatchCodingTask(
     }
     await bootstrap.start(2468, sessionEnv);
 
-    // Install + start REST proxy
+    // Install + start REST proxy (startProxy waits for health before returning)
     const fs = await import("node:fs");
     const path = await import("node:path");
     const { fileURLToPath } = await import("node:url");
