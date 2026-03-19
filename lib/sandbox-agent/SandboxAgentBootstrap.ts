@@ -148,6 +148,10 @@ export class SandboxAgentBootstrap {
    * Start the REST proxy as a background process.
    * Returns the proxy base URL (e.g. https://sandbox-id.sbx.vercel.app:2469).
    *
+   * Waits for the proxy to become healthy (GET /health returns {ok:true})
+   * before returning. This prevents race conditions where the caller POSTs
+   * to the proxy before it has bound to the port.
+   *
    * Must be called after installProxy() and start() (agent server must be running).
    */
   async startProxy(
@@ -167,6 +171,27 @@ export class SandboxAgentBootstrap {
       detached: true,
     });
 
-    return this.sandbox.domain(port);
+    const baseUrl = this.sandbox.domain(port);
+
+    // Wait for proxy to become healthy before returning
+    const maxAttempts = 30;
+    const intervalMs = 500;
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const res = await fetch(`${baseUrl}/health`, {
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (res.ok) {
+          const body = await res.json().catch(() => null);
+          if (body?.ok === true) return baseUrl;
+        }
+      } catch {
+        // Not ready yet
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+
+    // Return URL anyway — caller will handle unhealthy proxy
+    return baseUrl;
   }
 }
