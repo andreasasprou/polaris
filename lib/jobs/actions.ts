@@ -1,6 +1,5 @@
 import { eq, and, asc, desc, inArray, sql, isNull, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { interactiveSessions } from "@/lib/sessions/schema";
 import { jobs, jobAttempts, jobEvents, callbackInbox } from "./schema";
 import type { JobStatus, AttemptStatus, JobType, JobEventType } from "./status";
 
@@ -169,22 +168,6 @@ export async function countAttempts(jobId: string): Promise<number> {
     .from(jobAttempts)
     .where(eq(jobAttempts.jobId, jobId));
   return rows[0]?.count ?? 0;
-}
-
-// ── Epoch ──
-
-/**
- * Atomically increment the session epoch and return the new value.
- * Used when creating/restoring a sandbox.
- */
-export async function incrementEpoch(sessionId: string): Promise<number> {
-  const [row] = await db
-    .update(interactiveSessions)
-    .set({ epoch: sql`epoch + 1` })
-    .where(eq(interactiveSessions.id, sessionId))
-    .returning({ epoch: interactiveSessions.epoch });
-  if (!row) throw new Error(`Session not found: ${sessionId}`);
-  return row.epoch;
 }
 
 // ── Job Events ──

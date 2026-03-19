@@ -18,12 +18,12 @@
 
 Pick the flow closest to your task. Paths show the recommended reading order:
 
-- **Changing session lifecycle?** `lib/sessions/status.ts` → `lib/sessions/actions.ts` → `lib/sessions/sandbox-lifecycle.ts`
+- **Changing session lifecycle?** `lib/sessions/status.ts` → `lib/sessions/actions.ts` → `lib/orchestration/sandbox-lifecycle.ts`
 - **Modifying PR review logic?** `lib/reviews/prompt-builder.ts` → `lib/orchestration/pr-review.ts` → `lib/reviews/output-parser.ts`
 - **Adding a new session status?** Add to `lib/sessions/status.ts` STATUS_CONFIG → Update `hooks/use-session-chat.ts` → Update `components/sessions/session-status.tsx`
 - **Changing sandbox/agent communication?** `lib/sandbox-proxy/server.ts` → `lib/sandbox-proxy/types.ts` → rebuild with `pnpm build:proxy`
 - **Modifying event consolidation?** `lib/sandbox-agent/event-types.ts` (consolidateEvents) → `hooks/use-session-chat.ts` (consumer)
-- **Working with jobs/sweeper?** `lib/jobs/schema.ts` → `lib/jobs/actions.ts` → `lib/jobs/sweeper.ts` → `lib/jobs/callbacks.ts`
+- **Working with jobs/sweeper?** `lib/jobs/schema.ts` → `lib/jobs/actions.ts` → `lib/orchestration/sweeper.ts` → `lib/orchestration/callback-processor.ts`
 - **Sandbox provisioning/health?** `lib/sandbox/SandboxManager.ts` → `lib/sandbox/SandboxHealthMonitor.ts` → `lib/sandbox/GitOperations.ts`
 
 ## Anti-Patterns

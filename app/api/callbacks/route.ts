@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { BodyTooLargeError, readRequestBody } from "@/lib/http/request-body";
 import { verifyCallback } from "@/lib/jobs/callback-auth";
-import { ingestCallback } from "@/lib/jobs/callbacks";
+import { ingestCallback } from "@/lib/orchestration/callback-processor";
 import { getJob } from "@/lib/jobs/actions";
 import type { CallbackType } from "@/lib/jobs/status";
 import { withEvlog, useLogger } from "@/lib/evlog";

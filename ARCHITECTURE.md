@@ -23,11 +23,11 @@ delivers HMAC-signed callbacks back to the Polaris API.
 │  app/api/callbacks                        (sandbox→API) │
 │  app/api/cron/sweeper                     (every 2 min) │
 │                                                         │
-│  lib/sessions/prompt-dispatch.ts   → POST /prompt ──────┤──┐
-│  lib/routing/trigger-router.ts     → routeGitHubEvent   │  │
-│  lib/orchestration/pr-review.ts    → dispatchPrReview   │  │
-│  lib/orchestration/coding-task.ts  → dispatchCodingTask │  │
-│  lib/jobs/sweeper.ts               → runSweep           │  │
+│  lib/orchestration/prompt-dispatch.ts → POST /prompt ────┤──┐
+│  lib/routing/trigger-router.ts       → routeGitHubEvent │  │
+│  lib/orchestration/pr-review.ts      → dispatchPrReview │  │
+│  lib/orchestration/coding-task.ts    → dispatchCodingTask│  │
+│  lib/orchestration/sweeper.ts        → runSweep         │  │
 ├─────────────────────────────────────────────────────────┤  │
 │  PostgreSQL  (Drizzle ORM)                              │  │
 │  jobs, job_attempts, callback_inbox, job_events,        │  │
@@ -72,7 +72,7 @@ delivers HMAC-signed callbacks back to the Polaris API.
 
 1. **`app/api/interactive-sessions/[sessionId]/prompt/route.ts`** — POST handler.
    Authenticates via `lib/auth/session.ts`, validates prompt, generates `requestId`.
-2. **`lib/sessions/prompt-dispatch.ts` → `dispatchPromptToSession()`** — entry point.
+2. **`lib/orchestration/prompt-dispatch.ts` → `dispatchPromptToSession()`** — entry point.
    - Loads session via `getInteractiveSessionForOrg()`.
    - Guards against double-dispatch (`getActiveJobForSession()`).
    - Heals stale active state (active + no live job → CAS to idle).
@@ -80,7 +80,7 @@ delivers HMAC-signed callbacks back to the Polaris API.
    - Resolves agent API key + repo via `resolveSessionCredentials()`.
 3. **Tier 1 / Tier 2 sandbox check** — `probeSandboxHealth()` pings `GET /health` on
    the existing proxy URL. If dead or missing:
-   - **`lib/sessions/sandbox-lifecycle.ts` → `ensureSandboxReady()`** — provisions a
+   - **`lib/orchestration/sandbox-lifecycle.ts` → `ensureSandboxReady()`** — provisions a
      Vercel Sandbox (from snapshot or cold git clone via `SandboxManager`), increments
      session epoch, ends stale runtimes, creates a new runtime row, bootstraps the
      `sandbox-agent` server (:2468) and REST proxy (:2469) via `SandboxAgentBootstrap`.
@@ -99,14 +99,14 @@ delivers HMAC-signed callbacks back to the Polaris API.
    - On completion: emits `prompt_complete` or `prompt_failed` callback.
 7. **`app/api/callbacks/route.ts`** — receives the callback. Verifies HMAC signature
    via `lib/jobs/callback-auth.ts` → `verifyCallback()`.
-8. **`lib/jobs/callbacks.ts` → `ingestCallback()`** —
+8. **`lib/orchestration/callback-processor.ts` → `ingestCallback()`** —
    epoch fence, idempotent INSERT into `callback_inbox`, inline processing:
    - `prompt_accepted` → CAS attempt `dispatching→accepted`, CAS job `pending→accepted`.
    - `prompt_complete` → CAS attempt→completed, CAS job→`agent_completed`,
      CAS session `active→idle`, triggers `runPostProcessing()`.
    - `prompt_failed` → CAS attempt→failed, CAS job→`failed_retryable` or `cancelled`,
      CAS session `active→idle`.
-9. **`lib/jobs/postprocess.ts` → `runPostProcessing()`** —
+9. **`lib/orchestration/postprocess.ts` → `runPostProcessing()`** —
    CAS job `agent_completed→postprocess_pending`. For `prompt` jobs: no-op → completed.
    For `coding_task`: git push + PR creation. For `review`: parse output, post GitHub
    comment, complete check, release lock.
@@ -171,11 +171,9 @@ sessions. Includes review lock acquisition/release and pending-queue management.
 **Depends on:** `lib/db`, `lib/sessions/schema`, `lib/integrations/schema`, `lib/secrets/schema`, `lib/reviews/types`.
 
 ### `lib/credentials`
-AES-256-GCM encryption/decryption of secrets at rest, and a resolver that
-loads all credentials needed for an automation run (agent key, repo, GitHub
-installation ID, model params).
-**Key exports:** `encrypt()`, `decrypt()`, `resolveCredentials()`.
-**Depends on:** `lib/automations`, `lib/integrations`, `lib/secrets`.
+AES-256-GCM encryption/decryption of secrets at rest.
+**Key exports:** `encrypt()`, `decrypt()`.
+**Depends on:** nothing (pure crypto utilities).
 
 ### `lib/db`
 Drizzle ORM client and consolidated schema re-exports. All table definitions
@@ -184,11 +182,11 @@ live in their respective domain directories; `lib/db/schema.ts` re-exports them.
 **Depends on:** drizzle-orm, @neondatabase/serverless.
 
 ### `lib/errors`
-Typed error hierarchy. `RequestError` for HTTP error responses. `SessionError`
-with structured error codes, phases, and a classification heuristic that maps
-unknown errors to known codes (sandbox unreachable, prompt timeout, etc.).
-**Key exports:** `RequestError`, `SessionError`, `toStructuredError()`.
-**Depends on:** `lib/sandbox` (SandboxUnreachableError), `lib/sandbox-agent` (PromptTimeoutError).
+Typed error hierarchy. `RequestError` for HTTP error responses.
+`session-error-types.ts` defines structured error codes, phases, and a
+catalog — safe for client-side use (no server imports).
+**Key exports:** `RequestError`, `parseSessionError()`, `ERROR_CATALOG`.
+**Depends on:** nothing.
 
 ### `lib/http`
 Request body parsing utilities shared by API routes. Guards against oversized
@@ -206,11 +204,11 @@ installation token minting, PR creation, repository sync. Schema for
 ### `lib/jobs`
 The v2 job coordination layer. Contains the `jobs`, `jobAttempts`, `callbackInbox`,
 and `jobEvents` tables, CAS operations for job and attempt status transitions,
-HMAC key generation/verification, callback ingestion, post-processing dispatch,
-and the sweeper (timeout, dispatch-unknown reconciliation, stuck postprocess
-retry, stale session healing, stale review lock release).
+and HMAC key generation/verification. Pure domain CRUD — no cross-domain
+orchestration (callback processing, post-processing, and sweeper logic live
+in `lib/orchestration/`).
 **Key types:** `jobs`, `jobAttempts`, `callbackInbox`, `JobStatus`, `AttemptStatus`, `CallbackType`, `JobType`.
-**Depends on:** `lib/db`, `lib/sessions`, `lib/automations`, `lib/orchestration`, `lib/reviews`, `lib/sandbox`.
+**Depends on:** `lib/db`.
 
 ### `lib/metrics`
 Lightweight step-level timing for pipeline instrumentation. Produces a
@@ -219,13 +217,19 @@ JSONB-friendly `StepMetrics` object stored on `automationRuns.metrics`.
 **Depends on:** nothing.
 
 ### `lib/orchestration`
-High-level dispatch logic for coding tasks and PR reviews. `dispatchCodingTask()`
-provisions a sandbox, bootstraps the agent, creates a job, and POSTs /prompt.
-`dispatchPrReview()` handles lock acquisition, filtering, diff/guideline
-gathering, prompt building, and dispatch with inline retry.
-`finalizeReviewRun()` releases locks and drains queued reviews.
-**Key exports:** `dispatchCodingTask()`, `dispatchPrReview()`, `finalizeReviewRun()`.
-**Depends on:** `lib/jobs`, `lib/sessions`, `lib/sandbox`, `lib/sandbox-agent`, `lib/reviews`, `lib/automations`, `lib/integrations`, `lib/credentials`.
+Layer 3 — multi-domain workflows that coordinate across sessions, jobs, sandbox,
+and automations. Contains:
+- `coding-task.ts` — provisions sandbox, bootstraps agent, creates job, POSTs /prompt.
+- `pr-review.ts` — lock acquisition, filtering, diff/guideline gathering, prompt building, dispatch with retry.
+- `prompt-dispatch.ts` — two-tier session dispatch (alive sandbox vs. provision).
+- `sandbox-lifecycle.ts` — sandbox provisioning, snapshot-and-hibernate, destroy.
+- `callback-processor.ts` — epoch fence, callback ingestion, session healing.
+- `postprocess.ts` — coding task PR creation, review comment posting, check completion.
+- `sweeper.ts` — job timeout, dispatch-unknown reconciliation, stale session healing, review lock release.
+- `credential-resolver.ts` — loads all credentials for an automation run.
+- `review-lifecycle.ts` — releases locks and drains queued reviews.
+**Key exports:** `dispatchCodingTask()`, `dispatchPrReview()`, `dispatchPromptToSession()`, `ensureSandboxReady()`, `ingestCallback()`, `runSweep()`, `resolveCredentials()`.
+**Depends on:** `lib/jobs`, `lib/sessions`, `lib/sandbox`, `lib/sandbox-agent`, `lib/reviews`, `lib/automations`, `lib/integrations`, `lib/credentials`, `lib/secrets`.
 
 ### `lib/reviews`
 PR review domain logic: event normalization, diff fetching, file classification,
@@ -292,14 +296,14 @@ Encrypted secret storage for agent API keys. Schema for the `secrets` table
 ### `lib/sessions`
 Interactive session lifecycle. Schema for `interactiveSessions`,
 `interactiveSessionRuntimes`, `interactiveSessionCheckpoints`,
-`interactiveSessionTurns`. CAS-based status transitions. Prompt dispatch
-(two-tier: alive sandbox vs. provision). Sandbox lifecycle (ensure ready,
-snapshot-and-hibernate, destroy). HITL forwarding to the sandbox proxy.
-Status model with capability flags (`canSend`, `pollIntervalMs`, `canStop`,
-`isTerminal`).
+`interactiveSessionTurns`. CAS-based status transitions, epoch management,
+runtime CRUD, and checkpoint/hibernation transactions. Pure domain CRUD —
+orchestration logic (prompt dispatch, sandbox lifecycle) lives in
+`lib/orchestration/`. Status model with capability flags (`canSend`,
+`pollIntervalMs`, `canStop`, `isTerminal`).
 **Key types:** `interactiveSessions`, `interactiveSessionRuntimes`, `SessionStatus`.
-**Key exports:** `casSessionStatus()`, `dispatchPromptToSession()`, `ensureSandboxReady()`, `snapshotAndHibernate()`, `STATUS_CONFIG`.
-**Depends on:** `lib/db`, `lib/jobs`, `lib/sandbox`, `lib/sandbox-agent`, `lib/integrations`, `lib/secrets`, `lib/credentials`.
+**Key exports:** `casSessionStatus()`, `incrementEpoch()`, `hibernateSession()`, `STATUS_CONFIG`.
+**Depends on:** `lib/db`.
 
 ---
 

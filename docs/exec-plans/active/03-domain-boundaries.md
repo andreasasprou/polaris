@@ -1,6 +1,6 @@
 ---
 title: Define Domain Boundaries & Dependency Rules
-status: active
+status: completed
 created: 2026-03-19
 owner: andreas
 related_prs: []
@@ -152,21 +152,21 @@ No bidirectional coupling between top-level `lib/` directories. All cross-layer 
 
 ## Progress
 
-- [ ] Phase 1a: Fix errors/ upward imports
-- [ ] Phase 1b: Move credentials/resolver.ts to orchestration/
-- [ ] Phase 2a: Move incrementEpoch to sessions/actions.ts
-- [ ] Phase 2b: Move postprocess, callback-processor, sweeper to orchestration/
-- [ ] Phase 2c: Move prompt-dispatch, sandbox-lifecycle to orchestration/
-- [ ] Phase 3: Install eslint-plugin-import-x + configure rules
-- [ ] Phase 3: Add directory-level coupling check
-- [ ] Phase 4: Verify CI catches violations
-- [ ] Update ARCHITECTURE.md module map after moves
+- [x] Phase 1a: Fix errors/ upward imports (deleted dead session-errors.ts)
+- [x] Phase 1b: Move credentials/resolver.ts to orchestration/
+- [x] Phase 2a: Move incrementEpoch to sessions/actions.ts
+- [x] Phase 2b: Move postprocess, callback-processor, sweeper to orchestration/
+- [x] Phase 2c: Move prompt-dispatch, sandbox-lifecycle to orchestration/
+- [x] Phase 3: Install eslint-plugin-import-x + configure rules
+- [x] Phase 3: Add directory-level coupling check (scripts/check-deps.sh)
+- [x] Phase 4: Verify CI catches violations (pnpm lint + pnpm check:deps)
+- [x] Update ARCHITECTURE.md module map after moves
 
 ## Completion Criteria
 
-- [ ] `pnpm lint` passes with no layer violations
-- [ ] No bidirectional imports between top-level `lib/` directories at the same layer
-- [ ] ESLint `no-restricted-paths` passes with zero violations
-- [ ] Dynamic imports are not used to work around layer violations (lazy loading of heavy modules remains acceptable)
-- [ ] ARCHITECTURE.md module map updated
-- [ ] `pnpm typecheck` passes
+- [x] `pnpm lint` passes with no layer violations
+- [x] No bidirectional imports between top-level `lib/` directories at the same layer
+- [x] ESLint `no-restricted-paths` passes with zero violations
+- [x] Dynamic imports are not used to work around layer violations (lazy loading of heavy modules remains acceptable)
+- [x] ARCHITECTURE.md module map updated
+- [x] `pnpm typecheck` passes (only pre-existing evlog type errors remain)

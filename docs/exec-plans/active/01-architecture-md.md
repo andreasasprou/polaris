@@ -1,6 +1,6 @@
 ---
 title: Create ARCHITECTURE.md
-status: active
+status: completed
 created: 2026-03-19
 owner: andreas
 related_prs: []

@@ -204,7 +204,7 @@ export async function dispatchCodingTask(
  * Resolve automation context from payload.
  */
 async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
-  const { resolveCredentials } = await import("@/lib/credentials/resolver");
+  const { resolveCredentials } = await import("@/lib/orchestration/credential-resolver");
   const creds = await resolveCredentials(payload.automationId);
   if (!creds) {
     throw new Error(

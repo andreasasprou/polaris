@@ -5,7 +5,7 @@ import { getSessionWithOrg } from "@/lib/auth/session";
 import { RequestError } from "@/lib/errors/request-error";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
-import { resolveSessionCredentials } from "@/lib/sessions/prompt-dispatch";
+import { resolveSessionCredentials } from "@/lib/orchestration/prompt-dispatch";
 import { withEvlog } from "@/lib/evlog";
 
 /**

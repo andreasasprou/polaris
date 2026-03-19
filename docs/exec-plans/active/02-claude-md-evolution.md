@@ -1,6 +1,6 @@
 ---
 title: Evolve CLAUDE.md with Navigation Pointers and Anti-Patterns
-status: active
+status: completed
 created: 2026-03-19
 owner: andreas
 related_prs: []
