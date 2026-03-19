@@ -1,18 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationsByOrg } from "@/lib/automations/queries";
 import { createAutomation } from "@/lib/automations/actions";
 import { validateAutomationRelationsForOrg } from "@/lib/automations/validation";
 import { RequestError } from "@/lib/errors/request-error";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
 
   const automations = await findAutomationsByOrg(orgId);
   return NextResponse.json({ automations });
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
@@ -52,4 +53,4 @@ export async function POST(req: NextRequest) {
     }
     throw error;
   }
-}
+});

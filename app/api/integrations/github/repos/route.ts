@@ -4,8 +4,9 @@ import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
 import { db } from "@/lib/db";
 import { createGitHubApp } from "@/lib/integrations/github";
 import { repositories } from "@/lib/integrations/schema";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
 
   const installations = await findGithubInstallationsByOrg(orgId);
@@ -60,4 +61,4 @@ export async function GET() {
   }
 
   return NextResponse.json({ repos: allRepos });
-}
+});

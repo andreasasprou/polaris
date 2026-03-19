@@ -10,6 +10,7 @@
 
 import { casJobStatus, getJob } from "./actions";
 import type { JobStatus } from "./status";
+import { useLogger } from "@/lib/evlog";
 
 // ── Main Dispatch ──
 
@@ -40,18 +41,19 @@ export async function runPostProcessing(jobId: string): Promise<void> {
       case "prompt":
         // Interactive session prompts have no post-processing
         break;
-      default:
-        console.warn(`[postprocess] Unknown job type: ${job.type}`);
+      default: {
+        const log = useLogger();
+        log.set({ postprocess: { unknownType: job.type } });
+      }
     }
 
     // CAS to completed
     await casJobStatus(jobId, ["postprocess_pending"], "completed");
   } catch (error) {
     // Leave in postprocess_pending for sweeper retry
-    console.error(
-      `[postprocess] Failed for job ${jobId}:`,
-      error instanceof Error ? error.message : error,
-    );
+    const log = useLogger();
+    log.error(error instanceof Error ? error : new Error(String(error)));
+    log.set({ postprocess: { failed: jobId } });
     throw error;
   }
 }
@@ -93,7 +95,8 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   const sandboxId = payload.sandboxId as string | undefined;
 
   if (!sandboxId || !branchName || !baseSha || !owner || !repo) {
-    console.error("[postprocess] Missing required payload for coding task");
+    const log = useLogger();
+    log.set({ postprocess: { error: "missing_payload", jobId: job.id } });
     if (automationRunId) {
       await updateAutomationRun(automationRunId, {
         status: "failed",
@@ -109,7 +112,8 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   try {
     sandbox = await Sandbox.get({ sandboxId });
   } catch {
-    console.error(`[postprocess] Sandbox ${sandboxId} not found`);
+    const log = useLogger();
+    log.set({ postprocess: { error: "sandbox_not_found", sandboxId } });
     if (automationRunId) {
       await updateAutomationRun(automationRunId, {
         status: "failed",
@@ -134,6 +138,34 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
       ? `Agent made changes:\n${changes.diffSummary}`
       : "Agent completed without making changes.";
 
+    // Generate AI commit message and PR title from actual diff
+    let commitMessage = `fix: ${title}`;
+    let prTitle = title;
+
+    if (job.automationId && changes.changed) {
+      try {
+        const { resolveCredentials } = await import("@/lib/credentials/resolver");
+        const creds = await resolveCredentials(job.automationId);
+        if (
+          creds?.provider === "anthropic" &&
+          !creds.agentApiKey.startsWith("sk-ant-oat")
+        ) {
+          const metadataCtx = { apiKey: creds.agentApiKey, provider: creds.provider };
+          const { generateCommitMessage, generatePrTitle } = await import(
+            "@/lib/orchestration/metadata"
+          );
+          const [cmResult, prResult] = await Promise.allSettled([
+            generateCommitMessage(title, changes.diffSummary, changes.filesChanged, metadataCtx),
+            generatePrTitle(title, changes.diffSummary, metadataCtx),
+          ]);
+          if (cmResult.status === "fulfilled") commitMessage = cmResult.value;
+          if (prResult.status === "fulfilled") prTitle = prResult.value;
+        }
+      } catch {
+        // Metadata generation is best-effort — fall through to defaults
+      }
+    }
+
     let prUrl: string | undefined;
     let commitSha: string | undefined;
 
@@ -141,7 +173,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
     if (changes.changed && allowPush && !sideEffects.committed) {
       const gitResult = await git.commitAndPush(
         branchName,
-        `fix: ${title}`,
+        commitMessage,
         baseSha,
       );
       commitSha = gitResult.commitSha;
@@ -156,16 +188,15 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
             repo,
             head: branchName,
             base: baseBranch,
-            title,
+            title: prTitle,
             body: `Automated PR by Polaris (${agentType} agent).\n\n${changes.diffSummary}`,
           });
           prUrl = pr.url;
           await markSideEffect(job.id, "pr_created");
         } catch (err) {
-          console.error(
-            "[postprocess] Failed to create PR:",
-            err instanceof Error ? err.message : err,
-          );
+          const log = useLogger();
+          log.error(err instanceof Error ? err : new Error(String(err)));
+          log.set({ postprocess: { prCreationFailed: true } });
         }
       }
     }
@@ -261,9 +292,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
         });
         await markSideEffect(job.id, "stale_marked");
       } catch (err) {
-        console.warn(
-          `[postprocess] Failed to mark comment stale: ${err instanceof Error ? err.message : err}`,
-        );
+        const log = useLogger();
+        log.set({ postprocess: { staleMarkFailed: err instanceof Error ? err.message : String(err) } });
       }
     }
 
@@ -336,14 +366,18 @@ async function postprocessReview(job: JobRow): Promise<void> {
           }
         }
       } catch (err) {
-        console.error(
-          `[postprocess] Failed to post review comment: ${err instanceof Error ? err.message : err}`,
-        );
+        const log = useLogger();
+        log.error(err instanceof Error ? err : new Error(String(err)));
+        log.set({ postprocess: { commentPostFailed: true } });
       }
     }
 
     // 5. Complete GitHub check
     if (checkRunId && !sideEffects.check_completed) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
+      const detailsUrl = automationRunId && appUrl
+        ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/runs/${automationRunId}`
+        : undefined;
       try {
         if (parsed) {
           await completeCheck({
@@ -353,6 +387,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             checkRunId,
             verdict: parsed.verdict,
             summary: parsed.summary,
+            detailsUrl,
           });
         } else {
           await completeCheck({
@@ -362,13 +397,13 @@ async function postprocessReview(job: JobRow): Promise<void> {
             checkRunId,
             verdict: "ATTENTION",
             summary: "Review completed but output could not be parsed.",
+            detailsUrl,
           });
         }
         await markSideEffect(job.id, "check_completed");
       } catch (err) {
-        console.warn(
-          `[postprocess] Failed to complete check: ${err instanceof Error ? err.message : err}`,
-        );
+        const log = useLogger();
+        log.set({ postprocess: { checkCompleteFailed: err instanceof Error ? err.message : String(err) } });
       }
     }
 

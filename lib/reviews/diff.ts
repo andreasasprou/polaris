@@ -1,4 +1,5 @@
 import type { Octokit } from "octokit";
+import { useLogger } from "@/lib/evlog";
 
 export interface DiffResult {
   /** Raw unified diff string */
@@ -61,7 +62,8 @@ export async function fetchPRDiff(
   } catch (err) {
     // GitHub returns 422 "diff too large" for PRs over 20k lines.
     // Fall back to reconstructing a diff from per-file patches (listFiles).
-    console.log(`[diff] Full diff too large for PR #${prNumber}, reconstructing from file patches`);
+    const log = useLogger();
+    log.set({ diff: { tooLarge: true, prNumber, fallback: "file_patches" } });
     diff = reconstructDiffFromPatches(allFiles);
     truncated = true;
   }

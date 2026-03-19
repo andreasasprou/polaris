@@ -1,14 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationById } from "@/lib/automations/queries";
 import { updateAutomation, deleteAutomation } from "@/lib/automations/actions";
 import { validateAutomationRelationsForOrg } from "@/lib/automations/validation";
 import { RequestError } from "@/lib/errors/request-error";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET(
-  _req: NextRequest,
+export const GET = withEvlog(async (
+  _req: Request,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
 
   const { id } = await params;
@@ -19,12 +20,12 @@ export async function GET(
   }
 
   return NextResponse.json({ automation });
-}
+});
 
-export async function PUT(
-  req: NextRequest,
+export const PUT = withEvlog(async (
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
 
   const { id } = await params;
@@ -61,12 +62,12 @@ export async function PUT(
     }
     throw error;
   }
-}
+});
 
-export async function DELETE(
-  _req: NextRequest,
+export const DELETE = withEvlog(async (
+  _req: Request,
   { params }: { params: Promise<{ id: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
 
   const { id } = await params;
@@ -78,4 +79,4 @@ export async function DELETE(
 
   await deleteAutomation(id);
   return NextResponse.json({ ok: true });
-}
+});

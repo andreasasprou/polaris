@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET() {
+export const GET = withEvlog(async () => {
   try {
     const { orgId } = await getSessionWithOrg();
     const installations = await findGithubInstallationsByOrg(orgId);
@@ -13,4 +14,4 @@ export async function GET() {
   } catch {
     return NextResponse.json({ installed: false, count: 0 });
   }
-}
+});

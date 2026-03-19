@@ -12,6 +12,7 @@ import { createGitHubApp } from "@/lib/integrations/github";
 import { findGithubInstallationsByInstallationId } from "@/lib/integrations/queries";
 import { githubInstallations } from "@/lib/integrations/schema";
 import { verifyState } from "@/lib/integrations/github-state";
+import { withEvlog } from "@/lib/evlog";
 
 function toSlug(name: string): string {
   return name
@@ -24,7 +25,7 @@ function redirectWithError(baseUrl: string, path: string, error: string) {
   return NextResponse.redirect(new URL(`${path}?error=${error}`, baseUrl));
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withEvlog(async (req: NextRequest) => {
   const baseUrl = getAppBaseUrl();
   const installationIdParam = req.nextUrl.searchParams.get("installation_id");
   const state = req.nextUrl.searchParams.get("state");
@@ -182,4 +183,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard?success=org_created", baseUrl));
   }
   return NextResponse.redirect(new URL("/integrations?success=github_installed", baseUrl));
-}
+});

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import {
   getJobForOrg,
@@ -6,11 +6,12 @@ import {
   getJobEvents,
   getJobCallbacks,
 } from "@/lib/jobs/actions";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET(
-  _req: NextRequest,
+export const GET = withEvlog(async (
+  _req: Request,
   { params }: { params: Promise<{ jobId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { jobId } = await params;
 
@@ -26,4 +27,4 @@ export async function GET(
   ]);
 
   return NextResponse.json({ job, attempts, events, callbacks });
-}
+});

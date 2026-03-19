@@ -1,15 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automationRuns, automations } from "@/lib/automations/schema";
 import { repositories } from "@/lib/integrations/schema";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET(
-  _req: NextRequest,
+export const GET = withEvlog(async (
+  _req: Request,
   { params }: { params: Promise<{ runId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { runId } = await params;
 
@@ -64,4 +65,4 @@ export async function GET(
   }
 
   return NextResponse.json({ run: row });
-}
+});

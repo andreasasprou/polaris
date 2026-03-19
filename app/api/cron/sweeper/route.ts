@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { runSweep } from "@/lib/jobs/sweeper";
+import { withEvlog, useLogger } from "@/lib/evlog";
 
 // Vercel Cron handler — runs every 2 minutes.
 // Configure in vercel.json crons array with path "/api/cron/sweeper".
-export async function GET(req: Request) {
+export const GET = withEvlog(async (req: Request) => {
+  const log = useLogger();
+
   const isDevelopment = process.env.NODE_ENV === "development"
     || process.env.VERCEL_ENV === "development";
   const cronSecret = process.env.CRON_SECRET;
@@ -25,15 +28,16 @@ export async function GET(req: Request) {
 
   try {
     const result = await runSweep();
+    log.set({ sweep: result });
     return NextResponse.json({
       ok: true,
       ...result,
     });
   } catch (error) {
-    console.error("[cron/sweeper] Sweep failed:", error);
+    log.error(error instanceof Error ? error : new Error(String(error)));
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },
     );
   }
-}
+});

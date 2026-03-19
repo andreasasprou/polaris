@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { BodyTooLargeError, readRequestBody } from "@/lib/http/request-body";
 import { verifyCallback } from "@/lib/jobs/callback-auth";
 import { ingestCallback } from "@/lib/jobs/callbacks";
 import { getJob } from "@/lib/jobs/actions";
 import type { CallbackType } from "@/lib/jobs/status";
+import { withEvlog, useLogger } from "@/lib/evlog";
 
 const MAX_CALLBACK_BODY_BYTES = 1024 * 1024;
 
@@ -13,8 +14,10 @@ const MAX_CALLBACK_BODY_BYTES = 1024 * 1024;
  * Receives HMAC-signed callbacks from the sandbox REST proxy.
  * Verifies the signature, then ingests the callback into the job state machine.
  */
-export async function POST(req: NextRequest) {
-  console.log(`[callbacks] Received callback from ${req.headers.get("x-forwarded-for") ?? "unknown"}`);
+export const POST = withEvlog(async (req: Request) => {
+  const log = useLogger();
+  log.set({ callback: { sourceIp: req.headers.get("x-forwarded-for") ?? "unknown" } });
+
   let body: {
     jobId: string;
     attemptId: string;
@@ -41,6 +44,8 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+
+  log.set({ callback: { jobId: body.jobId, attemptId: body.attemptId, callbackType: body.callbackType } });
 
   // Look up job to get HMAC key
   const job = await getJob(body.jobId);
@@ -75,19 +80,21 @@ export async function POST(req: NextRequest) {
     });
 
     if (result.accepted) {
+      log.set({ callback: { accepted: true } });
       return NextResponse.json({ ok: true });
     }
 
     // Duplicate or stale — return 409 so proxy marks as delivered (no retry)
+    log.set({ callback: { accepted: false, reason: result.reason } });
     return NextResponse.json(
       { ok: false, reason: result.reason },
       { status: 409 },
     );
   } catch (error) {
-    console.error("[callbacks] Ingestion error:", error);
+    log.error(error instanceof Error ? error : new Error(String(error)));
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },
     );
   }
-}
+});

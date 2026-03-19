@@ -18,6 +18,7 @@ import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap
 import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import type { AgentType } from "@/lib/sandbox-agent/types";
 import { incrementEpoch } from "@/lib/jobs/actions";
+import { useLogger } from "@/lib/evlog";
 import {
   getInteractiveSession,
   updateInteractiveSession,
@@ -282,10 +283,9 @@ export async function snapshotAndHibernate(
     });
     return true;
   } catch (err) {
-    console.error(
-      `[sandbox-lifecycle] Hibernate DB transaction failed (orphan snapshot ${snapshotResult.snapshotId}):`,
-      err instanceof Error ? err.message : err,
-    );
+    const log = useLogger();
+    log.error(err instanceof Error ? err : new Error(String(err)));
+    log.set({ lifecycle: { hibernateFailed: true, orphanSnapshot: snapshotResult.snapshotId } });
     await casSessionStatus(sessionId, ["snapshotting"], "stopped", {
       endedAt: new Date(),
     });

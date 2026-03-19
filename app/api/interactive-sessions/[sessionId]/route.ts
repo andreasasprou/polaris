@@ -6,6 +6,7 @@ import {
 } from "@/lib/sessions/actions";
 import { getStatusConfig } from "@/lib/sessions/status";
 import { getActiveJobForSession } from "@/lib/jobs/actions";
+import { withEvlog } from "@/lib/evlog";
 
 /**
  * GET /api/interactive-sessions/:sessionId — get session details.
@@ -14,10 +15,10 @@ import { getActiveJobForSession } from "@/lib/jobs/actions";
  * If the session is in an active state but has no active job,
  * the DB is stale — heal before responding.
  */
-export async function GET(
+export const GET = withEvlog(async (
   _req: Request,
   { params }: { params: Promise<{ sessionId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
@@ -39,7 +40,7 @@ export async function GET(
   }
 
   return NextResponse.json({ session });
-}
+});
 
 /**
  * DELETE /api/interactive-sessions/:sessionId — stop an active session.
@@ -49,10 +50,10 @@ export async function GET(
  *     → prompt_failed callback → session returns to idle
  *   - Terminate session (?terminate=true): CAS → stopped, destroy sandbox, cancel active job
  */
-export async function DELETE(
+export const DELETE = withEvlog(async (
   req: Request,
   { params }: { params: Promise<{ sessionId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
@@ -141,4 +142,4 @@ export async function DELETE(
   }
 
   return NextResponse.json({ ok: true });
-}
+});

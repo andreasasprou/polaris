@@ -24,6 +24,7 @@ import {
   appendJobEvent,
 } from "./actions";
 import { runPostProcessing } from "./postprocess";
+import { useLogger } from "@/lib/evlog";
 
 const SWEEPER_LOCK_ID = 42_000_001; // Arbitrary advisory lock ID
 
@@ -38,6 +39,8 @@ export async function runSweep(): Promise<{
   staleLocksReleased: number;
   retriedJobs: number;
 }> {
+  const log = useLogger();
+
   // Try advisory lock — skip if another sweep is running
   const lockRows = await db.execute(
     sql`SELECT pg_try_advisory_lock(${SWEEPER_LOCK_ID}) AS acquired`,
@@ -45,7 +48,7 @@ export async function runSweep(): Promise<{
   const lockResult = lockRows.rows?.[0] as { acquired: boolean } | undefined;
 
   if (!lockResult?.acquired) {
-    console.log("[sweeper] Another sweep is running — skipping");
+    log.set({ sweep: { skipped: true, reason: "lock_held" } });
     return {
       timedOut: 0,
       unknownReconciled: 0,
@@ -63,6 +66,8 @@ export async function runSweep(): Promise<{
     const staleSessionsHealed = await sweepStaleActiveSessions();
     const staleLocksReleased = await sweepStaleReviewLocks();
     const retriedJobs = await sweepRetryableJobs();
+
+    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased } });
 
     return {
       timedOut,
@@ -84,6 +89,7 @@ export async function runSweep(): Promise<{
  * Mark timed-out jobs as failed_terminal and heal their sessions.
  */
 async function sweepTimedOutJobs(): Promise<number> {
+  const log = useLogger();
   const jobs = await getTimedOutJobs();
   let count = 0;
 
@@ -98,7 +104,7 @@ async function sweepTimedOutJobs(): Promise<number> {
         reason: "sweeper_timeout",
       });
       count++;
-      console.log(`[sweeper] Timed out job ${job.id}`);
+      log.set({ sweep: { [`timedOut_${job.id}`]: true } });
 
       // Heal session: active → idle so next dispatch can proceed
       if (job.sessionId) {
@@ -119,6 +125,7 @@ async function sweepTimedOutJobs(): Promise<number> {
  * Reconcile dispatch_unknown attempts by probing sandbox status.
  */
 async function sweepDispatchUnknown(): Promise<number> {
+  const log = useLogger();
   const rows = await getDispatchUnknownAttempts();
   let count = 0;
 
@@ -153,9 +160,7 @@ async function sweepDispatchUnknown(): Promise<number> {
         reason: "dispatch_unknown_expired",
       });
       count++;
-      console.log(
-        `[sweeper] Reconciled dispatch_unknown attempt ${attempt.id} → failed`,
-      );
+      log.set({ sweep: { [`reconciled_${attempt.id}`]: "failed" } });
     }
   }
 
@@ -166,6 +171,7 @@ async function sweepDispatchUnknown(): Promise<number> {
  * Retry stuck postprocess_pending jobs.
  */
 async function sweepStuckPostprocess(): Promise<number> {
+  const log = useLogger();
   const jobs = await getStuckPostprocessJobs(2);
   let count = 0;
 
@@ -180,13 +186,11 @@ async function sweepStuckPostprocess(): Promise<number> {
       if (reset) {
         await runPostProcessing(job.id);
         count++;
-        console.log(`[sweeper] Retried postprocess for job ${job.id}`);
+        log.set({ sweep: { [`postprocessRetried_${job.id}`]: true } });
       }
     } catch (err) {
-      console.error(
-        `[sweeper] Postprocess retry failed for job ${job.id}:`,
-        err instanceof Error ? err.message : err,
-      );
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { [`postprocessRetryFailed_${job.id}`]: true } });
     }
   }
 
@@ -198,6 +202,7 @@ async function sweepStuckPostprocess(): Promise<number> {
  * This catches cases where the sandbox died and the callback never arrived.
  */
 async function sweepStaleActiveSessions(): Promise<number> {
+  const log = useLogger();
   const { getStaleActiveSessions, casSessionStatus } = await import(
     "@/lib/sessions/actions"
   );
@@ -208,7 +213,7 @@ async function sweepStaleActiveSessions(): Promise<number> {
     const healed = await casSessionStatus(session.id, ["active"], "idle");
     if (healed) {
       count++;
-      console.log(`[sweeper] Healed stale active session ${session.id}`);
+      log.set({ sweep: { [`healedSession_${session.id}`]: true } });
     }
   }
 
@@ -222,6 +227,7 @@ async function sweepStaleActiveSessions(): Promise<number> {
  * the lock key (automationRunId) doesn't match any active entity.
  */
 async function sweepStaleReviewLocks(): Promise<number> {
+  const log = useLogger();
   const { getStaleReviewLocks, forceReleaseAutomationSessionLock } =
     await import("@/lib/automations/actions");
   const staleLocks = await getStaleReviewLocks();
@@ -243,9 +249,7 @@ async function sweepStaleReviewLocks(): Promise<number> {
     }
 
     count++;
-    console.log(
-      `[sweeper] Released stale review lock on ${lock.automation_session_id} (run ${lock.review_lock_job_id})`,
-    );
+    log.set({ sweep: { [`releasedLock_${lock.automation_session_id}`]: lock.review_lock_job_id } });
   }
 
   return count;

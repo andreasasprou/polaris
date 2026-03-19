@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
@@ -7,6 +7,7 @@ import { createAutomation } from "@/lib/automations/actions";
 import { findSecretByIdAndOrg } from "@/lib/secrets/queries";
 import { and, eq } from "drizzle-orm";
 import type { Intent } from "@/app/(auth)/onboarding/_components/step-intent";
+import { withEvlog } from "@/lib/evlog";
 
 const PR_REVIEW_PROMPT = `You are a staff-level engineer performing a critical pull request review.
 
@@ -298,7 +299,7 @@ function getTemplateForIntent(intent: Intent): TemplateConfig | null {
   }
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
   const body = await req.json();
 
@@ -431,4 +432,4 @@ export async function POST(req: NextRequest) {
     completed: true,
     automations: created,
   });
-}
+});

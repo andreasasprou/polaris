@@ -4,8 +4,9 @@ import crypto from "node:crypto";
 import { auth } from "@/lib/auth";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { signState } from "@/lib/integrations/github-state";
+import { withEvlog } from "@/lib/evlog";
 
-export async function GET(req: NextRequest) {
+export const GET = withEvlog(async (req: NextRequest) => {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -32,4 +33,4 @@ export async function GET(req: NextRequest) {
   const installUrl = `https://github.com/apps/${githubAppSlug}/installations/new?state=${encodeURIComponent(state)}`;
 
   return NextResponse.redirect(installUrl);
-}
+});

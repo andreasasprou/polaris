@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { RequestError } from "@/lib/errors/request-error";
 import { getInteractiveSessionForOrg } from "@/lib/sessions/actions";
 import { dispatchPromptToSession } from "@/lib/sessions/prompt-dispatch";
+import { withEvlog } from "@/lib/evlog";
 
 /**
  * POST /api/interactive-sessions/:sessionId/prompt — send a message.
@@ -11,10 +12,10 @@ import { dispatchPromptToSession } from "@/lib/sessions/prompt-dispatch";
  * v2: Dispatches via the job system. Returns { jobId } on 202 Accepted.
  * TODO(v2-phase3): Full implementation once dispatchPromptToSession is implemented.
  */
-export async function POST(
-  req: NextRequest,
+export const POST = withEvlog(async (
+  req: Request,
   { params }: { params: Promise<{ sessionId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
@@ -56,4 +57,4 @@ export async function POST(
     }
     throw error;
   }
-}
+});

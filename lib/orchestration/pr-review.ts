@@ -18,6 +18,7 @@ import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { createJob, createJobAttempt } from "@/lib/jobs/actions";
 import { resolveAgentConfig } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import { useLogger } from "@/lib/evlog";
 
 export type DispatchPrReviewInput = {
   orgId: string;
@@ -116,6 +117,9 @@ export async function dispatchPrReview(
   let targetSessionId = automationSession.interactiveSessionId;
 
   try {
+    const log = useLogger();
+    log.set({ dispatch: { automationRunId, automationId, sessionId: automationSessionId, prNumber: event.prNumber } });
+
     // 3. Apply filters
     const { shouldReviewPR } = await import("@/lib/reviews/filters");
     const filterResult = shouldReviewPR(event, config);
@@ -318,6 +322,8 @@ export async function dispatchPrReview(
     const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
     const callbackUrl = buildCallbackUrl();
 
+    log.set({ dispatch: { callbackUrl, jobId: job.id, agent: resolved.agent } });
+
     // 9. Dispatch with inline retry — health check adjacent to POST
     let currentSandboxUrl = session.sandboxBaseUrl;
     let currentEpoch = session.epoch;
@@ -330,7 +336,10 @@ export async function dispatchPrReview(
         ? await probeSandboxHealth(currentSandboxUrl)
         : false;
 
+      log.set({ dispatch: { [`attempt_${i}_health`]: { alive, sandboxId: currentSandboxId, sandboxUrl: currentSandboxUrl ? "set" : "none" } } });
+
       if (!alive) {
+        log.set({ dispatch: { [`attempt_${i}_reprovisioning`]: true } });
         const { resolveSessionCredentials } = await import("@/lib/sessions/prompt-dispatch");
         const creds = await resolveSessionCredentials(session);
 
@@ -382,7 +391,7 @@ export async function dispatchPrReview(
         ],
       };
 
-      console.log(`[dispatch] attempt ${i}/${MAX_INLINE_ATTEMPTS} → ${currentSandboxUrl}, job: ${job.id}, agent: ${resolved.agent}`);
+      log.set({ dispatch: { [`attempt_${i}_dispatching`]: { sandboxUrl: currentSandboxUrl, sandboxId: currentSandboxId } } });
 
       let response: Response | "timeout";
       try {
@@ -404,11 +413,11 @@ export async function dispatchPrReview(
       if (response === "timeout") {
         handedOff = true;
         await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown").catch(() => {});
-        console.log(`[dispatch] attempt ${i} timed out — sweeper owns recovery`);
+        log.set({ dispatch: { [`attempt_${i}_timeout`]: true } });
         return { jobId: job.id };
       }
 
-      console.log(`[dispatch] POST → ${response.status} (content-type: ${response.headers.get("content-type")})`);
+      log.set({ dispatch: { [`attempt_${i}_response`]: { status: response.status, contentType: response.headers.get("content-type") } } });
 
       // Success
       if (response.status === 202) {
@@ -421,12 +430,13 @@ export async function dispatchPrReview(
 
       // Non-202: mark attempt failed
       const body = await response.text().catch(() => "");
+      log.set({ dispatch: { [`attempt_${i}_failedBody`]: body.slice(0, 500), sandboxId: currentSandboxId } });
       await casAttemptStatus(attempt.id, ["dispatching"], "failed", {
         error: `Proxy returned ${response.status}: ${body}`,
       });
 
       if (i < MAX_INLINE_ATTEMPTS) {
-        console.log(`[dispatch] attempt ${i} failed (${response.status}), re-provisioning for retry`);
+        log.set({ dispatch: { [`attempt_${i}_retrying`]: true } });
         currentSandboxUrl = null;
         continue;
       }
@@ -435,7 +445,7 @@ export async function dispatchPrReview(
     // Both inline attempts exhausted — defer to sweeper (non-exceptional return)
     await casJobStatus(job.id, ["pending"], "failed_retryable");
     handedOff = true; // Lock stays held for sweeper retry
-    console.log(`[dispatch] inline attempts exhausted, deferring to sweeper for job ${job.id}`);
+    log.set({ dispatch: { exhaustedAttempts: true, deferredToSweeper: true } });
     return { jobId: job.id, retryDeferred: true };
   } catch (err) {
     // Mark run as failed (best-effort)

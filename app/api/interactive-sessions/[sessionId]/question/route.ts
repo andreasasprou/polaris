@@ -2,15 +2,16 @@ import { NextResponse } from "next/server";
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { getInteractiveSession } from "@/lib/sessions/actions";
 import { replyQuestion } from "@/lib/sessions/hitl";
+import { withEvlog } from "@/lib/evlog";
 
 /**
  * POST /api/interactive-sessions/:sessionId/question
  * Reply to a question request from the sandbox agent.
  */
-export async function POST(
+export const POST = withEvlog(async (
   req: Request,
   { params }: { params: Promise<{ sessionId: string }> },
-) {
+) => {
   const { orgId } = await getSessionWithOrg();
   const { sessionId } = await params;
 
@@ -38,4 +39,4 @@ export async function POST(
       { status: 502 },
     );
   }
-}
+});

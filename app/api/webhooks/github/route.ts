@@ -1,11 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { BodyTooLargeError, readRequestBody } from "@/lib/http/request-body";
 import { verifyWebhookSignature } from "@/lib/integrations/github";
 import { routeGitHubEvent } from "@/lib/routing/trigger-router";
+import { withEvlog, useLogger } from "@/lib/evlog";
 
 const MAX_GITHUB_WEBHOOK_BODY_BYTES = 10 * 1024 * 1024;
 
-export async function POST(req: NextRequest) {
+export const POST = withEvlog(async (req: Request) => {
+  const log = useLogger();
+
   let payload: string;
   try {
     payload = await readRequestBody(req, MAX_GITHUB_WEBHOOK_BODY_BYTES);
@@ -20,21 +23,21 @@ export async function POST(req: NextRequest) {
   const deliveryId = req.headers.get("x-github-delivery");
   const eventType = req.headers.get("x-github-event");
 
-  console.log(`[webhook] Received ${eventType}${deliveryId ? ` (${deliveryId})` : ""}`);
+  log.set({ webhook: { eventType, deliveryId } });
 
   if (!signature || !deliveryId || !eventType) {
-    console.log("[webhook] Missing required headers, rejecting");
+    log.set({ webhook: { outcome: "missing_headers" } });
     return NextResponse.json({ error: "Missing headers" }, { status: 400 });
   }
 
   // Verify webhook signature
   try {
     if (!verifyWebhookSignature(payload, signature)) {
-      console.log("[webhook] Invalid signature");
+      log.set({ webhook: { outcome: "invalid_signature" } });
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
   } catch (err) {
-    console.error("[webhook] Signature verification error:", err);
+    log.error(err instanceof Error ? err : new Error(String(err)));
     return NextResponse.json({ error: "Signature verification failed" }, { status: 500 });
   }
 
@@ -43,16 +46,10 @@ export async function POST(req: NextRequest) {
   const action = typeof body.action === "string" ? body.action : undefined;
   const ref = typeof body.ref === "string" ? body.ref : undefined;
 
-  console.log("[webhook] Parsed:", {
-    eventType,
-    action,
-    ref,
-    installationId,
-    deliveryId,
-  });
+  log.set({ webhook: { action, ref, installationId } });
 
   if (!installationId) {
-    console.log("[webhook] No installation ID, skipping");
+    log.set({ webhook: { outcome: "no_installation" } });
     return NextResponse.json({ ok: true });
   }
 
@@ -66,10 +63,10 @@ export async function POST(req: NextRequest) {
       payload: body,
     });
 
-    console.log(`[webhook] Routed: ${triggered} automation(s) triggered`);
+    log.set({ webhook: { triggered } });
     return NextResponse.json({ ok: true, triggered });
   } catch (err) {
-    console.error("[webhook] Routing error:", err);
+    log.error(err instanceof Error ? err : new Error(String(err)));
     return NextResponse.json({ error: "Internal routing error" }, { status: 500 });
   }
-}
+});

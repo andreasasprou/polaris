@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ParsedReviewOutput, ReviewVerdict, ReviewFinding } from "./types";
+import { useLogger } from "@/lib/evlog";
 
 // ── Strict schema (ideal agent output) ──
 
@@ -115,7 +116,8 @@ function tryParseStrict(block: string): ParsedReviewOutput | null {
     const parsed = JSON.parse(block);
     const result = ParsedOutputSchema.safeParse(parsed);
     if (result.success) return result.data;
-    console.log("[output-parser] Strict parse failed:", result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; "));
+    const log = useLogger();
+    log.set({ parser: { strictParseFailed: true, issues: result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ") } });
   } catch {
     // Not valid JSON
   }
