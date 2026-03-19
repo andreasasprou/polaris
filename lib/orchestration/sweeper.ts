@@ -260,6 +260,7 @@ async function sweepStaleReviewLocks(): Promise<number> {
  * Type-dispatched: review jobs get re-dispatched, others are terminalized.
  */
 async function sweepRetryableJobs(): Promise<number> {
+  const log = useLogger();
   const retryableJobs = await getRetryableJobs();
   let count = 0;
 
@@ -278,7 +279,7 @@ async function sweepRetryableJobs(): Promise<number> {
         await appendJobEvent(job.id, "failed", undefined, {
           reason: "max_attempts_exhausted",
         });
-        console.log(`[sweeper] Exhausted retries for job ${job.id} (${attempts.length}/${job.maxAttempts})`);
+        log.set({ sweep: { exhaustedRetries: job.id, attempts: attempts.length, maxAttempts: job.maxAttempts } });
 
         // Heal session
         if (job.sessionId) {
@@ -302,10 +303,8 @@ async function sweepRetryableJobs(): Promise<number> {
         await retryReviewDispatch(job, attempts.length + 1);
         count++;
       } catch (err) {
-        console.error(
-          `[sweeper] Retry failed for review job ${job.id}:`,
-          err instanceof Error ? err.message : err,
-        );
+        log.error(err instanceof Error ? err : new Error(String(err)));
+        log.set({ sweep: { retryFailed: job.id } });
       }
     } else {
       // Non-review jobs: terminalize for now
@@ -324,6 +323,7 @@ async function retryReviewDispatch(
   job: { id: string; sessionId: string | null; automationRunId: string | null; payload: Record<string, unknown>; createdAt: Date },
   attemptNumber: number,
 ): Promise<void> {
+  const log = useLogger();
   const {
     ensureReviewLockOwnership,
     isLatestRunForSession,
@@ -348,7 +348,7 @@ async function retryReviewDispatch(
 
   if (lockStatus === "busy") {
     await casJobStatus(job.id, ["failed_retryable"], "cancelled");
-    console.log(`[sweeper] Lock busy for job ${job.id} — cancelling`);
+    log.set({ sweep: { lockBusy: job.id, action: "cancelled" } });
     return;
   }
 
@@ -359,7 +359,7 @@ async function retryReviewDispatch(
     if (lockStatus === "acquired") {
       await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
     }
-    console.log(`[sweeper] Stale job ${job.id} — newer run exists, cancelling`);
+    log.set({ sweep: { staleJob: job.id, action: "cancelled" } });
     return;
   }
 
@@ -431,7 +431,7 @@ async function retryReviewDispatch(
     const callbackUrl = buildCallbackUrl();
     const prompt = payload.prompt as string;
 
-    console.log(`[sweeper] Retrying review job ${job.id}, attempt ${attemptNumber} → ${sandboxUrl}`);
+    log.set({ sweep: { retrying: job.id, attemptNumber, sandboxUrl } });
 
     const response = await fetch(`${sandboxUrl}/prompt`, {
       method: "POST",
@@ -461,7 +461,7 @@ async function retryReviewDispatch(
         status: "running",
         startedAt: new Date(),
       }).catch(() => {});
-      console.log(`[sweeper] Retry succeeded for job ${job.id}`);
+      log.set({ sweep: { retrySucceeded: job.id } });
       return;
     }
 
@@ -528,10 +528,9 @@ async function finalizeFailedReviewJob(
         normalizedEvent: payload.normalizedEvent as Record<string, unknown>,
       });
     } catch (err) {
-      console.error(
-        `[sweeper] Failed to finalize review job ${job.id}:`,
-        err instanceof Error ? err.message : err,
-      );
+      const log = useLogger();
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { finalizeReviewFailed: job.id } });
     }
   }
 }
