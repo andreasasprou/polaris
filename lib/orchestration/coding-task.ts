@@ -7,6 +7,7 @@
  * is triggered by the prompt_complete callback via postprocess.ts.
  */
 
+import { getCallbackUrl } from "@/lib/config/urls";
 import type { AutomationCodingTaskPayload } from "./types";
 import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
@@ -87,10 +88,7 @@ export async function dispatchCodingTask(
     const proxyBundle = fs.readFileSync(proxyBundlePath, "utf-8");
     await bootstrap.installProxy(proxyBundle);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
-    const callbackBaseUrl = appUrl
-      ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/api/callbacks`
-      : "http://localhost:3001/api/callbacks";
+    const callbackBaseUrl = getCallbackUrl();
 
     const proxyBaseUrl = await bootstrap.startProxy({
       ...sessionEnv,
