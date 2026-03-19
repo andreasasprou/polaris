@@ -5,6 +5,7 @@ import { APIError } from "better-auth";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { hasOrganizationMembership } from "@/lib/auth/session";
+import { getAppBaseUrl } from "@/lib/config/urls";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
 import { createGitHubApp } from "@/lib/integrations/github";
@@ -24,7 +25,7 @@ function redirectWithError(baseUrl: string, path: string, error: string) {
 }
 
 export async function GET(req: NextRequest) {
-  const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+  const baseUrl = getAppBaseUrl();
   const installationIdParam = req.nextUrl.searchParams.get("installation_id");
   const state = req.nextUrl.searchParams.get("state");
 

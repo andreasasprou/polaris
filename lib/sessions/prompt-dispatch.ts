@@ -5,6 +5,7 @@
  * Tier 2 (sandbox dead):  call ensureSandboxReady, then execute Tier 1
  */
 
+import { getCallbackUrl } from "@/lib/config/urls";
 import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { RequestError } from "@/lib/errors/request-error";
 import {
@@ -211,12 +212,7 @@ export async function probeSandboxHealth(baseUrl: string): Promise<boolean> {
 }
 
 export function buildCallbackUrl(): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
-  if (appUrl) {
-    const base = appUrl.startsWith("http") ? appUrl : `https://${appUrl}`;
-    return `${base}/api/callbacks`;
-  }
-  return "http://localhost:3001/api/callbacks";
+  return getCallbackUrl();
 }
 
 /**

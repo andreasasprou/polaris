@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "boot:worktree": "bash scripts/boot-worktree.sh",
+    "teardown:worktree": "bash scripts/teardown-worktree.sh"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
