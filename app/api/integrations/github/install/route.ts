@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
 import crypto from "node:crypto";
 import { auth } from "@/lib/auth";
+import { getAppBaseUrl } from "@/lib/config/urls";
 import { signState } from "@/lib/integrations/github-state";
 
 export async function GET(req: NextRequest) {
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
   });
 
   if (!session) {
-    return NextResponse.redirect(new URL("/login", process.env.APP_BASE_URL ?? "http://localhost:3000"));
+    return NextResponse.redirect(new URL("/login", getAppBaseUrl()));
   }
 
   // When creating a new org, pass null so the callback creates one
