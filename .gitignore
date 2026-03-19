@@ -41,3 +41,6 @@ next-env.d.ts
 .trigger/
 .vercel
 .claude/worktrees/
+
+# sandbox proxy bundle
+lib/sandbox-proxy/dist/
