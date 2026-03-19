@@ -267,6 +267,17 @@ export async function getDispatchUnknownAttempts() {
     .where(eq(jobAttempts.status, "dispatch_unknown"));
 }
 
+/**
+ * Get all attempts for a job (ordered by attempt number).
+ */
+export async function getAttemptsByJob(jobId: string) {
+  return db
+    .select()
+    .from(jobAttempts)
+    .where(eq(jobAttempts.jobId, jobId))
+    .orderBy(asc(jobAttempts.attemptNumber));
+}
+
 // ── Org-scoped queries (for API endpoints) ──
 
 /**

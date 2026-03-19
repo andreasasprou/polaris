@@ -249,7 +249,7 @@ async function dispatchContinuousReview(
 
   try {
     const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
-    await dispatchPrReview({
+    const result = await dispatchPrReview({
       orgId,
       automationId: automation.id,
       automationSessionId: automationSession.id,
@@ -259,6 +259,12 @@ async function dispatchContinuousReview(
       normalizedEvent: prEvent,
       checkRunId,
     });
+
+    // Dispatch deferred to sweeper — check stays pending, don't fail it
+    if (result.retryDeferred) {
+      console.log(`[router] Dispatch deferred to sweeper for automation ${automation.id}, job ${result.jobId}`);
+      return true;
+    }
   } catch (err) {
     console.error(
       `[router] Failed to dispatch PR review for automation ${automation.id}:`,

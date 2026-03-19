@@ -381,3 +381,52 @@ export async function clearPendingReviewRequest(
   });
   return pending;
 }
+
+/**
+ * Check lock ownership for sweeper retry.
+ * Returns:
+ *   "owned"    — lock is held by the given jobId (we already own it)
+ *   "acquired" — lock was free and we acquired it
+ *   "busy"     — lock is held by a different job
+ */
+export async function ensureReviewLockOwnership(input: {
+  automationSessionId: string;
+  jobId: string;
+}): Promise<"owned" | "acquired" | "busy"> {
+  const session = await getAutomationSession(input.automationSessionId);
+  if (!session) return "busy";
+
+  if (session.reviewLockJobId === input.jobId) return "owned";
+  if (!session.reviewLockJobId) {
+    const acquired = await tryAcquireAutomationSessionLock(input);
+    return acquired ? "acquired" : "busy";
+  }
+  return "busy";
+}
+
+/**
+ * Check if a review job's automation run is still the latest for its session.
+ * Used by the sweeper to skip retrying stale reviews superseded by newer runs.
+ */
+export async function isLatestRunForSession(
+  automationRunId: string,
+  createdAt: Date,
+): Promise<boolean> {
+  const { sql } = await import("drizzle-orm");
+  const { findRunById } = await import("./queries");
+  const run = await findRunById(automationRunId);
+  if (!run?.automationSessionId) return true;
+
+  const [newerRun] = await db
+    .select({ id: automationRuns.id })
+    .from(automationRuns)
+    .where(
+      and(
+        eq(automationRuns.automationSessionId, run.automationSessionId),
+        sql`${automationRuns.createdAt} > ${createdAt}`,
+      ),
+    )
+    .limit(1);
+
+  return !newerRun;
+}

@@ -210,9 +210,6 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const {
     updateAutomationRun,
     updateAutomationSession,
-    releaseAutomationSessionLock,
-    clearPendingReviewRequest,
-    createAutomationRun,
   } = await import("@/lib/automations/actions");
   const { parseReviewOutput } = await import("@/lib/reviews/output-parser");
   const { renderReviewComment, renderStaleComment } = await import(
@@ -390,58 +387,17 @@ async function postprocessReview(job: JobRow): Promise<void> {
   } finally {
     // 7. Release lock + dispatch queued review (always runs)
     if (automationSessionId) {
-      const pending = await clearPendingReviewRequest(automationSessionId);
-
-      // Lock is acquired with automationRunId (not job.id) in pr-review.ts,
-      // so release must use the same key.
-      const lockKey = automationRunId ?? job.id;
-      if (lockKey) {
-        await releaseAutomationSessionLock({
-          automationSessionId,
-          jobId: lockKey,
-        });
-      }
-
-      // Dispatch queued review after lock release
-      if (pending && automationId) {
-        try {
-          const { getAutomationSession: getSession } = await import(
-            "@/lib/automations/actions"
-          );
-          const session = await getSession(automationSessionId);
-
-          const run = await createAutomationRun({
-            automationId,
-            organizationId: orgId,
-            source: "github",
-            externalEventId: pending.deliveryId,
-            automationSessionId,
-            interactiveSessionId: session?.interactiveSessionId,
-          });
-
-          // Import and call dispatchPrReview directly (no Trigger.dev)
-          const { dispatchPrReview } = await import(
-            "@/lib/orchestration/pr-review"
-          );
-          await dispatchPrReview({
-            orgId,
-            automationId,
-            automationSessionId,
-            automationRunId: run.id,
-            installationId,
-            deliveryId: pending.deliveryId ?? "",
-            normalizedEvent: {
-              ...(payload.normalizedEvent as Record<string, unknown>),
-              headSha: pending.headSha,
-              action: pending.reason,
-            } as never, // Type will be refined when pr-review.ts is created
-          });
-        } catch (err) {
-          console.error(
-            `[postprocess] Failed to dispatch queued review: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-      }
+      const { finalizeReviewRun } = await import(
+        "@/lib/orchestration/review-lifecycle"
+      );
+      await finalizeReviewRun({
+        automationSessionId,
+        automationRunId: automationRunId ?? job.id,
+        orgId,
+        automationId,
+        installationId,
+        normalizedEvent: payload.normalizedEvent as Record<string, unknown>,
+      });
     }
   }
 }
