@@ -276,7 +276,7 @@ async function dispatchContinuousReview(
     }
   } catch (err) {
     log.error(err instanceof Error ? err : new Error(String(err)));
-    log.set({ router: { dispatchReviewFailed: automation.id, errorDetail: err instanceof Error ? err.message : String(err) } });
+    log.set({ router: { dispatchReviewFailed: automation.id } });
 
     // Mark the eagerly-created run as failed so it doesn't strand
     try {
