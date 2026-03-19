@@ -117,6 +117,9 @@ export async function dispatchPrReview(
   let targetSessionId = automationSession.interactiveSessionId;
 
   try {
+    const log = useLogger();
+    log.set({ dispatch: { automationRunId, automationId, sessionId: automationSessionId, prNumber: event.prNumber } });
+
     // 3. Apply filters
     const { shouldReviewPR } = await import("@/lib/reviews/filters");
     const filterResult = shouldReviewPR(event, config);
@@ -267,21 +270,31 @@ export async function dispatchPrReview(
     // Check if sandbox is alive — validate response body, not just status.
     // Stopped Vercel sandboxes return 200 with HTML, not JSON.
     let sandboxAlive = false;
+    let healthCheckDetail: Record<string, unknown> = {};
     if (sandboxBaseUrl) {
       try {
         const resp = await fetch(`${sandboxBaseUrl}/health`, {
           signal: AbortSignal.timeout(5_000),
         });
+        const contentType = resp.headers.get("content-type");
         if (resp.ok) {
           const body = await resp.json().catch(() => null);
           sandboxAlive = body?.ok === true;
+          healthCheckDetail = { status: resp.status, contentType, jsonOk: body?.ok, alive: sandboxAlive };
+        } else {
+          healthCheckDetail = { status: resp.status, contentType, alive: false };
         }
-      } catch {
+      } catch (err) {
         sandboxAlive = false;
+        healthCheckDetail = { error: err instanceof Error ? err.message : String(err), alive: false };
       }
+    } else {
+      healthCheckDetail = { noUrl: true, alive: false };
     }
+    log.set({ dispatch: { sandboxHealth: healthCheckDetail, sandboxId } });
 
     if (!sandboxAlive) {
+      log.set({ dispatch: { reprovisioning: true } });
       const { resolveSessionCredentials } = await import("@/lib/sessions/prompt-dispatch");
       const creds = await resolveSessionCredentials(session);
 
@@ -297,6 +310,7 @@ export async function dispatchPrReview(
       sandboxBaseUrl = result.proxyBaseUrl;
       epoch = result.epoch;
       sandboxId = result.sandboxId;
+      log.set({ dispatch: { reprovisionedSandboxId: sandboxId, newProxyUrl: sandboxBaseUrl } });
     }
 
     if (!sandboxBaseUrl) {
@@ -358,7 +372,6 @@ export async function dispatchPrReview(
       ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/api/callbacks`
       : "http://localhost:3001/api/callbacks";
 
-    const log = useLogger();
     log.set({ dispatch: { proxyUrl, callbackUrl, jobId: job.id, agent: resolved.agent } });
 
     try {
@@ -397,6 +410,7 @@ export async function dispatchPrReview(
       }
 
       const body = await response.text().catch(() => "");
+      log.set({ dispatch: { failedResponseBody: body.slice(0, 500), sandboxId } });
       const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
       await casAttemptStatus(attempt.id, ["dispatching"], "failed", {
         error: `Proxy returned ${response.status}: ${body}`,

@@ -16,6 +16,7 @@ import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { createJob, createJobAttempt } from "@/lib/jobs/actions";
 import { generateBranchName } from "./metadata";
+import { useLogger } from "@/lib/evlog";
 
 const sandboxManager = new SandboxManager();
 
@@ -31,6 +32,8 @@ export async function dispatchCodingTask(
   });
 
   const ctx = await resolveAutomationContext(payload);
+  const log = useLogger();
+  log.set({ codingTask: { automationRunId, automationId: payload.automationId, owner: ctx.owner, repo: ctx.repo, agentType: ctx.agentType } });
 
   // Mint GitHub token
   const { mintInstallationToken } = await import("@/lib/integrations/github");
@@ -64,6 +67,7 @@ export async function dispatchCodingTask(
     timeoutMs: ctx.maxDurationSeconds * 1000,
     ports: [2468, 2469],
   });
+  log.set({ codingTask: { sandboxId: sandbox.sandboxId, snapshotUsed: !!agentSnapshot } });
 
   const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
   const git = new GitOperations(commands);
@@ -74,6 +78,7 @@ export async function dispatchCodingTask(
     await git.configure({ repoUrl });
     const branchName = await branchNamePromise;
     await git.createBranch(branchName, ctx.baseBranch);
+    log.set({ codingTask: { branchName } });
     const baseSha = await git.resolveRef(`origin/${ctx.baseBranch}`);
 
     // Bootstrap agent server
@@ -147,6 +152,8 @@ export async function dispatchCodingTask(
       sandboxId: sandbox.sandboxId,
     });
 
+    log.set({ codingTask: { jobId: job.id, proxyBaseUrl } });
+
     // POST /prompt to proxy
     const response = await fetch(`${proxyBaseUrl}/prompt`, {
       method: "POST",
@@ -168,13 +175,19 @@ export async function dispatchCodingTask(
       signal: AbortSignal.timeout(30_000),
     });
 
+    log.set({ codingTask: { proxyStatus: response.status, contentType: response.headers.get("content-type") } });
+
     if (response.status !== 202) {
       const body = await response.text().catch(() => "");
+      log.set({ codingTask: { failedResponseBody: body.slice(0, 500) } });
       throw new Error(`Proxy returned ${response.status}: ${body}`);
     }
 
     return { jobId: job.id };
   } catch (error) {
+    log.error(error instanceof Error ? error : new Error(String(error)));
+    log.set({ codingTask: { failed: true, sandboxId: sandbox.sandboxId } });
+
     // On failure, clean up sandbox and mark run as failed
     await sandboxManager.destroy(sandbox);
 
