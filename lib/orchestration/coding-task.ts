@@ -15,6 +15,7 @@ import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap
 import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { createJob, createJobAttempt } from "@/lib/jobs/actions";
+import { generateBranchName } from "./metadata";
 
 const sandboxManager = new SandboxManager();
 
@@ -41,6 +42,14 @@ export async function dispatchCodingTask(
 
   const repoUrl = `https://github.com/${ctx.owner}/${ctx.repo}.git`;
 
+  // Start AI branch name concurrently — .catch ensures no unhandled rejection
+  // if sandboxManager.create() throws before we await this
+  const fallbackBranch = `agent/${Date.now()}`;
+  const branchNamePromise = generateBranchName(ctx.title, ctx.prompt, {
+    apiKey: ctx.agentApiKey,
+    provider: ctx.provider,
+  }).catch(() => fallbackBranch);
+
   // Create sandbox
   const { getActiveSnapshot } = await import("@/lib/sandbox/snapshots/queries");
   const agentSnapshot = await getActiveSnapshot(ctx.agentType);
@@ -63,7 +72,7 @@ export async function dispatchCodingTask(
   try {
     // Configure git + create branch
     await git.configure({ repoUrl });
-    const branchName = `agent/${Date.now()}`;
+    const branchName = await branchNamePromise;
     await git.createBranch(branchName, ctx.baseBranch);
     const baseSha = await git.resolveRef(`origin/${ctx.baseBranch}`);
 
@@ -210,6 +219,7 @@ async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
     prompt: creds.prompt,
     agentType: creds.agentType as import("@/lib/sandbox-agent/types").AgentType,
     agentApiKey: creds.agentApiKey,
+    provider: creds.provider,
     agentMode: creds.agentMode,
     model: creds.model,
     modelParams: creds.modelParams,

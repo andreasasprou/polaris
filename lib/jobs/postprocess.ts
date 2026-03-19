@@ -134,6 +134,34 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
       ? `Agent made changes:\n${changes.diffSummary}`
       : "Agent completed without making changes.";
 
+    // Generate AI commit message and PR title from actual diff
+    let commitMessage = `fix: ${title}`;
+    let prTitle = title;
+
+    if (job.automationId && changes.changed) {
+      try {
+        const { resolveCredentials } = await import("@/lib/credentials/resolver");
+        const creds = await resolveCredentials(job.automationId);
+        if (
+          creds?.provider === "anthropic" &&
+          !creds.agentApiKey.startsWith("sk-ant-oat")
+        ) {
+          const metadataCtx = { apiKey: creds.agentApiKey, provider: creds.provider };
+          const { generateCommitMessage, generatePrTitle } = await import(
+            "@/lib/orchestration/metadata"
+          );
+          const [cmResult, prResult] = await Promise.allSettled([
+            generateCommitMessage(title, changes.diffSummary, changes.filesChanged, metadataCtx),
+            generatePrTitle(title, changes.diffSummary, metadataCtx),
+          ]);
+          if (cmResult.status === "fulfilled") commitMessage = cmResult.value;
+          if (prResult.status === "fulfilled") prTitle = prResult.value;
+        }
+      } catch {
+        // Metadata generation is best-effort — fall through to defaults
+      }
+    }
+
     let prUrl: string | undefined;
     let commitSha: string | undefined;
 
@@ -141,7 +169,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
     if (changes.changed && allowPush && !sideEffects.committed) {
       const gitResult = await git.commitAndPush(
         branchName,
-        `fix: ${title}`,
+        commitMessage,
         baseSha,
       );
       commitSha = gitResult.commitSha;
@@ -156,7 +184,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
             repo,
             head: branchName,
             base: baseBranch,
-            title,
+            title: prTitle,
             body: `Automated PR by Polaris (${agentType} agent).\n\n${changes.diffSummary}`,
           });
           prUrl = pr.url;
