@@ -276,18 +276,28 @@ async function dispatchContinuousReview(
     }
   } catch (err) {
     log.error(err instanceof Error ? err : new Error(String(err)));
-    log.set({ router: { dispatchReviewFailed: automation.id } });
-    // Cancel the eagerly-created check — include actual error for diagnosis
+    log.set({ router: { dispatchReviewFailed: automation.id, errorDetail: err instanceof Error ? err.message : String(err) } });
+
+    // Mark the eagerly-created run as failed so it doesn't strand
+    try {
+      const { updateAutomationRun } = await import("@/lib/automations/actions");
+      await updateAutomationRun(run.id, {
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+        completedAt: new Date(),
+      });
+    } catch { /* best-effort */ }
+
+    // Cancel the eagerly-created check — generic message, detail in logs/run page
     if (checkRunId) {
       try {
         const { failCheck } = await import("@/lib/reviews/github");
-        const errorDetail = err instanceof Error ? err.message : String(err);
         await failCheck({
           installationId: input.installationId,
           owner: prEvent.owner,
           repo: prEvent.repo,
           checkRunId,
-          error: `Failed to start review task: ${errorDetail}`,
+          error: "Failed to start review task — see run details for more info.",
           detailsUrl: runDetailsUrl,
         });
       } catch { /* best-effort */ }
