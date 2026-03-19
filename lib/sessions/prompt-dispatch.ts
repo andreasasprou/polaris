@@ -194,20 +194,23 @@ export async function dispatchPromptToSession(input: {
 
 /**
  * Probe sandbox proxy health.
+ * Validates the response body (not just HTTP status) because stopped
+ * Vercel sandboxes return 200 with an HTML page, not JSON.
  */
-async function probeSandboxHealth(baseUrl: string): Promise<boolean> {
+export async function probeSandboxHealth(baseUrl: string): Promise<boolean> {
   try {
-    // sandboxBaseUrl is already the proxy URL
     const response = await fetch(`${baseUrl}/health`, {
       signal: AbortSignal.timeout(5_000),
     });
-    return response.ok;
+    if (!response.ok) return false;
+    const body = await response.json().catch(() => null);
+    return body?.ok === true;
   } catch {
     return false;
   }
 }
 
-function buildCallbackUrl(): string {
+export function buildCallbackUrl(): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
   if (appUrl) {
     const base = appUrl.startsWith("http") ? appUrl : `https://${appUrl}`;
