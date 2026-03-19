@@ -212,23 +212,7 @@ async function dispatchContinuousReview(
 
   console.log("[router] Creating automation run + dispatching review for PR", prEvent.prNumber);
 
-  // Create GitHub check immediately so it appears on the PR while the task queues
-  let checkRunId: string | undefined;
-  try {
-    const { createPendingCheck } = await import("@/lib/reviews/github");
-    const check = await createPendingCheck({
-      installationId: input.installationId,
-      owner: prEvent.owner,
-      repo: prEvent.repo,
-      headSha: prEvent.headSha,
-      checkName: automation.prReviewConfig?.checkName,
-    });
-    checkRunId = check.checkRunId;
-  } catch (err) {
-    console.log("[router] Failed to create early check run — dispatch will retry:", err instanceof Error ? err.message : String(err));
-  }
-
-  // Create run + dispatch directly
+  // Create run first so we have run.id for the check details URL
   const run = await createAutomationRun({
     automationId: automation.id,
     organizationId: orgId,
@@ -239,6 +223,29 @@ async function dispatchContinuousReview(
     automationSessionId: automationSession.id,
     interactiveSessionId: automationSession.interactiveSessionId,
   });
+
+  // Build run details URL for GitHub check links
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
+  const runDetailsUrl = appUrl
+    ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/runs/${run.id}`
+    : undefined;
+
+  // Create GitHub check so it appears on the PR while the task queues
+  let checkRunId: string | undefined;
+  try {
+    const { createPendingCheck } = await import("@/lib/reviews/github");
+    const check = await createPendingCheck({
+      installationId: input.installationId,
+      owner: prEvent.owner,
+      repo: prEvent.repo,
+      headSha: prEvent.headSha,
+      checkName: automation.prReviewConfig?.checkName,
+      detailsUrl: runDetailsUrl,
+    });
+    checkRunId = check.checkRunId;
+  } catch (err) {
+    console.log("[router] Failed to create early check run — dispatch will retry:", err instanceof Error ? err.message : String(err));
+  }
 
   if (checkRunId) {
     const { updateAutomationRun } = await import("@/lib/automations/actions");
@@ -264,16 +271,18 @@ async function dispatchContinuousReview(
       `[router] Failed to dispatch PR review for automation ${automation.id}:`,
       err instanceof Error ? err.message : err,
     );
-    // Cancel the eagerly-created check
+    // Cancel the eagerly-created check — include actual error for diagnosis
     if (checkRunId) {
       try {
         const { failCheck } = await import("@/lib/reviews/github");
+        const errorDetail = err instanceof Error ? err.message : String(err);
         await failCheck({
           installationId: input.installationId,
           owner: prEvent.owner,
           repo: prEvent.repo,
           checkRunId,
-          error: "Failed to start review task",
+          error: `Failed to start review task: ${errorDetail}`,
+          detailsUrl: runDetailsUrl,
         });
       } catch { /* best-effort */ }
     }

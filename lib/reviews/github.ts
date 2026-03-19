@@ -10,6 +10,7 @@ export async function createPendingCheck(input: {
   repo: string;
   headSha: string;
   checkName?: string;
+  detailsUrl?: string;
 }) {
   const octokit = await getInstallationOctokitById(input.installationId);
   const { data } = await octokit.rest.checks.create({
@@ -19,6 +20,7 @@ export async function createPendingCheck(input: {
     head_sha: input.headSha,
     status: "in_progress",
     started_at: new Date().toISOString(),
+    ...(input.detailsUrl ? { details_url: input.detailsUrl } : {}),
   });
   return { checkRunId: String(data.id) };
 }
@@ -49,6 +51,7 @@ export async function completeCheck(input: {
     status: "completed",
     conclusion: conclusionMap[input.verdict],
     completed_at: new Date().toISOString(),
+    ...(input.detailsUrl ? { details_url: input.detailsUrl } : {}),
     output: {
       title: `Review: ${input.verdict}`,
       summary: input.summary.slice(0, 65535),
@@ -65,6 +68,7 @@ export async function failCheck(input: {
   repo: string;
   checkRunId: string;
   error: string;
+  detailsUrl?: string;
 }) {
   const octokit = await getInstallationOctokitById(input.installationId);
   await octokit.rest.checks.update({
@@ -74,6 +78,7 @@ export async function failCheck(input: {
     status: "completed",
     conclusion: "failure",
     completed_at: new Date().toISOString(),
+    ...(input.detailsUrl ? { details_url: input.detailsUrl } : {}),
     output: {
       title: "Review Failed",
       summary: input.error.slice(0, 65535),

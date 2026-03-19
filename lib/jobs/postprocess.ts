@@ -375,6 +375,10 @@ async function postprocessReview(job: JobRow): Promise<void> {
 
     // 5. Complete GitHub check
     if (checkRunId && !sideEffects.check_completed) {
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
+      const detailsUrl = automationRunId && appUrl
+        ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/runs/${automationRunId}`
+        : undefined;
       try {
         if (parsed) {
           await completeCheck({
@@ -384,6 +388,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             checkRunId,
             verdict: parsed.verdict,
             summary: parsed.summary,
+            detailsUrl,
           });
         } else {
           await completeCheck({
@@ -393,6 +398,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             checkRunId,
             verdict: "ATTENTION",
             summary: "Review completed but output could not be parsed.",
+            detailsUrl,
           });
         }
         await markSideEffect(job.id, "check_completed");
