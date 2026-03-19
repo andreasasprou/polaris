@@ -9,4 +9,7 @@ if (env === "production") {
   run("pnpm drizzle-kit migrate");
 }
 
+console.log("Building sandbox proxy bundle…");
+run("npx tsx lib/sandbox-proxy/build.ts");
+
 run("next build");
