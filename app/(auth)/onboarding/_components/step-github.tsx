@@ -4,13 +4,18 @@ import { CheckCircleIcon, GithubIcon } from "lucide-react";
 
 export function StepGitHub({
   onContinue,
+  createNew,
 }: {
   onContinue: () => void;
+  createNew?: boolean;
 }) {
   const [connected, setConnected] = useState(false);
-  const [checking, setChecking] = useState(true);
+  const [checking, setChecking] = useState(!createNew);
 
   useEffect(() => {
+    // Skip status check when creating a new org — the org doesn't exist yet
+    if (createNew) return;
+
     async function checkInstallation() {
       try {
         const res = await fetch("/api/integrations/github/status");
@@ -25,12 +30,15 @@ export function StepGitHub({
       }
     }
     checkInstallation();
-  }, []);
+  }, [createNew]);
 
   function handleInstall() {
     // Save wizard state before redirecting
     localStorage.setItem("polaris_onboarding_step", "3");
-    window.location.href = "/api/integrations/github/install";
+    const installUrl = createNew
+      ? "/api/integrations/github/install?create=true"
+      : "/api/integrations/github/install";
+    window.location.href = installUrl;
   }
 
   if (checking) {

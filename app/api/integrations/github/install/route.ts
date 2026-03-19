@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
 import crypto from "node:crypto";
 import { auth } from "@/lib/auth";
 import { signState } from "@/lib/integrations/github-state";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -13,8 +13,12 @@ export async function GET() {
     return NextResponse.redirect(new URL("/login", process.env.APP_BASE_URL ?? "http://localhost:3000"));
   }
 
+  // When creating a new org, pass null so the callback creates one
+  const isCreateNew = req.nextUrl.searchParams.get("create") === "true";
+  const orgId = isCreateNew ? null : (session.session.activeOrganizationId ?? null);
+
   const state = signState({
-    orgId: session.session.activeOrganizationId ?? null,
+    orgId,
     userId: session.user.id,
     nonce: crypto.randomBytes(16).toString("hex"),
     exp: Math.floor(Date.now() / 1000) + 300, // 5 min
