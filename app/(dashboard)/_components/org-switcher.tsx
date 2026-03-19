@@ -90,7 +90,7 @@ export function OrgSwitcher() {
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/onboarding")}>
+            <DropdownMenuItem onClick={() => router.push("/onboarding?create=true")}>
               <PlusIcon className="size-4" />
               <span>Create new organization</span>
             </DropdownMenuItem>
