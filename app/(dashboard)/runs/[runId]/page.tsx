@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,43 +51,53 @@ export default function RunDetailPage() {
   const [loading, setLoading] = useState(true);
 
   const isTerminal = run ? TERMINAL_RUN_STATUSES.has(run.status) : false;
+  const lastJsonRef = useRef<string>("");
 
+  // Initial fetch — only re-runs when runId changes
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
     setLoading(true);
     setRun(null);
+    lastJsonRef.current = "";
 
-    const fetchRun = () => {
+    fetch(`/api/runs/${runId}`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data) => {
+        if (current) {
+          const json = JSON.stringify(data.run);
+          lastJsonRef.current = json;
+          setRun(data.run ?? null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (current) setLoading(false); });
+
+    return () => { current = false; controller.abort(); };
+  }, [runId]);
+
+  // Polling — runs while non-terminal, skips no-op updates
+  useEffect(() => {
+    if (isTerminal) return;
+
+    const controller = new AbortController();
+    let current = true;
+
+    const timer = setInterval(() => {
       fetch(`/api/runs/${runId}`, { signal: controller.signal })
         .then((r) => r.json())
         .then((data) => {
-          if (current) setRun(data.run ?? null);
+          if (!current) return;
+          const json = JSON.stringify(data.run);
+          if (json !== lastJsonRef.current) {
+            lastJsonRef.current = json;
+            setRun(data.run ?? null);
+          }
         })
-        .catch(() => {
-          // Aborted or network error — leave run as null
-        })
-        .finally(() => {
-          if (current) setLoading(false);
-        });
-    };
+        .catch(() => {});
+    }, 3000);
 
-    fetchRun();
-
-    // Poll while run is not terminal or sdkSessionId is missing
-    if (!isTerminal) {
-      const timer = setInterval(fetchRun, 3000);
-      return () => {
-        current = false;
-        controller.abort();
-        clearInterval(timer);
-      };
-    }
-
-    return () => {
-      current = false;
-      controller.abort();
-    };
+    return () => { current = false; controller.abort(); clearInterval(timer); };
   }, [runId, isTerminal]);
 
   if (loading) {
@@ -164,7 +174,10 @@ export default function RunDetailPage() {
       {run.jobId && <JobLifecycle jobId={run.jobId} />}
 
       {run.interactiveSessionId && (
-        <SandboxLogs sessionId={run.interactiveSessionId} runTerminal={isTerminal} />
+        <SandboxLogs
+          sessionId={run.interactiveSessionId}
+          fallbackError={isTerminal ? "Sandbox stopped after completion." : undefined}
+        />
       )}
     </div>
   );
@@ -565,7 +578,7 @@ type SandboxLogsData = {
   error?: string;
 };
 
-function SandboxLogs({ sessionId, runTerminal }: { sessionId: string; runTerminal?: boolean }) {
+function SandboxLogs({ sessionId, fallbackError }: { sessionId: string; fallbackError?: string }) {
   const [data, setData] = useState<SandboxLogsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -614,7 +627,7 @@ function SandboxLogs({ sessionId, runTerminal }: { sessionId: string; runTermina
           )}
           {error && (
             <p className="text-sm text-muted-foreground">
-              {runTerminal ? "Sandbox stopped after completion." : error}
+              {fallbackError ?? error}
             </p>
           )}
 

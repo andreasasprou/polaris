@@ -308,7 +308,9 @@ async function postprocessReview(job: JobRow): Promise<void> {
   // Prefer allOutput (full concatenated output) over lastMessage (only final
   // segment after last tool call) — the agent may interleave tool calls with
   // its review writing, splitting the comment across multiple text segments.
-  const agentOutput = (result.allOutput as string) || (result.lastMessage as string) || "";
+  const allOutput = typeof result.allOutput === "string" ? result.allOutput : "";
+  const lastMessage = typeof result.lastMessage === "string" ? result.lastMessage : "";
+  const agentOutput = allOutput || lastMessage;
 
   try {
     // 1. Parse output

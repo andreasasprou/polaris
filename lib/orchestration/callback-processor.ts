@@ -11,6 +11,19 @@ import {
 import type { CallbackType } from "@/lib/jobs/status";
 import { useLogger } from "@/lib/evlog";
 
+/** Extract session identifiers from an untyped callback payload, narrowing at runtime. */
+function pickSessionIdentifiers(source: Record<string, unknown>): Partial<{
+  sdkSessionId: string;
+  nativeAgentSessionId: string;
+  cwd: string;
+}> {
+  const out: Record<string, string> = {};
+  if (typeof source.sdkSessionId === "string") out.sdkSessionId = source.sdkSessionId;
+  if (typeof source.nativeAgentSessionId === "string") out.nativeAgentSessionId = source.nativeAgentSessionId;
+  if (typeof source.cwd === "string") out.cwd = source.cwd;
+  return out;
+}
+
 type IngestResult =
   | { accepted: true }
   | { accepted: false; reason: string };
@@ -151,9 +164,7 @@ async function processCallback(input: {
         // between status change and metadata write).
         const { casSessionStatus } = await import("@/lib/sessions/actions");
         await casSessionStatus(completedJobRow.sessionId, ["active"], "idle", {
-          ...(result.sdkSessionId ? { sdkSessionId: result.sdkSessionId as string } : {}),
-          ...(result.nativeAgentSessionId ? { nativeAgentSessionId: result.nativeAgentSessionId as string } : {}),
-          ...(result.cwd ? { cwd: result.cwd as string } : {}),
+          ...pickSessionIdentifiers(result),
           error: null, // clear stale errors on success
         });
       }
@@ -227,9 +238,7 @@ async function processCallback(input: {
       if (jobCasSucceeded && job.sessionId) {
         const { casSessionStatus } = await import("@/lib/sessions/actions");
         await casSessionStatus(job.sessionId, ["active"], "idle", {
-          ...(payload.sdkSessionId ? { sdkSessionId: payload.sdkSessionId as string } : {}),
-          ...(payload.nativeAgentSessionId ? { nativeAgentSessionId: payload.nativeAgentSessionId as string } : {}),
-          ...(payload.cwd ? { cwd: payload.cwd as string } : {}),
+          ...pickSessionIdentifiers(payload),
         });
       }
       break;
