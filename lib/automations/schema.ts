@@ -9,9 +9,12 @@ import {
   uniqueIndex,
   index,
   foreignKey,
+  check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
+import { keyPools } from "@/lib/key-pools/schema";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import type { PRReviewConfig, AutomationSessionMetadata } from "@/lib/reviews/types";
 import type { ModelParams } from "@/lib/sandbox-agent/types";
@@ -32,6 +35,7 @@ export const automations = pgTable(
     agentMode: text("agent_mode"),
     repositoryId: uuid("repository_id").references(() => repositories.id),
     agentSecretId: uuid("agent_secret_id").references(() => secrets.id),
+    keyPoolId: uuid("key_pool_id").references(() => keyPools.id),
     webhookKeyHash: text("webhook_key_hash").unique(),
     triggerScheduleId: text("trigger_schedule_id"),
     approvalMode: text("approval_mode").default("none").notNull(),
@@ -51,6 +55,11 @@ export const automations = pgTable(
   },
   (table) => [
     index("idx_automations_org").on(table.organizationId),
+    index("idx_automations_key_pool").on(table.keyPoolId),
+    check(
+      "chk_automations_key_source",
+      sql`${table.agentSecretId} IS NULL OR ${table.keyPoolId} IS NULL`,
+    ),
   ],
 );
 

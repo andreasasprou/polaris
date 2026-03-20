@@ -1,14 +1,16 @@
 import { getSessionWithOrg } from "@/lib/auth/session";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
+import { findKeyPoolsByOrg } from "@/lib/key-pools/queries";
 import { AutomationForm } from "../_components/automation-form";
 
 export default async function NewAutomationPage() {
   const { orgId } = await getSessionWithOrg();
 
-  const [repos, secrets] = await Promise.all([
+  const [repos, secrets, pools] = await Promise.all([
     syncReposForOrg(orgId),
     findSecretsByOrg(orgId),
+    findKeyPoolsByOrg(orgId),
   ]);
 
   return (
@@ -19,7 +21,7 @@ export default async function NewAutomationPage() {
           Set up a new agent workflow triggered by GitHub events.
         </p>
       </div>
-      <AutomationForm repos={repos} secrets={secrets} />
+      <AutomationForm repos={repos} secrets={secrets} pools={pools} />
     </div>
   );
 }

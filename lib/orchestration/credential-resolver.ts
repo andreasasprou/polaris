@@ -3,12 +3,14 @@ import {
   findGithubInstallationByIdAndOrg,
   findRepositoryByIdAndOrg,
 } from "@/lib/integrations/queries";
-import { getDecryptedSecretForOrg, findSecretByIdAndOrg } from "@/lib/secrets/queries";
+import { credentialRefFromRow } from "@/lib/key-pools/types";
+import { allocateKeyFromPool, resolveSecretKey } from "@/lib/key-pools/resolve";
 import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export type ResolvedCredentials = {
   agentApiKey: string;
   provider: string;
+  resolvedSecretId: string;
   repositoryOwner: string;
   repositoryName: string;
   defaultBranch: string;
@@ -27,6 +29,9 @@ export type ResolvedCredentials = {
 
 /**
  * Resolve all credentials and config needed to execute an automation run.
+ *
+ * This is a dispatch-level function — for pools, it allocates a key
+ * via LRU and advances lastSelectedAt.
  */
 export async function resolveCredentials(
   automationId: string,
@@ -36,14 +41,33 @@ export async function resolveCredentials(
 
   const orgId = automation.organizationId;
 
-  // Resolve the agent API key — verify org ownership
-  if (!automation.agentSecretId) return null;
-  const agentApiKey = await getDecryptedSecretForOrg(automation.agentSecretId, orgId);
-  if (!agentApiKey) return null;
+  // Resolve agent API key — pool or single secret
+  const credRef = credentialRefFromRow({
+    agentSecretId: automation.agentSecretId,
+    keyPoolId: automation.keyPoolId,
+  });
+  if (!credRef) return null;
 
-  // Look up the secret to get the provider — already org-scoped
-  const secret = await findSecretByIdAndOrg(automation.agentSecretId, orgId);
-  if (!secret) return null;
+  let agentApiKey: string;
+  let provider: string;
+  let resolvedSecretId: string;
+
+  switch (credRef.type) {
+    case "pool": {
+      const allocated = await allocateKeyFromPool(credRef.poolId, orgId);
+      agentApiKey = allocated.decryptedKey;
+      provider = allocated.provider;
+      resolvedSecretId = allocated.secretId;
+      break;
+    }
+    case "secret": {
+      const resolved = await resolveSecretKey(credRef.secretId, orgId);
+      agentApiKey = resolved.decryptedKey;
+      provider = resolved.provider;
+      resolvedSecretId = resolved.secretId;
+      break;
+    }
+  }
 
   // Resolve repository — verify org ownership
   if (!automation.repositoryId) return null;
@@ -59,7 +83,8 @@ export async function resolveCredentials(
 
   return {
     agentApiKey,
-    provider: secret.provider,
+    provider,
+    resolvedSecretId,
     repositoryOwner: repo.owner,
     repositoryName: repo.name,
     defaultBranch: repo.defaultBranch,

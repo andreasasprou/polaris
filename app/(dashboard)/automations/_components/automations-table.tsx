@@ -89,6 +89,7 @@ export function AutomationsTable({ rows }: { rows: AutomationRow[] }) {
         agentMode: automation.agentMode || undefined,
         repositoryId: automation.repositoryId || undefined,
         agentSecretId: automation.agentSecretId || undefined,
+        keyPoolId: automation.keyPoolId || undefined,
         maxDurationSeconds: automation.maxDurationSeconds,
         maxConcurrentRuns: automation.maxConcurrentRuns,
         allowPush: automation.allowPush,

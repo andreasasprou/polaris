@@ -3,6 +3,7 @@ import { getSessionWithOrg } from "@/lib/auth/session";
 import { findAutomationById } from "@/lib/automations/queries";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
+import { findKeyPoolsByOrg } from "@/lib/key-pools/queries";
 import { AutomationForm } from "../_components/automation-form";
 
 export default async function EditAutomationPage({
@@ -18,9 +19,10 @@ export default async function EditAutomationPage({
     notFound();
   }
 
-  const [repos, secrets] = await Promise.all([
+  const [repos, secrets, pools] = await Promise.all([
     syncReposForOrg(orgId),
     findSecretsByOrg(orgId),
+    findKeyPoolsByOrg(orgId),
   ]);
 
   return (
@@ -34,6 +36,7 @@ export default async function EditAutomationPage({
       <AutomationForm
         repos={repos}
         secrets={secrets}
+        pools={pools}
         initial={{
           id: automation.id,
           name: automation.name,
@@ -45,6 +48,7 @@ export default async function EditAutomationPage({
           agentMode: automation.agentMode ?? "",
           repositoryId: automation.repositoryId ?? "",
           agentSecretId: automation.agentSecretId ?? "",
+          keyPoolId: automation.keyPoolId ?? undefined,
           maxDurationSeconds: automation.maxDurationSeconds,
           allowPush: automation.allowPush,
           allowPrCreate: automation.allowPrCreate,

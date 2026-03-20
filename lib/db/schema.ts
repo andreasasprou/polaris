@@ -7,3 +7,4 @@ export * from "@/lib/routing/schema";
 export * from "@/lib/sandbox/snapshots/schema";
 export * from "@/lib/sandbox-env/schema";
 export * from "@/lib/jobs/schema";
+export * from "@/lib/key-pools/schema";

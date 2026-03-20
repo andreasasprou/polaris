@@ -39,20 +39,31 @@ export const PUT = withEvlog(async (
   const repositoryId = Object.prototype.hasOwnProperty.call(body, "repositoryId")
     ? body.repositoryId ?? null
     : existing.repositoryId;
-  const agentSecretId = Object.prototype.hasOwnProperty.call(body, "agentSecretId")
-    ? body.agentSecretId ?? null
-    : existing.agentSecretId;
+
+  // Determine agentSecretId / keyPoolId with explicit nulling on switch
+  const hasSecretInBody = Object.prototype.hasOwnProperty.call(body, "agentSecretId");
+  const hasPoolInBody = Object.prototype.hasOwnProperty.call(body, "keyPoolId");
+  let agentSecretId = hasSecretInBody ? (body.agentSecretId ?? null) : existing.agentSecretId;
+  let keyPoolId = hasPoolInBody ? (body.keyPoolId ?? null) : existing.keyPoolId;
+
+  // If switching to pool, null the secret (and vice versa)
+  if (keyPoolId && agentSecretId) {
+    if (hasPoolInBody) agentSecretId = null;
+    else if (hasSecretInBody) keyPoolId = null;
+  }
 
   try {
     const validated = await validateAutomationRelationsForOrg({
       organizationId: orgId,
       repositoryId,
       agentSecretId,
+      keyPoolId,
     });
     const automation = await updateAutomation(id, {
       ...body,
       repositoryId: validated.repositoryId,
       agentSecretId: validated.agentSecretId,
+      keyPoolId: validated.keyPoolId,
     });
 
     return NextResponse.json({ automation });

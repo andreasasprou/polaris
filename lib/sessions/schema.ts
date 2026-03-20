@@ -1,7 +1,8 @@
-import { pgTable, uuid, text, timestamp, integer, bigint, uniqueIndex, index, jsonb, foreignKey } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, integer, bigint, uniqueIndex, index, jsonb, foreignKey, check } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
+import { keyPools } from "@/lib/key-pools/schema";
 
 /**
  * Interactive agent sessions — manual, multi-turn sessions started by users.
@@ -20,6 +21,7 @@ export const interactiveSessions = pgTable("interactive_sessions", {
   // Agent config
   agentType: text("agent_type").notNull().default("claude"),
   agentSecretId: uuid("agent_secret_id").references(() => secrets.id),
+  keyPoolId: uuid("key_pool_id").references(() => keyPools.id),
   repositoryId: uuid("repository_id").references(() => repositories.id),
   prompt: text("prompt").notNull(),
 
@@ -47,7 +49,13 @@ export const interactiveSessions = pgTable("interactive_sessions", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
-});
+}, (table) => [
+  index("idx_interactive_sessions_key_pool").on(table.keyPoolId),
+  check(
+    "chk_sessions_key_source",
+    sql`${table.agentSecretId} IS NULL OR ${table.keyPoolId} IS NULL`,
+  ),
+]);
 
 /**
  * One row per sandbox lifecycle within a conversation.

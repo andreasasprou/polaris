@@ -20,6 +20,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -48,6 +49,13 @@ type Secret = {
   label: string;
 };
 
+type Pool = {
+  id: string;
+  name: string;
+  provider: string;
+  activeKeyCount: number;
+};
+
 type AutomationData = {
   id?: string;
   name: string;
@@ -59,6 +67,7 @@ type AutomationData = {
   agentMode: string;
   repositoryId: string;
   agentSecretId: string;
+  keyPoolId?: string;
   maxDurationSeconds: number;
   allowPush: boolean;
   allowPrCreate: boolean;
@@ -77,10 +86,12 @@ const CONTINUOUS_EVENTS = [
 export function AutomationForm({
   repos,
   secrets,
+  pools = [],
   initial,
 }: {
   repos: Repo[];
   secrets: Secret[];
+  pools?: Pool[];
   initial?: AutomationData;
 }) {
   const router = useRouter();
@@ -104,9 +115,12 @@ export function AutomationForm({
   const [repositoryId, setRepositoryId] = useState(
     initial?.repositoryId || "__none__",
   );
-  const [agentSecretId, setAgentSecretId] = useState(
-    initial?.agentSecretId || "__none__",
-  );
+  // Unified credential value: "pool:<id>", "secret:<id>", or "__none__"
+  const [credentialValue, setCredentialValue] = useState(() => {
+    if (initial?.keyPoolId) return `pool:${initial.keyPoolId}`;
+    if (initial?.agentSecretId) return `secret:${initial.agentSecretId}`;
+    return "__none__";
+  });
 
   // Review config (continuous mode only)
   const prReviewConfig = initial?.prReviewConfig ?? {};
@@ -134,22 +148,30 @@ export function AutomationForm({
     () => getThoughtLevels(agentType as AgentType),
     [agentType],
   );
-  const filteredSecrets = useMemo(() => {
-    const providers = getCompatibleProviders(agentType as AgentType);
-    return secrets.filter((s) =>
-      providers.includes(s.provider as "anthropic" | "openai"),
-    );
-  }, [agentType, secrets]);
+  const compatibleProviders = useMemo(
+    () => getCompatibleProviders(agentType as AgentType),
+    [agentType],
+  );
+  const filteredSecrets = useMemo(
+    () => secrets.filter((s) => compatibleProviders.includes(s.provider as "anthropic" | "openai")),
+    [secrets, compatibleProviders],
+  );
+  const filteredPools = useMemo(
+    () => pools.filter((p) => compatibleProviders.includes(p.provider as "anthropic" | "openai")),
+    [pools, compatibleProviders],
+  );
 
-  // Sync selected key with filtered list (handles stale initial values & deleted keys)
+  // Sync selected credential with filtered lists
   useEffect(() => {
-    if (
-      agentSecretId !== "__none__" &&
-      !filteredSecrets.some((s) => s.id === agentSecretId)
-    ) {
-      setAgentSecretId("__none__");
+    if (credentialValue === "__none__") return;
+    if (credentialValue.startsWith("secret:")) {
+      const id = credentialValue.slice(7);
+      if (!filteredSecrets.some((s) => s.id === id)) setCredentialValue("__none__");
+    } else if (credentialValue.startsWith("pool:")) {
+      const id = credentialValue.slice(5);
+      if (!filteredPools.some((p) => p.id === id)) setCredentialValue("__none__");
     }
-  }, [agentSecretId, filteredSecrets]);
+  }, [credentialValue, filteredSecrets, filteredPools]);
 
   // Reset model/effort/key when agent type changes if current value is invalid
   const handleAgentTypeChange = (newType: string) => {
@@ -162,15 +184,19 @@ export function AutomationForm({
     if (effortLevel && (!newLevels || !newLevels.includes(effortLevel))) {
       setEffortLevel("");
     }
-    // Reset API key if it's no longer compatible with the new agent type
-    if (agentSecretId !== "__none__") {
+    // Reset credential if it's no longer compatible with the new agent type
+    if (credentialValue !== "__none__") {
       const providers = getCompatibleProviders(newType as AgentType);
-      const selectedSecret = secrets.find((s) => s.id === agentSecretId);
-      if (
-        selectedSecret &&
-        !providers.includes(selectedSecret.provider as "anthropic" | "openai")
-      ) {
-        setAgentSecretId("__none__");
+      if (credentialValue.startsWith("secret:")) {
+        const selectedSecret = secrets.find((s) => s.id === credentialValue.slice(7));
+        if (selectedSecret && !providers.includes(selectedSecret.provider as "anthropic" | "openai")) {
+          setCredentialValue("__none__");
+        }
+      } else if (credentialValue.startsWith("pool:")) {
+        const selectedPool = pools.find((p) => p.id === credentialValue.slice(5));
+        if (selectedPool && !providers.includes(selectedPool.provider as "anthropic" | "openai")) {
+          setCredentialValue("__none__");
+        }
       }
     }
   };
@@ -204,7 +230,8 @@ export function AutomationForm({
       agentType,
       model: model || undefined,
       repositoryId: repositoryId === "__none__" ? undefined : repositoryId,
-      agentSecretId: agentSecretId === "__none__" ? undefined : agentSecretId,
+      agentSecretId: credentialValue.startsWith("secret:") ? credentialValue.slice(7) : undefined,
+      keyPoolId: credentialValue.startsWith("pool:") ? credentialValue.slice(5) : undefined,
       mode,
       modelParams: effortLevel ? { effortLevel } : {},
     };
@@ -374,31 +401,46 @@ export function AutomationForm({
           <Field>
             <FieldLabel htmlFor="secret">API key</FieldLabel>
             <Select
-              value={agentSecretId}
-              onValueChange={setAgentSecretId}
-              disabled={filteredSecrets.length === 0}
+              value={credentialValue}
+              onValueChange={setCredentialValue}
+              disabled={filteredSecrets.length === 0 && filteredPools.length === 0}
             >
               <SelectTrigger id="secret">
-                <SelectValue placeholder="Select an API key" />
+                <SelectValue placeholder="Select an API key or pool" />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
                   <SelectItem value="__none__">
-                    {filteredSecrets.length === 0
+                    {filteredSecrets.length === 0 && filteredPools.length === 0
                       ? "No keys available"
-                      : "Select an API key"}
+                      : "Select an API key or pool"}
                   </SelectItem>
-                  {filteredSecrets.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.label}
-                    </SelectItem>
-                  ))}
                 </SelectGroup>
+                {filteredPools.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel className="text-xs text-muted-foreground">Key Pools (auto-rotate)</SelectLabel>
+                    {filteredPools.map((p) => (
+                      <SelectItem key={`pool:${p.id}`} value={`pool:${p.id}`}>
+                        {p.name} ({p.activeKeyCount} keys)
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {filteredSecrets.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel className="text-xs text-muted-foreground">Individual Keys</SelectLabel>
+                    {filteredSecrets.map((s) => (
+                      <SelectItem key={`secret:${s.id}`} value={`secret:${s.id}`}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
               </SelectContent>
             </Select>
-            {filteredSecrets.length === 0 && (
+            {filteredSecrets.length === 0 && filteredPools.length === 0 && (
               <FieldDescription>
-                No {getCompatibleProviders(agentType as AgentType).join("/")} keys found.{" "}
+                No {compatibleProviders.join("/")} keys found.{" "}
                 <Link
                   href="/settings/secrets"
                   className="underline underline-offset-4 hover:text-foreground"

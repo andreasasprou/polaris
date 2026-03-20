@@ -16,7 +16,8 @@ export async function createInteractiveSession(input: {
   organizationId: string;
   createdBy: string;
   agentType: string;
-  agentSecretId?: string;
+  agentSecretId?: string | null;
+  keyPoolId?: string | null;
   repositoryId?: string;
   prompt: string;
   cwd?: string;

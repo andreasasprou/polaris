@@ -109,6 +109,7 @@ export const jobAttempts = pgTable(
     attemptNumber: integer("attempt_number").notNull(),
     epoch: integer("epoch").notNull(), // Session epoch at time of attempt
     sandboxId: text("sandbox_id"), // Which sandbox ran this attempt
+    resolvedSecretId: uuid("resolved_secret_id"), // Audit: which key was actually used (pool rotation)
 
     // State
     status: text("status").default("dispatching").notNull(),

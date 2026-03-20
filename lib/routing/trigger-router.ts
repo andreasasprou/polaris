@@ -115,7 +115,7 @@ export async function routeGitHubEvent(input: {
 // ── Continuous mode dispatch ──
 
 async function dispatchContinuousReview(
-  automation: { id: string; repositoryId: string | null; agentType: string; agentSecretId: string | null; mode: string; prReviewConfig?: import("@/lib/reviews/types").PRReviewConfig | null },
+  automation: { id: string; repositoryId: string | null; agentType: string; agentSecretId: string | null; keyPoolId: string | null; mode: string; prReviewConfig?: import("@/lib/reviews/types").PRReviewConfig | null },
   orgId: string,
   input: {
     installationId: number;
@@ -191,6 +191,7 @@ async function dispatchContinuousReview(
     scopeKey,
     agentType: automation.agentType ?? "claude",
     agentSecretId: automation.agentSecretId ?? undefined,
+    keyPoolId: automation.keyPoolId ?? undefined,
     metadata: {
       repositoryOwner: prEvent.owner,
       repositoryName: prEvent.repo,

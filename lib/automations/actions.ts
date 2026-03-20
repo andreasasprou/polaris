@@ -16,6 +16,7 @@ export async function createAutomation(input: {
   agentMode?: string;
   repositoryId?: string;
   agentSecretId?: string;
+  keyPoolId?: string;
   maxDurationSeconds?: number;
   maxConcurrentRuns?: number;
   allowPush?: boolean;
@@ -43,6 +44,7 @@ export async function updateAutomation(
     agentMode: string | null;
     repositoryId: string | null;
     agentSecretId: string | null;
+    keyPoolId: string | null;
     enabled: boolean;
     maxDurationSeconds: number;
     maxConcurrentRuns: number;
@@ -158,7 +160,8 @@ export async function findOrCreateAutomationSession(input: {
   repositoryId: string;
   scopeKey: string;
   agentType: string;
-  agentSecretId?: string;
+  agentSecretId?: string | null;
+  keyPoolId?: string | null;
   metadata: AutomationSessionMetadata;
 }): Promise<{ automationSession: NonNullable<Awaited<ReturnType<typeof findAutomationSessionByScope>>>; created: boolean }> {
   // 1. Check for existing
@@ -172,6 +175,7 @@ export async function findOrCreateAutomationSession(input: {
     createdBy: "automation",
     agentType: input.agentType,
     agentSecretId: input.agentSecretId,
+    keyPoolId: input.keyPoolId,
     repositoryId: input.repositoryId,
     prompt: "(initial PR review — prompt will be sent by orchestrator)",
   });
