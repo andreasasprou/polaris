@@ -168,18 +168,22 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
             apiKey = resolved.decryptedKey;
             provider = resolved.provider;
           } else if (credRef?.type === "pool") {
-            // Read-only: pick the first active member without stamping lastSelectedAt
+            // Read-only: find a usable Anthropic API key (not OAuth) without stamping lastSelectedAt.
+            // Iterate members because the first active one may be an OAuth token.
             const { findKeyPoolMembers } = await import("@/lib/key-pools/queries");
             const { decrypt } = await import("@/lib/credentials/encryption");
             const { findSecretByIdAndOrg } = await import("@/lib/secrets/queries");
             const members = await findKeyPoolMembers(credRef.poolId);
-            const activeMember = members.find((m) => m.enabled && !m.secretRevokedAt);
-            if (activeMember) {
-              const secret = await findSecretByIdAndOrg(activeMember.secretId, automation.organizationId);
-              if (secret && !secret.revokedAt) {
-                apiKey = decrypt(secret.encryptedValue);
-                provider = secret.provider;
-              }
+            for (const member of members) {
+              if (!member.enabled || member.secretRevokedAt) continue;
+              const secret = await findSecretByIdAndOrg(member.secretId, automation.organizationId);
+              if (!secret || secret.revokedAt) continue;
+              const decrypted = decrypt(secret.encryptedValue);
+              // Skip OAuth tokens — they can't be used for direct API calls
+              if (secret.provider === "anthropic" && decrypted.startsWith("sk-ant-oat")) continue;
+              apiKey = decrypted;
+              provider = secret.provider;
+              break;
             }
           }
 
