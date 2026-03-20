@@ -55,47 +55,97 @@ export async function getSessionEvents(
   };
 }
 
+/** Driver-compatible event shape matching @sandbox-agent/persist-postgres schema. */
+type DriverEvent = {
+  id: string;
+  eventIndex: number;
+  sessionId: string;
+  createdAt: number;
+  connectionId: string;
+  sender: string;
+  payload: Record<string, unknown>;
+};
+
+const ENSURE_TABLE_SQL = `
+  CREATE SCHEMA IF NOT EXISTS "${SCHEMA}";
+  CREATE TABLE IF NOT EXISTS "${SCHEMA}"."events" (
+    id TEXT PRIMARY KEY,
+    event_index BIGINT NOT NULL,
+    session_id TEXT NOT NULL,
+    created_at BIGINT NOT NULL,
+    connection_id TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    payload_json JSONB NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_events_session_order
+    ON "${SCHEMA}"."events"(session_id, event_index, id);
+`;
+
+let tableEnsured = false;
+
+async function ensureEventsTable() {
+  if (tableEnsured) return;
+  await pool.query(ENSURE_TABLE_SQL);
+  tableEnsured = true;
+}
+
 /**
- * Persist events received from the sandbox proxy callback.
- * This replaces in-sandbox persistence via DATABASE_URL — events are collected
- * in-memory by the proxy and sent in the prompt_complete/prompt_failed callback.
+ * Persist events received from the sandbox proxy's session_events callback.
+ * Uses the exact schema from @sandbox-agent/persist-postgres for compatibility.
+ * Idempotent via ON CONFLICT(id) DO NOTHING.
  */
-export async function persistSessionEvents(
-  sessionId: string,
-  events: Array<{ eventIndex: number; sender: string; payload: Record<string, unknown> }>,
-) {
+export async function persistSessionEvents(events: DriverEvent[]) {
   if (events.length === 0) return;
 
-  // Ensure schema + table exist
-  await pool.query(`CREATE SCHEMA IF NOT EXISTS "${SCHEMA}"`);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS "${SCHEMA}"."events" (
-      id BIGSERIAL PRIMARY KEY,
-      event_index BIGINT NOT NULL,
-      session_id TEXT NOT NULL,
-      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
-      connection_id TEXT,
-      sender TEXT NOT NULL,
-      payload_json JSONB NOT NULL
-    )
-  `);
+  await ensureEventsTable();
 
-  // Batch insert all events
   const values: unknown[] = [];
   const placeholders: string[] = [];
   let idx = 1;
 
   for (const event of events) {
-    placeholders.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++})`);
-    values.push(event.eventIndex, sessionId, event.sender, JSON.stringify(event.payload));
+    placeholders.push(
+      `($${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++}, $${idx++})`,
+    );
+    values.push(
+      event.id,
+      event.eventIndex,
+      event.sessionId,
+      event.createdAt,
+      event.connectionId,
+      event.sender,
+      JSON.stringify(event.payload),
+    );
   }
 
   await pool.query(
-    `INSERT INTO "${SCHEMA}"."events" (event_index, session_id, sender, payload_json)
+    `INSERT INTO "${SCHEMA}"."events" (id, event_index, session_id, created_at, connection_id, sender, payload_json)
      VALUES ${placeholders.join(", ")}
-     ON CONFLICT DO NOTHING`,
+     ON CONFLICT(id) DO NOTHING`,
     values,
   );
+}
+
+/**
+ * Get the highest event_index for a session. Used to compute nextEventIndex
+ * for resumed prompts so event indexes remain monotonic across turns.
+ */
+export async function getMaxEventIndex(sessionId: string): Promise<number | null> {
+  const tableCheck = await pool.query(
+    `SELECT EXISTS (
+      SELECT FROM information_schema.tables
+      WHERE table_schema = $1 AND table_name = 'events'
+    )`,
+    [SCHEMA],
+  );
+  if (!tableCheck.rows[0]?.exists) return null;
+
+  const result = await pool.query(
+    `SELECT MAX(event_index) as max_index FROM "${SCHEMA}"."events" WHERE session_id = $1`,
+    [sessionId],
+  );
+  const val = result.rows[0]?.max_index;
+  return val != null ? Number(val) : null;
 }
 
 export async function getSessionRecord(sessionId: string) {

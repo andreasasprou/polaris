@@ -26,8 +26,6 @@ const HEALTH_TIMEOUT_MS = 30_000;
 
 type PromptResult = {
   success: boolean;
-  lastMessage?: string;
-  allOutput?: string;
   sdkSessionId?: string;
   nativeAgentSessionId?: string;
   cwd?: string;
@@ -385,17 +383,12 @@ export class AcpBridge {
           ? await Promise.race([session.prompt(promptContent), ...guards])
           : await session.prompt(promptContent);
 
-      // Read persisted events for output reconstruction (correct order guaranteed)
-      const { allOutput, lastMessage } = await this.readPersistedOutput(session.id);
-
       // For native resume, session.id is the native CLI session ID, not the SDK
       // session ID used for event persistence. Use originalSdkSessionId if available.
       const sdkId = (session as NativeResumedSession).originalSdkSessionId ?? session.id;
 
       return {
         success: true,
-        lastMessage,
-        allOutput,
         sdkSessionId: sdkId,
         nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
@@ -412,85 +405,6 @@ export class AcpBridge {
       };
     } finally {
       unsubscribe?.();
-    }
-  }
-
-  /**
-   * Read persisted events and reconstruct the last message.
-   * Events are stored in correct order by the persist driver.
-   */
-  private async readPersistedOutput(
-    sessionId: string,
-  ): Promise<{ allOutput: string; lastMessage: string | undefined }> {
-    if (!this.sdk) return { allOutput: "", lastMessage: undefined };
-
-    try {
-      type IndexedEntry =
-        | { type: "text"; text: string }
-        | { type: "boundary" };
-
-      const entries: IndexedEntry[] = [];
-      let cursor: string | undefined;
-
-      for (;;) {
-        const page = await this.sdk.getEvents({
-          sessionId,
-          cursor,
-          limit: 500,
-        });
-        for (const item of page.items) {
-          const payload = item.payload as Record<string, unknown>;
-          const params = payload?.params as
-            | Record<string, unknown>
-            | undefined;
-          const update = params?.update as
-            | Record<string, unknown>
-            | undefined;
-          const updateType = update?.sessionUpdate as string | undefined;
-
-          if (updateType === "agent_message_chunk") {
-            const content = update!.content as
-              | { text?: string }
-              | undefined;
-            if (content?.text) {
-              entries.push({ type: "text", text: content.text });
-            }
-          } else if (
-            updateType === "tool_call" ||
-            updateType === "turn_ended"
-          ) {
-            entries.push({ type: "boundary" });
-          }
-        }
-        if (!page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-
-      // Reconstruct: split on boundaries, take last message
-      const messages: string[] = [];
-      let current: string[] = [];
-
-      for (const entry of entries) {
-        if (entry.type === "text") {
-          current.push(entry.text);
-        } else {
-          if (current.length > 0) {
-            messages.push(current.join(""));
-            current = [];
-          }
-        }
-      }
-      if (current.length > 0) {
-        messages.push(current.join(""));
-      }
-
-      const allOutput = messages.join("\n\n");
-      return {
-        allOutput,
-        lastMessage: messages.length > 0 ? messages[messages.length - 1] : undefined,
-      };
-    } catch {
-      return { allOutput: "", lastMessage: undefined };
     }
   }
 

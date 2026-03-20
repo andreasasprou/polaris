@@ -110,6 +110,7 @@ export const CALLBACK_TYPES = [
   "permission_requested",
   "question_requested",
   "permission_resumed",
+  "session_events",
 ] as const;
 
 export type CallbackType = (typeof CALLBACK_TYPES)[number];

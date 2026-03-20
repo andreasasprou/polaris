@@ -19,6 +19,7 @@ import {
   createTurn,
 } from "@/lib/sessions/actions";
 import { ensureSandboxReady } from "./sandbox-lifecycle";
+import { getMaxEventIndex } from "@/lib/sandbox-agent/queries";
 import { useLogger } from "@/lib/evlog";
 import { createStepTimer } from "@/lib/metrics/step-timer";
 
@@ -164,6 +165,10 @@ export async function dispatchPromptToSession(input: {
   // sandboxBaseUrl is already the proxy URL (stored as proxy URL by ensureSandboxReady)
   const proxyUrl = sandboxBaseUrl;
 
+  // Compute next event index for resumed sessions so event indexes stay monotonic
+  const maxIdx = session.sdkSessionId ? await getMaxEventIndex(session.sdkSessionId) : null;
+  const nextEventIndex = maxIdx != null ? maxIdx + 1 : 0;
+
   log.set({ dispatch: { jobId: job.id, attemptId: attempt.id, epoch } });
 
   try {
@@ -183,6 +188,7 @@ export async function dispatchPromptToSession(input: {
           cwd: "/vercel/sandbox",
           sdkSessionId: session.sdkSessionId ?? undefined,
           nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
+          nextEventIndex: nextEventIndex ?? undefined,
         },
         ...(attachments?.length ? { attachments } : {}),
       }),

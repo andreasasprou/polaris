@@ -431,6 +431,11 @@ async function retryReviewDispatch(
     const callbackUrl = buildCallbackUrl();
     const prompt = payload.prompt as string;
 
+    // Compute next event index for monotonic indexes on resume
+    const { getMaxEventIndex } = await import("@/lib/sandbox-agent/queries");
+    const maxIdx = session.sdkSessionId ? await getMaxEventIndex(session.sdkSessionId) : null;
+    const nextEventIndex = maxIdx != null ? maxIdx + 1 : 0;
+
     log.set({ sweep: { retrying: job.id, attemptNumber, sandboxUrl } });
 
     const response = await fetch(`${sandboxUrl}/prompt`, {
@@ -451,6 +456,7 @@ async function retryReviewDispatch(
           cwd: "/vercel/sandbox",
           sdkSessionId: session.sdkSessionId ?? undefined,
           nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
+          nextEventIndex: nextEventIndex ?? undefined,
         },
       }),
       signal: AbortSignal.timeout(30_000),

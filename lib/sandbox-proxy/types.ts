@@ -22,6 +22,7 @@ export type PromptConfig = {
   branch?: string;
   cwd?: string;
   env?: Record<string, string>;
+  nextEventIndex?: number;
 };
 
 // ── Prompt Request (POST /prompt body) ──
@@ -78,7 +79,8 @@ export type CallbackType =
   | "prompt_failed"
   | "permission_requested"
   | "question_requested"
-  | "permission_resumed";
+  | "permission_resumed"
+  | "session_events";
 
 export type CallbackBody = {
   jobId: string;

@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import { AcpBridge } from "./acp-bridge";
 import { AgentMonitor } from "./agent-monitor";
+import { SessionEventBatcher, reconstructOutput } from "./event-batcher";
 import { emitCallback, replayPendingCallbacks } from "./callback-delivery";
 import { readPendingEntries } from "./outbox";
 import { proxyLog } from "./logger";
@@ -291,20 +292,35 @@ export class ProxyServer {
       this.monitor.reset();
       this.monitor.start();
 
-      // Collect events for platform-side persistence + handle HITL callbacks.
-      // Events are buffered in memory and included in the prompt_complete/prompt_failed
-      // callback so the platform can persist them — no DATABASE_URL needed in sandbox.
-      const collectedEvents: AgentEvent[] = [];
+      // Session event batcher: assigns driver-compatible metadata to events
+      // and flushes incremental batches via session_events callbacks for
+      // platform-side persistence. No DATABASE_URL needed in sandbox.
+      const session = this.bridge.getSession();
+      const sdkSessionId = (session as { originalSdkSessionId?: string }).originalSdkSessionId ?? session.id;
+      const batcher = new SessionEventBatcher(
+        sdkSessionId,
+        attemptId,
+        async (sid, events) => {
+          await emitCallback({
+            jobId, attemptId, epoch,
+            callbackType: "session_events",
+            payload: { sessionId: sid, events },
+            callbackUrl, hmacKey,
+          });
+        },
+        { nextEventIndex: config.nextEventIndex },
+      );
+
       const onEvent = (event: AgentEvent) => {
         this.eventCount++;
-        collectedEvents.push(event);
+        batcher.push(event);
         this.handleAgentEvent(event, jobId, attemptId, epoch, callbackUrl, hmacKey);
       };
 
       // Execute prompt
       const execStart = Date.now();
       const result = await this.bridge.executePrompt(
-        this.bridge.getSession(),
+        session,
         prompt,
         {
           onEvent,
@@ -318,15 +334,22 @@ export class ProxyServer {
       // Stop health monitor
       this.monitor.stop();
 
+      // Flush remaining events before terminal callback
+      await batcher.finalize();
+
+      // Reconstruct output from the batcher's in-memory event stream
+      // (replaces readPersistedOutput — no DB needed in sandbox).
+      const output = reconstructOutput(batcher.collected);
+
       if (result.success) {
         const metrics = buildMetrics();
         proxyLog.info("prompt_complete", {
           durationMs: result.durationMs,
-          eventCount: this.eventCount,
+          eventCount: batcher.eventCount,
           resumeType: this.bridge.lastResumeType,
         });
 
-        // Emit prompt_complete callback
+        // Emit prompt_complete callback (events already persisted via session_events)
         const completeEntry = await emitCallback({
           jobId,
           attemptId,
@@ -334,14 +357,13 @@ export class ProxyServer {
           callbackType: "prompt_complete",
           payload: {
             result: {
-              lastMessage: result.lastMessage,
-              allOutput: result.allOutput,
+              lastMessage: output.lastMessage,
+              allOutput: output.allOutput,
               sdkSessionId: result.sdkSessionId,
               nativeAgentSessionId: result.nativeAgentSessionId,
               cwd: result.cwd,
               durationMs: result.durationMs,
             },
-            events: collectedEvents,
             metrics,
             requestId,
             completedAt: new Date().toISOString(),
@@ -375,7 +397,6 @@ export class ProxyServer {
             durationMs: result.durationMs,
             sdkSessionId: result.sdkSessionId,
             nativeAgentSessionId: result.nativeAgentSessionId,
-            events: collectedEvents,
             metrics,
             requestId,
           },
