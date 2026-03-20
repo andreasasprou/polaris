@@ -33,11 +33,12 @@ These have caused real production bugs — avoid them:
 - **Never use Bearer auth for git HTTPS** — use `Basic base64(x-access-token:<token>)`. Bearer fails silently in sandbox.
 - **Never check stderr for git push success** — git writes progress to stderr on success. Check `exitCode === 0`.
 - **Always call `endStaleRuntimes(sessionId)` before `createRuntime()`** — unique constraint `idx_one_live_runtime_per_session` will throw otherwise.
-- **Always wrap CAS + dispatch in try/catch with rollback** — if `tasks.trigger()` throws after CAS, the session gets stuck at "creating" forever.
+- **Always wrap CAS + dispatch in try/catch with rollback** — if dispatch throws after CAS, the session gets stuck at "creating" forever.
 - **When adding a new session status, update ALL `statusConfig` locations** — `lib/sessions/status.ts`, `hooks/use-session-chat.ts`, and `components/sessions/session-status.tsx`.
 - **Sandbox proxy is bundled, not live code** — `lib/sandbox-proxy/` runs inside the VM. Changes require rebuilding (`pnpm build:proxy`) and redeploying.
 - **Never use `git diff A..B` syntax** — it's invalid for `git diff`. Use `git diff A B` (separate args) or `git log A..B` for log.
 - **Don't trust `git diff --cached origin/main` in sandbox** — can return empty even with staged changes. Use `git show --stat` as fallback.
+- **Never use `useEffect` directly** — use derived state, event handlers, `useQuery`, `useMountEffect`, or `key` resets. See [`docs/guides/no-use-effect.md`](docs/guides/no-use-effect.md).
 
 ## Testing & Verification
 
@@ -48,7 +49,7 @@ These have caused real production bugs — avoid them:
 3. **Visual verification** (UI changes): Use browser automation at `http://localhost:3001`.
    Verify all session states: active (spinner), completed (checkmarks), failed/stopped (interrupted ■), hibernated/resumed.
 4. **Data verification**: Query `/api/interactive-sessions/[id]` and `/api/sessions/[id]/events` to confirm data consistency.
-5. **Run traces**: Use Trigger.dev MCP `get_run_details` to inspect task execution.
+5. **Run traces**: Query the `jobs` / `job_attempts` tables or hit `GET /api/jobs/[id]` to inspect dispatch lifecycle.
 6. **Terminal session checklist**: `turnInProgress` must be `false`, all pending tool calls show interrupted (not spinner), `pollIntervalMs` must be `0`.
 7. **Full QA matrix**: See `docs/qa-checklist.md` for the complete state matrix and flow test list.
 

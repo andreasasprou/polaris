@@ -99,7 +99,7 @@ function reconstructOutput(entries: IndexedEntry[]): {
 }
 
 /**
- * Wraps the sandbox-agent SDK for use in Trigger.dev tasks.
+ * Wraps the sandbox-agent SDK for orchestration modules.
  * Handles session lifecycle, event streaming, and prompt execution.
  */
 export class SandboxAgentClient {

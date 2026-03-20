@@ -10,7 +10,7 @@ import { useLogger } from "@/lib/evlog";
  * Route an incoming GitHub webhook event to matching automations.
  * Returns the number of automations triggered.
  *
- * v2: Dispatches directly to orchestration modules (no Trigger.dev).
+ * Dispatches directly to orchestration modules.
  */
 export async function routeGitHubEvent(input: {
   installationId: number;

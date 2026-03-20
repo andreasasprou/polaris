@@ -79,7 +79,21 @@ export default function NewSessionPage() {
       }
 
       const data = await res.json();
-      router.push(`/sessions/${data.session.id}`);
+      const sessionId = data.session.id;
+
+      // Dispatch the initial prompt before navigating — the session starts
+      // at "creating" with canSend:false, so nobody else will send it.
+      // Fire-and-forget: always navigate to the session page regardless of
+      // prompt dispatch outcome. The session detail page has reconciliation
+      // logic to detect and heal stale states, preventing orphaned sessions
+      // stuck in "creating" if this request fails.
+      fetch(`/api/interactive-sessions/${sessionId}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      }).catch(() => {});
+
+      router.push(`/sessions/${sessionId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setSubmitting(false);

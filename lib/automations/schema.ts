@@ -62,7 +62,7 @@ export const automationRuns = pgTable(
       .notNull()
       .references(() => automations.id, { onDelete: "cascade" }),
     organizationId: text("organization_id").notNull(),
-    jobId: uuid("job_id"), // v2: link to jobs table instead of Trigger.dev
+    jobId: uuid("job_id"),
     status: text("status").default("pending").notNull(), // 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
     source: text("source").notNull(), // 'github' | 'slack' | 'schedule' | 'webhook' | 'sentry'
     externalEventId: text("external_event_id"),

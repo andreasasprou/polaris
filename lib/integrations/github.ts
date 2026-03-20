@@ -73,7 +73,7 @@ export async function createPullRequest(params: {
 
 /**
  * Mint a short-lived installation access token from a stored installationId.
- * Used by Trigger.dev tasks to authenticate with GitHub.
+ * Used by orchestration modules to authenticate with GitHub.
  */
 export async function mintInstallationToken(
   installationId: number,

@@ -28,13 +28,27 @@ export const GET = withEvlog(async (
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Job-based reconciliation: if active but no nonterminal job, heal to idle
+  // Job-based reconciliation: heal stale non-terminal states.
   if (session.status === "active") {
     const activeJob = await getActiveJobForSession(sessionId);
     if (!activeJob) {
       const healed = await casSessionStatus(sessionId, ["active"], "idle");
       if (healed) {
         session = healed;
+      }
+    }
+  } else if (session.status === "creating") {
+    // If "creating" for >60s with no job, the prompt dispatch failed — heal to failed.
+    const ageMs = Date.now() - new Date(session.createdAt).getTime();
+    if (ageMs > 60_000) {
+      const activeJob = await getActiveJobForSession(sessionId);
+      if (!activeJob) {
+        const healed = await casSessionStatus(sessionId, ["creating"], "failed", {
+          endedAt: new Date(),
+        });
+        if (healed) {
+          session = healed;
+        }
       }
     }
   }
