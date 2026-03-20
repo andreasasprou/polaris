@@ -83,16 +83,15 @@ export default function NewSessionPage() {
 
       // Dispatch the initial prompt before navigating — the session starts
       // at "creating" with canSend:false, so nobody else will send it.
-      const promptRes = await fetch(`/api/interactive-sessions/${sessionId}/prompt`, {
+      // Fire-and-forget: always navigate to the session page regardless of
+      // prompt dispatch outcome. The session detail page has reconciliation
+      // logic to detect and heal stale states, preventing orphaned sessions
+      // stuck in "creating" if this request fails.
+      fetch(`/api/interactive-sessions/${sessionId}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
-      });
-
-      if (!promptRes.ok) {
-        const promptData = await promptRes.json().catch(() => ({}));
-        throw new Error(promptData.error ?? "Failed to dispatch prompt");
-      }
+      }).catch(() => {});
 
       router.push(`/sessions/${sessionId}`);
     } catch (err) {
