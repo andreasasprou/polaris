@@ -30,7 +30,7 @@ export const GET = withEvlog(async (req: NextRequest) => {
   if (!githubAppSlug) {
     throw new Error("GITHUB_APP_SLUG environment variable is required");
   }
-  const installUrl = `https://github.com/apps/${githubAppSlug}/installations/select_target?state=${encodeURIComponent(state)}`;
+  const installUrl = `https://github.com/apps/${githubAppSlug}/installations/new?state=${encodeURIComponent(state)}`;
 
   return NextResponse.redirect(installUrl);
 });
