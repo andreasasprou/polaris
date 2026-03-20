@@ -193,7 +193,7 @@ export class ProxyServer {
    * Execute a prompt asynchronously after returning 202.
    */
   private async executePromptAsync(request: PromptRequest): Promise<void> {
-    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles } =
+    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles, attachments } =
       request;
     const cwd = config.cwd ?? "/home/user/repo";
 
@@ -205,6 +205,21 @@ export class ProxyServer {
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(file.path, file.content);
           console.log(`[proxy] Wrote context file: ${file.path} (${Buffer.byteLength(file.content)} bytes)`);
+        }
+      }
+
+      // Write binary attachments to sandbox filesystem
+      const uploadedAttachments: Array<{ name: string; absolutePath: string; mimeType: string }> = [];
+      if (attachments?.length) {
+        const uploadDir = "/tmp/polaris-uploads";
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+        for (const att of attachments) {
+          const safeName = `${Date.now()}-${att.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+          const filePath = path.join(uploadDir, safeName);
+          fs.writeFileSync(filePath, Buffer.from(att.data, "base64"));
+          uploadedAttachments.push({ name: att.name, absolutePath: filePath, mimeType: att.mimeType });
+          console.log(`[proxy] Wrote attachment: ${filePath} (${att.name}, ${att.mimeType})`);
         }
       }
 
@@ -242,6 +257,7 @@ export class ProxyServer {
           onEvent,
           timeoutMs: PROMPT_TIMEOUT_MS,
           signal: this.monitor.signal,
+          attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         },
       );
 

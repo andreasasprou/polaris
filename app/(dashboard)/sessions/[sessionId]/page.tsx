@@ -28,11 +28,41 @@ type InteractiveSession = {
 
 // ── Helpers ──
 
+type ApiAttachment = {
+  name: string;
+  mimeType: string;
+  data: string; // base64
+};
+
+/** Convert a File to a base64-encoded API attachment. */
+function fileToApiAttachment(file: File): Promise<ApiAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      // Strip "data:<mime>;base64," prefix
+      const base64 = dataUrl.split(",")[1];
+      resolve({ name: file.name, mimeType: file.type, data: base64 });
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 /** Send a prompt via the API route with retry for 425 (hibernating). */
 async function sendPromptViaApi(
   sessionId: string,
   text: string,
+  attachments?: Attachment[],
 ): Promise<{ ok: boolean; jobId?: string }> {
+  // Convert File objects to base64
+  let apiAttachments: ApiAttachment[] | undefined;
+  if (attachments?.length) {
+    apiAttachments = await Promise.all(
+      attachments.map((a) => fileToApiAttachment(a.file)),
+    );
+  }
+
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const res = await fetch(
@@ -40,7 +70,10 @@ async function sendPromptViaApi(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify({
+          prompt: text,
+          ...(apiAttachments?.length ? { attachments: apiAttachments } : {}),
+        }),
       },
     );
 
@@ -144,14 +177,19 @@ function SessionChatInput({
   }), [sessionId]);
 
   const handleSubmit = useCallback(
-    async (text: string, _attachments: Attachment[]) => {
-      if (!text.trim() || sending) return;
+    async (text: string, attachments: Attachment[]) => {
+      if (!text.trim() && attachments.length === 0) return;
+      if (sending) return;
 
       onPendingPrompt?.(text.trim());
 
       setSending(true);
       try {
-        const result = await sendPromptViaApi(sessionId, text.trim());
+        const result = await sendPromptViaApi(
+          sessionId,
+          text.trim(),
+          attachments.length > 0 ? attachments : undefined,
+        );
         if (result.ok) {
           onRefresh();
         }
