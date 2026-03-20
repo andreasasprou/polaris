@@ -27,14 +27,17 @@ export const POST = withEvlog(async (
   const body = await req.json();
   const { prompt, attachments } = body;
 
-  if (!prompt?.trim()) {
+  const hasText = !!prompt?.trim();
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+
+  if (!hasText && !hasAttachments) {
     return NextResponse.json(
-      { error: "prompt is required" },
+      { error: "prompt or attachments required" },
       { status: 400 },
     );
   }
 
-  if (prompt.length > 100_000) {
+  if (hasText && prompt.length > 100_000) {
     return NextResponse.json(
       { error: "Prompt exceeds maximum length of 100,000 characters" },
       { status: 400 },
@@ -84,7 +87,7 @@ export const POST = withEvlog(async (
     const result = await dispatchPromptToSession({
       organizationId: orgId,
       sessionId,
-      prompt,
+      prompt: prompt?.trim() || "",
       requestId: randomUUID(),
       source: "user",
       attachments: attachments?.length ? attachments : undefined,

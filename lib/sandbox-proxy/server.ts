@@ -196,6 +196,7 @@ export class ProxyServer {
     const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles, attachments } =
       request;
     const cwd = config.cwd ?? "/home/user/repo";
+    const uploadDir = `/tmp/polaris-uploads/${jobId}`;
 
     try {
       // Write context files to sandbox filesystem before starting the agent
@@ -211,11 +212,11 @@ export class ProxyServer {
       // Write binary attachments to sandbox filesystem
       const uploadedAttachments: Array<{ name: string; absolutePath: string; mimeType: string }> = [];
       if (attachments?.length) {
-        const uploadDir = "/tmp/polaris-uploads";
         if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-        for (const att of attachments) {
-          const safeName = `${Date.now()}-${att.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        for (let i = 0; i < attachments.length; i++) {
+          const att = attachments[i];
+          const safeName = `${i}-${att.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
           const filePath = path.join(uploadDir, safeName);
           fs.writeFileSync(filePath, Buffer.from(att.data, "base64"));
           uploadedAttachments.push({ name: att.name, absolutePath: filePath, mimeType: att.mimeType });
@@ -328,6 +329,15 @@ export class ProxyServer {
     } finally {
       this.state = "idle";
       this.clearActivePrompt();
+
+      // Clean up uploaded attachments
+      if (fs.existsSync(uploadDir)) {
+        try {
+          fs.rmSync(uploadDir, { recursive: true });
+        } catch {
+          // Best-effort cleanup
+        }
+      }
     }
   }
 
