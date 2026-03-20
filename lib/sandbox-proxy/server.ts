@@ -14,11 +14,14 @@ import type {
   ProxyState,
   ProxyStatus,
   AgentEvent,
+  ProxyMetrics,
+  CallbackDeliveryMetric,
 } from "./types";
 import { AcpBridge } from "./acp-bridge";
 import { AgentMonitor } from "./agent-monitor";
 import { emitCallback, replayPendingCallbacks } from "./callback-delivery";
 import { readPendingEntries } from "./outbox";
+import { proxyLog } from "./logger";
 import type { SessionPersistDriver } from "sandbox-agent";
 
 const ACTIVE_PROMPT_PATH = "/tmp/polaris-proxy/active-prompt.json";
@@ -30,6 +33,8 @@ export class ProxyServer {
   private bridge: AcpBridge;
   private monitor: AgentMonitor;
   private server: http.Server | null = null;
+  private callbackDeliveries: CallbackDeliveryMetric[] = [];
+  private eventCount = 0;
 
   constructor(persist?: SessionPersistDriver) {
     this.bridge = new AcpBridge(persist);
@@ -47,13 +52,16 @@ export class ProxyServer {
       try {
         await this.handleRequest(req, res);
       } catch (err) {
-        console.error("[proxy] Unhandled error:", err);
+        proxyLog.error("unhandled_request_error", {
+          error: err instanceof Error ? err.message : String(err),
+          path: req.url,
+        });
         sendJson(res, 500, { error: "Internal server error" });
       }
     });
 
     this.server.listen(port, "0.0.0.0", () => {
-      console.log(`[proxy] Listening on port ${port}`);
+      proxyLog.info("server_started", { port });
     });
   }
 
@@ -126,8 +134,9 @@ export class ProxyServer {
       return;
     }
 
-    // Validate required fields
-    if (!body.jobId || !body.attemptId || body.epoch == null || !body.prompt || !body.callbackUrl || !body.hmacKey || !body.config?.agent) {
+    // Validate required fields (prompt can be empty when attachments are present)
+    const hasPromptContent = body.prompt || body.attachments?.length;
+    if (!body.jobId || !body.attemptId || body.epoch == null || !hasPromptContent || !body.callbackUrl || !body.hmacKey || !body.config?.agent) {
       sendJson(res, 400, { accepted: false, reason: "Missing required fields" });
       return;
     }
@@ -180,12 +189,25 @@ export class ProxyServer {
     this.activePrompt = activePrompt;
     this.state = "running";
 
+    // Set logger context for all subsequent logs during this prompt
+    proxyLog.setContext({ jobId: body.jobId, attemptId: body.attemptId, epoch: body.epoch });
+    this.callbackDeliveries = [];
+    this.eventCount = 0;
+
+    proxyLog.info("prompt_accepted", {
+      agent: body.config.agent,
+      requestId: body.requestId,
+      hasAttachments: !!body.attachments?.length,
+    });
+
     // Return 202 immediately
     sendJson(res, 202, { accepted: true, attemptId: body.attemptId });
 
     // Execute prompt in background (fire-and-forget from HTTP perspective)
     this.executePromptAsync(body).catch((err) => {
-      console.error("[proxy] Prompt execution error:", err);
+      proxyLog.error("prompt_execution_error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 
@@ -193,10 +215,27 @@ export class ProxyServer {
    * Execute a prompt asynchronously after returning 202.
    */
   private async executePromptAsync(request: PromptRequest): Promise<void> {
-    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles, attachments } =
+    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles, attachments, requestId } =
       request;
     const cwd = config.cwd ?? "/home/user/repo";
     const uploadDir = `/tmp/polaris-uploads/${jobId}`;
+    const promptStartMs = Date.now();
+
+    // Metrics collector
+    let connectMs: number | undefined;
+    let sessionCreateMs: number | undefined;
+    let promptExecutionMs: number | undefined;
+
+    const buildMetrics = (): ProxyMetrics => ({
+      connectMs,
+      sessionCreateMs,
+      promptExecutionMs,
+      totalMs: Date.now() - promptStartMs,
+      resumeType: this.bridge.lastResumeType,
+      callbackDeliveries: this.callbackDeliveries,
+      healthChecks: this.monitor.stats,
+      eventCount: this.eventCount,
+    });
 
     try {
       // Write context files to sandbox filesystem before starting the agent
@@ -205,7 +244,7 @@ export class ProxyServer {
           const dir = path.dirname(file.path);
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(file.path, file.content);
-          console.log(`[proxy] Wrote context file: ${file.path} (${Buffer.byteLength(file.content)} bytes)`);
+          proxyLog.info("wrote_context_file", { path: file.path, bytes: Buffer.byteLength(file.content) });
         }
       }
 
@@ -220,26 +259,33 @@ export class ProxyServer {
           const filePath = path.join(uploadDir, safeName);
           fs.writeFileSync(filePath, Buffer.from(att.data, "base64"));
           uploadedAttachments.push({ name: att.name, absolutePath: filePath, mimeType: att.mimeType });
-          console.log(`[proxy] Wrote attachment: ${filePath} (${att.name}, ${att.mimeType})`);
+          proxyLog.info("wrote_attachment", { path: filePath, name: att.name, mimeType: att.mimeType });
         }
       }
 
       // Connect to sandbox-agent (lazy, first prompt triggers connection)
+      const connectStart = Date.now();
       await this.bridge.connect();
+      connectMs = Date.now() - connectStart;
+      proxyLog.info("agent_connected", { connectMs });
 
       // Create or resume session
+      const sessionStart = Date.now();
       await this.bridge.createOrResumeSession(config, cwd);
+      sessionCreateMs = Date.now() - sessionStart;
+      proxyLog.info("session_ready", { sessionCreateMs, resumeType: this.bridge.lastResumeType });
 
       // Emit prompt_accepted callback
-      await emitCallback({
+      const acceptedEntry = await emitCallback({
         jobId,
         attemptId,
         epoch,
         callbackType: "prompt_accepted",
-        payload: { startedAt: new Date().toISOString() },
+        payload: { startedAt: new Date().toISOString(), requestId },
         callbackUrl,
         hmacKey,
       });
+      this.recordCallbackDelivery("prompt_accepted", acceptedEntry);
 
       // Start health monitor
       this.monitor.reset();
@@ -247,10 +293,12 @@ export class ProxyServer {
 
       // Set up event handler for HITL callbacks
       const onEvent = (event: AgentEvent) => {
+        this.eventCount++;
         this.handleAgentEvent(event, jobId, attemptId, epoch, callbackUrl, hmacKey);
       };
 
       // Execute prompt
+      const execStart = Date.now();
       const result = await this.bridge.executePrompt(
         this.bridge.getSession(),
         prompt,
@@ -261,13 +309,21 @@ export class ProxyServer {
           attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         },
       );
+      promptExecutionMs = Date.now() - execStart;
 
       // Stop health monitor
       this.monitor.stop();
 
       if (result.success) {
+        const metrics = buildMetrics();
+        proxyLog.info("prompt_complete", {
+          durationMs: result.durationMs,
+          eventCount: this.eventCount,
+          resumeType: this.bridge.lastResumeType,
+        });
+
         // Emit prompt_complete callback
-        await emitCallback({
+        const completeEntry = await emitCallback({
           jobId,
           attemptId,
           epoch,
@@ -280,20 +336,29 @@ export class ProxyServer {
               cwd: result.cwd,
               durationMs: result.durationMs,
             },
+            metrics,
+            requestId,
             completedAt: new Date().toISOString(),
           },
           callbackUrl,
           hmacKey,
         });
+        this.recordCallbackDelivery("prompt_complete", completeEntry);
       } else {
-        // Emit prompt_failed callback
         const reason = result.error?.includes("timed out")
           ? "agent_timeout"
           : result.error?.includes("unreachable")
             ? "agent_crash"
             : "unknown";
 
-        await emitCallback({
+        const metrics = buildMetrics();
+        proxyLog.warn("prompt_failed", {
+          error: result.error,
+          reason,
+          durationMs: result.durationMs,
+        });
+
+        const failedEntry = await emitCallback({
           jobId,
           attemptId,
           epoch,
@@ -302,10 +367,13 @@ export class ProxyServer {
             error: result.error ?? "Unknown error",
             reason,
             durationMs: result.durationMs,
+            metrics,
+            requestId,
           },
           callbackUrl,
           hmacKey,
         });
+        this.recordCallbackDelivery("prompt_failed", failedEntry);
       }
     } catch (err) {
       this.monitor.stop();
@@ -317,18 +385,22 @@ export class ProxyServer {
           ? "agent_crash"
           : "unknown";
 
+      const metrics = buildMetrics();
+      proxyLog.error("prompt_exception", { error, reason });
+
       await emitCallback({
         jobId,
         attemptId,
         epoch,
         callbackType: "prompt_failed",
-        payload: { error, reason },
+        payload: { error, reason, metrics, requestId },
         callbackUrl,
         hmacKey,
       });
     } finally {
       this.state = "idle";
       this.clearActivePrompt();
+      proxyLog.clearContext();
 
       // Clean up uploaded attachments
       if (fs.existsSync(uploadDir)) {
@@ -339,6 +411,19 @@ export class ProxyServer {
         }
       }
     }
+  }
+
+  /** Record a callback delivery metric from an outbox entry. */
+  private recordCallbackDelivery(
+    type: CallbackDeliveryMetric["type"],
+    entry: { status: string; attempts: number; createdAt: string },
+  ): void {
+    this.callbackDeliveries.push({
+      type,
+      deliveryMs: Date.now() - new Date(entry.createdAt).getTime(),
+      attempts: entry.attempts,
+      success: entry.status === "delivered",
+    });
   }
 
   /**
@@ -379,7 +464,10 @@ export class ProxyServer {
         callbackUrl,
         hmacKey,
       }).catch((err) =>
-        console.error("[proxy] Failed to emit permission_requested:", err),
+        proxyLog.error("callback_emit_failed", {
+          callbackType: "permission_requested",
+          error: err instanceof Error ? err.message : String(err),
+        }),
       );
     } else if (updateType === "question_requested") {
       const questionId = update!.questionId as string;
@@ -400,7 +488,10 @@ export class ProxyServer {
         callbackUrl,
         hmacKey,
       }).catch((err) =>
-        console.error("[proxy] Failed to emit question_requested:", err),
+        proxyLog.error("callback_emit_failed", {
+          callbackType: "question_requested",
+          error: err instanceof Error ? err.message : String(err),
+        }),
       );
     }
   }
@@ -496,7 +587,10 @@ export class ProxyServer {
         callbackUrl,
         hmacKey,
       }).catch((err) =>
-        console.error("[proxy] Failed to emit permission_resumed:", err),
+        proxyLog.error("callback_emit_failed", {
+          callbackType: "permission_resumed",
+          error: err instanceof Error ? err.message : String(err),
+        }),
       );
 
       sendJson(res, 200, { delivered: true });
@@ -554,7 +648,10 @@ export class ProxyServer {
         callbackUrl,
         hmacKey,
       }).catch((err) =>
-        console.error("[proxy] Failed to emit question_resumed:", err),
+        proxyLog.error("callback_emit_failed", {
+          callbackType: "question_resumed",
+          error: err instanceof Error ? err.message : String(err),
+        }),
       );
 
       sendJson(res, 200, { delivered: true });
@@ -618,9 +715,7 @@ export class ProxyServer {
         const content = fs.readFileSync(ACTIVE_PROMPT_PATH, "utf-8");
         const orphan = JSON.parse(content) as ActivePrompt;
 
-        console.warn(
-          `[proxy] Found orphaned active prompt: job=${orphan.jobId} attempt=${orphan.attemptId}`,
-        );
+        proxyLog.warn("orphan_recovery", { jobId: orphan.jobId, attemptId: orphan.attemptId });
 
         // Emit prompt_failed for the orphan
         await emitCallback({
@@ -637,7 +732,7 @@ export class ProxyServer {
           hmacKey: orphan.hmacKey,
         });
       } catch (err) {
-        console.error("[proxy] Failed to handle orphaned prompt:", err);
+        proxyLog.error("orphan_recovery_failed", { error: err instanceof Error ? err.message : String(err) });
       } finally {
         this.clearActivePrompt();
       }
@@ -648,7 +743,7 @@ export class ProxyServer {
     // have all the info baked in. The delivery function reads from the entry.
     const pending = readPendingEntries();
     if (pending.length > 0) {
-      console.log(`[proxy] Found ${pending.length} pending outbox entries`);
+      proxyLog.info("pending_outbox_entries", { count: pending.length });
       // These will be picked up by the sweeper via GET /outbox
       // since we don't have the callbackUrl/hmacKey for generic replay
     }

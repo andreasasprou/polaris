@@ -5,6 +5,8 @@
  * Provides an AbortSignal that fires when the agent is unreachable.
  */
 
+import { proxyLog } from "./logger";
+
 const HEALTH_URL = "http://localhost:2468/v1/health";
 const CHECK_INTERVAL_MS = 10_000; // 10s
 const MAX_CONSECUTIVE_FAILURES = 2;
@@ -13,6 +15,8 @@ export class AgentMonitor {
   private controller: AbortController;
   private timer: ReturnType<typeof setInterval> | null = null;
   private consecutiveFailures = 0;
+  private totalChecks = 0;
+  private failedChecks = 0;
 
   constructor() {
     this.controller = new AbortController();
@@ -23,12 +27,20 @@ export class AgentMonitor {
     return this.controller.signal;
   }
 
+  /** Aggregate health check stats for metrics. */
+  get stats(): { total: number; failed: number } {
+    return { total: this.totalChecks, failed: this.failedChecks };
+  }
+
   /** Start periodic health checks. */
   start(): void {
     if (this.timer) return;
     this.consecutiveFailures = 0;
 
     this.timer = setInterval(async () => {
+      this.totalChecks++;
+      const checkStart = Date.now();
+
       try {
         const res = await fetch(HEALTH_URL, {
           signal: AbortSignal.timeout(5_000),
@@ -37,15 +49,29 @@ export class AgentMonitor {
           this.consecutiveFailures = 0;
         } else {
           this.consecutiveFailures++;
+          this.failedChecks++;
+          proxyLog.warn("health_check_failed", {
+            status: res.status,
+            consecutiveFailures: this.consecutiveFailures,
+            latencyMs: Date.now() - checkStart,
+          });
         }
-      } catch {
+      } catch (err) {
         this.consecutiveFailures++;
+        this.failedChecks++;
+        proxyLog.warn("health_check_error", {
+          error: err instanceof Error ? err.message : String(err),
+          consecutiveFailures: this.consecutiveFailures,
+          latencyMs: Date.now() - checkStart,
+        });
       }
 
       if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-        console.error(
-          `[proxy] Agent health check failed ${this.consecutiveFailures} times — aborting`,
-        );
+        proxyLog.error("agent_unreachable", {
+          consecutiveFailures: this.consecutiveFailures,
+          totalChecks: this.totalChecks,
+          failedChecks: this.failedChecks,
+        });
         this.controller.abort(
           new Error("Sandbox agent unreachable — health check failed"),
         );
@@ -72,5 +98,7 @@ export class AgentMonitor {
     this.stop();
     this.controller = new AbortController();
     this.consecutiveFailures = 0;
+    this.totalChecks = 0;
+    this.failedChecks = 0;
   }
 }

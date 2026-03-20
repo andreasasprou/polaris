@@ -50,6 +50,8 @@ export type PromptRequest = {
   callbackUrl: string;
   hmacKey: string;
   config: PromptConfig;
+  /** Original request ID from the API — used as end-to-end trace key */
+  requestId?: string;
   /** Files to write to the sandbox before starting the agent */
   contextFiles?: ContextFile[];
   /** Binary attachments (images, PDFs) to upload and reference in the prompt */
@@ -136,4 +138,24 @@ export type AgentSession = {
   onEvent(listener: (event: AgentEvent) => void): () => void;
   prompt(prompt: PromptContentPart[]): Promise<{ stopReason?: string }>;
   rawSend(method: string, params?: Record<string, unknown>): Promise<unknown>;
+};
+
+// ── Proxy Metrics (embedded in prompt_complete/prompt_failed callbacks) ──
+
+export type CallbackDeliveryMetric = {
+  type: CallbackType;
+  deliveryMs: number;
+  attempts: number;
+  success: boolean;
+};
+
+export type ProxyMetrics = {
+  connectMs?: number;
+  sessionCreateMs?: number;
+  promptExecutionMs?: number;
+  totalMs: number;
+  resumeType?: "native" | "text_replay" | "fresh";
+  callbackDeliveries: CallbackDeliveryMetric[];
+  healthChecks: { total: number; failed: number };
+  eventCount: number;
 };

@@ -19,6 +19,8 @@ import {
   createTurn,
 } from "@/lib/sessions/actions";
 import { ensureSandboxReady } from "./sandbox-lifecycle";
+import { useLogger } from "@/lib/evlog";
+import { createStepTimer } from "@/lib/metrics/step-timer";
 
 export type DispatchResult = {
   jobId: string;
@@ -46,6 +48,9 @@ export async function dispatchPromptToSession(input: {
   attachments?: PromptAttachment[];
 }): Promise<DispatchResult> {
   const { organizationId, sessionId, prompt, requestId, source, attachments } = input;
+  const log = useLogger();
+  const timer = createStepTimer();
+  log.set({ dispatch: { sessionId, requestId, source } });
 
   const session = await getInteractiveSessionForOrg(sessionId, organizationId);
   if (!session) throw new RequestError("Session not found", 404);
@@ -83,7 +88,7 @@ export async function dispatchPromptToSession(input: {
   }
 
   // Resolve credentials
-  const creds = await resolveSessionCredentials(session);
+  const creds = await timer.time("resolveCredentials", () => resolveSessionCredentials(session));
 
   // Determine if sandbox is alive (Tier 1) or needs provisioning (Tier 2)
   let sandboxBaseUrl = session.sandboxBaseUrl;
@@ -91,19 +96,22 @@ export async function dispatchPromptToSession(input: {
   let sandboxId = session.sandboxId;
 
   const sandboxAlive = sandboxBaseUrl
-    ? await probeSandboxHealth(sandboxBaseUrl)
+    ? await timer.time("healthProbe", () => probeSandboxHealth(sandboxBaseUrl!))
     : false;
+
+  const tier = sandboxAlive ? 1 : 2;
+  log.set({ dispatch: { tier, sandboxAlive, agentType: session.agentType } });
 
   if (!sandboxAlive) {
     // Tier 2: Provision sandbox
-    const result = await ensureSandboxReady(sessionId, {
+    const result = await timer.time("ensureSandboxReady", () => ensureSandboxReady(sessionId, {
       agentApiKey: creds.agentApiKey,
       agentType: session.agentType as Parameters<typeof ensureSandboxReady>[1]["agentType"],
       repositoryOwner: creds.repositoryOwner,
       repositoryName: creds.repositoryName,
       defaultBranch: creds.defaultBranch,
       githubInstallationId: creds.githubInstallationId,
-    });
+    }));
     sandboxBaseUrl = result.proxyBaseUrl;
     epoch = result.epoch;
     sandboxId = result.sandboxId;
@@ -156,8 +164,10 @@ export async function dispatchPromptToSession(input: {
   // sandboxBaseUrl is already the proxy URL (stored as proxy URL by ensureSandboxReady)
   const proxyUrl = sandboxBaseUrl;
 
+  log.set({ dispatch: { jobId: job.id, attemptId: attempt.id, epoch } });
+
   try {
-    const response = await fetch(`${proxyUrl}/prompt`, {
+    const response = await timer.time("postPrompt", () => fetch(`${proxyUrl}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -167,6 +177,7 @@ export async function dispatchPromptToSession(input: {
         prompt,
         callbackUrl: buildCallbackUrl(),
         hmacKey,
+        requestId,
         config: {
           agent: session.agentType,
           cwd: "/vercel/sandbox",
@@ -174,9 +185,10 @@ export async function dispatchPromptToSession(input: {
         ...(attachments?.length ? { attachments } : {}),
       }),
       signal: AbortSignal.timeout(30_000),
-    });
+    }));
 
     if (response.status === 202) {
+      log.set({ timing: timer.finalize() });
       return { jobId: job.id };
     }
 
@@ -196,6 +208,7 @@ export async function dispatchPromptToSession(input: {
       // Dispatch unknown — sweeper will reconcile
       const { casAttemptStatus } = await import("@/lib/jobs/actions");
       await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown");
+      log.set({ timing: timer.finalize() });
       return { jobId: job.id };
     }
     throw err;

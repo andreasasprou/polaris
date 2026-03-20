@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // ── Automation mode ──
 
 export type AutomationMode = "oneshot" | "continuous";
@@ -155,22 +157,47 @@ export interface ManualReviewCommand {
 
 export type ReviewVerdict = "BLOCK" | "ATTENTION" | "APPROVE";
 
-export interface ReviewFinding {
-  id: string;
-  severity: "P0" | "P1" | "P2";
-  category: string;
-  file: string;
-  title: string;
-  body: string;
-}
+/** Zod schema for the metadata block the agent appends after the comment body. Single source of truth. */
+export const ReviewMetadataSchema = z.object({
+  verdict: z.enum(["BLOCK", "ATTENTION", "APPROVE"]),
+  summary: z.string(),
+  severityCounts: z.object({
+    P0: z.number(),
+    P1: z.number(),
+    P2: z.number(),
+  }),
+  resolvedIssueIds: z.array(z.string()).default([]),
+  reviewState: z.object({
+    lastReviewedSha: z.string().nullable(),
+    openIssues: z.array(
+      z.object({
+        id: z.string(),
+        file: z.string(),
+        severity: z.enum(["P0", "P1", "P2"]),
+        summary: z.string().optional(),
+      }),
+    ),
+    resolvedIssues: z.array(
+      z.object({
+        id: z.string(),
+        file: z.string(),
+        summary: z.string().optional(),
+        resolvedInReview: z.number().optional(),
+      }),
+    ),
+    reviewCount: z.number(),
+  }),
+});
 
+/** Machine-readable metadata the agent appends after the comment body. */
+export type ReviewMetadata = z.infer<typeof ReviewMetadataSchema>;
+
+/** Result of parsing agent output: comment body + extracted metadata. */
 export interface ParsedReviewOutput {
-  verdict: ReviewVerdict;
-  summary: string;
-  severityCounts: { P0: number; P1: number; P2: number };
-  findings: ReviewFinding[];
-  resolvedIssueIds: string[];
-  reviewState: ReviewState;
+  /** The agent's markdown output verbatim, with metadata block stripped. Posted directly as the GitHub comment. */
+  commentBody: string;
+  /** Machine-readable metadata extracted from the trailing JSON block. */
+  metadata: ReviewMetadata;
 }
 
 // ── Repo guidelines ──

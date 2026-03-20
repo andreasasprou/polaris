@@ -17,7 +17,9 @@ import type {
   AgentEvent,
   AgentSession,
   PromptContentPart,
+  ProxyMetrics,
 } from "./types";
+import { proxyLog } from "./logger";
 
 const AGENT_SERVER_URL = "http://localhost:2468";
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -90,6 +92,9 @@ export class AcpBridge {
   private session: AgentSession | null = null;
   private persist: SessionPersistDriver | undefined;
 
+  /** The resume strategy used for the most recent session creation. */
+  lastResumeType: ProxyMetrics["resumeType"];
+
   constructor(persist?: SessionPersistDriver) {
     this.persist = persist;
   }
@@ -151,27 +156,34 @@ export class AcpBridge {
         cwd,
       );
       if (nativeSession) {
+        this.lastResumeType = "native";
         this.session = nativeSession;
+        proxyLog.info("session_resumed", { resumeType: "native", nativeSessionId: config.nativeAgentSessionId });
         return nativeSession;
       }
-      console.warn(
-        "[proxy] Native resume failed, falling back to text replay",
-      );
+      proxyLog.warn("native_resume_failed", {
+        nativeSessionId: config.nativeAgentSessionId,
+        fallback: config.sdkSessionId ? "text_replay" : "fresh",
+      });
     }
 
     // 2. Try text replay resume
     if (config.sdkSessionId) {
+      this.lastResumeType = "text_replay";
       const session = await this.createSessionWithFallback(
         sessionConfig,
         config.sdkSessionId,
       );
       this.session = session;
+      proxyLog.info("session_resumed", { resumeType: "text_replay", sdkSessionId: config.sdkSessionId });
       return session;
     }
 
     // 3. Fresh session
+    this.lastResumeType = "fresh";
     const session = await this.createSessionWithFallback(sessionConfig);
     this.session = session;
+    proxyLog.info("session_created", { resumeType: "fresh", agent: config.agent });
     return session;
   }
 
@@ -209,9 +221,7 @@ export class AcpBridge {
         error.message.includes("Invalid parameters");
       if (!isRpcParamError) throw error;
 
-      console.warn(
-        `[proxy] Config option RPC failed for ${config.agent}, using fallback`,
-      );
+      proxyLog.warn("config_rpc_fallback", { agent: config.agent });
 
       const bareOpts = {
         agent: config.agent,
@@ -232,10 +242,10 @@ export class AcpBridge {
             modeId: config.mode,
           });
         } catch (modeError) {
-          console.warn(
-            `[proxy] Failed to set mode "${config.mode}" — agent uses defaults. ` +
-              `Error: ${modeError instanceof Error ? modeError.message : modeError}`,
-          );
+          proxyLog.warn("set_mode_failed", {
+            mode: config.mode,
+            error: modeError instanceof Error ? modeError.message : String(modeError),
+          });
         }
       }
 

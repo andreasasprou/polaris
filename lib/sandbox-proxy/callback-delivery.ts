@@ -14,6 +14,7 @@ import {
   incrementAttempts,
   readPendingEntries,
 } from "./outbox";
+import { proxyLog } from "./logger";
 
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000; // 1s, 4s, 16s
@@ -47,6 +48,7 @@ async function deliverEntry(
 
   const signature = signPayload(body, hmacKey);
   const jsonBody = JSON.stringify(body);
+  const deliveryStart = Date.now();
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -70,31 +72,51 @@ async function deliverEntry(
       // 200 or 409 = delivered (no retry needed)
       if (res.ok || res.status === 409) {
         markDelivered(entry.callbackId);
+        proxyLog.info("callback_delivered", {
+          callbackId: entry.callbackId,
+          callbackType: entry.callbackType,
+          attempt: attempt + 1,
+          status: res.status,
+          deliveryMs: Date.now() - deliveryStart,
+        });
         return true;
       }
 
       // 4xx (non-409) = permanent failure, don't retry
       if (res.status >= 400 && res.status < 500) {
-        console.error(
-          `[proxy] Callback ${entry.callbackId} rejected with ${res.status}`,
-        );
+        proxyLog.error("callback_rejected", {
+          callbackId: entry.callbackId,
+          callbackType: entry.callbackType,
+          status: res.status,
+        });
         markFailed(entry.callbackId);
         return false;
       }
 
       // 5xx = retry
-      console.warn(
-        `[proxy] Callback ${entry.callbackId} delivery attempt ${attempt + 1} failed: ${res.status}`,
-      );
+      proxyLog.warn("callback_delivery_retry", {
+        callbackId: entry.callbackId,
+        callbackType: entry.callbackType,
+        attempt: attempt + 1,
+        status: res.status,
+      });
     } catch (err) {
-      console.warn(
-        `[proxy] Callback ${entry.callbackId} delivery attempt ${attempt + 1} error:`,
-        err instanceof Error ? err.message : err,
-      );
+      proxyLog.warn("callback_delivery_error", {
+        callbackId: entry.callbackId,
+        callbackType: entry.callbackType,
+        attempt: attempt + 1,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
   // All retries exhausted
+  proxyLog.error("callback_delivery_exhausted", {
+    callbackId: entry.callbackId,
+    callbackType: entry.callbackType,
+    totalAttempts: MAX_RETRIES,
+    deliveryMs: Date.now() - deliveryStart,
+  });
   markFailed(entry.callbackId);
   return false;
 }
@@ -138,7 +160,7 @@ export async function replayPendingCallbacks(
   const entries = readPendingEntries();
   if (entries.length === 0) return;
 
-  console.log(`[proxy] Replaying ${entries.length} pending callbacks`);
+  proxyLog.info("replaying_pending_callbacks", { count: entries.length });
 
   for (const entry of entries) {
     await deliverEntry(entry, callbackUrl, hmacKey);
