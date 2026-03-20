@@ -304,8 +304,11 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const lastCommentId = payload.lastCommentId as string | undefined;
   const orgId = job.organizationId;
 
-  // Read persisted output from the result
-  const agentOutput = (result.lastMessage as string) ?? "";
+  // Read persisted output from the result.
+  // Prefer allOutput (full concatenated output) over lastMessage (only final
+  // segment after last tool call) — the agent may interleave tool calls with
+  // its review writing, splitting the comment across multiple text segments.
+  const agentOutput = (result.allOutput as string) || (result.lastMessage as string) || "";
 
   try {
     // 1. Parse output

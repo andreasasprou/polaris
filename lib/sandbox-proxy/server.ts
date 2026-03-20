@@ -331,6 +331,7 @@ export class ProxyServer {
           payload: {
             result: {
               lastMessage: result.lastMessage,
+              allOutput: result.allOutput,
               sdkSessionId: result.sdkSessionId,
               nativeAgentSessionId: result.nativeAgentSessionId,
               cwd: result.cwd,

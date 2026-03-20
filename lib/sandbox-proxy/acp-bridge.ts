@@ -27,6 +27,7 @@ const HEALTH_TIMEOUT_MS = 30_000;
 type PromptResult = {
   success: boolean;
   lastMessage?: string;
+  allOutput?: string;
   sdkSessionId?: string;
   nativeAgentSessionId?: string;
   cwd?: string;
@@ -379,11 +380,12 @@ export class AcpBridge {
           : await session.prompt(promptContent);
 
       // Read persisted events for output reconstruction (correct order guaranteed)
-      const { lastMessage } = await this.readPersistedOutput(session.id);
+      const { allOutput, lastMessage } = await this.readPersistedOutput(session.id);
 
       return {
         success: true,
         lastMessage,
+        allOutput,
         sdkSessionId: session.id,
         nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
@@ -408,8 +410,8 @@ export class AcpBridge {
    */
   private async readPersistedOutput(
     sessionId: string,
-  ): Promise<{ lastMessage: string | undefined }> {
-    if (!this.sdk) return { lastMessage: undefined };
+  ): Promise<{ allOutput: string; lastMessage: string | undefined }> {
+    if (!this.sdk) return { allOutput: "", lastMessage: undefined };
 
     try {
       type IndexedEntry =
@@ -471,11 +473,13 @@ export class AcpBridge {
         messages.push(current.join(""));
       }
 
+      const allOutput = messages.join("\n\n");
       return {
+        allOutput,
         lastMessage: messages.length > 0 ? messages[messages.length - 1] : undefined,
       };
     } catch {
-      return { lastMessage: undefined };
+      return { allOutput: "", lastMessage: undefined };
     }
   }
 

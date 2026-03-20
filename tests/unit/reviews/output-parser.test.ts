@@ -120,4 +120,81 @@ describe("parseReviewOutput", () => {
     const output = `## Review\n\n<!-- polaris:metadata -->\nno json here`;
     expect(parseReviewOutput(output)).toBeNull();
   });
+
+  // ── Regression tests: tool-call-interleaved output ──
+
+  it("extracts review from allOutput with pre-review thinking text", () => {
+    // Simulates allOutput where the agent wrote thinking text before the review
+    const preReviewText = "Let me analyze the changes in this PR...\n\nI'll look at the key files.\n\n";
+    const reviewBody = `## ⚠️ Polaris Review #3: ATTENTION\n\nThis PR has a potential issue.\n\n#### 🟡 [P1] Missing null check\n**File:** \`src/auth.ts\` · **Category:** Correctness\n\nThe function does not check for null.\n\n<sub>Polaris Review #3 · abc1234 · Automated by Polaris</sub>`;
+
+    const output = preReviewText + makeAgentOutput({
+      verdict: "ATTENTION",
+      body: reviewBody,
+      severityCounts: { P0: 0, P1: 1, P2: 0 },
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.metadata.verdict).toBe("ATTENTION");
+    // Pre-review thinking text should be stripped
+    expect(result!.commentBody).not.toContain("Let me analyze");
+    // Review header should be present
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review #3: ATTENTION"));
+    expect(result!.commentBody).toContain("Missing null check");
+  });
+
+  it("handles allOutput with tool call text interleaved before the review", () => {
+    // Simulates the agent reading files (tool call output appears as text segments)
+    const toolCallOutput = [
+      "I need to check the implementation details.",
+      "Looking at the auth module for potential issues.",
+      "Found the relevant code section, now writing the review.",
+    ].join("\n\n");
+
+    const reviewBody = `## ✅ Polaris Review #2: APPROVE\n\nClean implementation with good test coverage.\n\n<sub>Polaris Review #2 · def5678 · Automated by Polaris</sub>`;
+
+    const output = toolCallOutput + "\n\n" + makeAgentOutput({
+      verdict: "APPROVE",
+      body: reviewBody,
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.metadata.verdict).toBe("APPROVE");
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review #2: APPROVE"));
+    expect(result!.commentBody).not.toContain("I need to check");
+  });
+
+  it("preserves full review body when no pre-review text exists", () => {
+    // Clean output — no extra text before the review
+    const output = makeAgentOutput({ verdict: "APPROVE" });
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review #1: APPROVE"));
+  });
+
+  it("handles BLOCK verdict header with 🚫 emoji", () => {
+    const reviewBody = `## 🚫 Polaris Review #1: BLOCK\n\nCritical security issue found.\n\n<sub>Polaris Review #1 · abc · Automated by Polaris</sub>`;
+    const output = "Some thinking...\n\n" + makeAgentOutput({
+      verdict: "BLOCK",
+      body: reviewBody,
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## 🚫 Polaris Review #1: BLOCK"));
+    expect(result!.commentBody).not.toContain("Some thinking");
+  });
+
+  it("falls back to full text before marker when no review header found", () => {
+    // Edge case: agent wrote a review without the standard header format
+    const body = "This PR looks fine. No major issues.\n\n<sub>Footer</sub>";
+    const output = makeAgentOutput({ body });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    // Without a matching header, should keep all text before marker
+    expect(result!.commentBody).toBe(body);
+  });
 });
