@@ -129,8 +129,8 @@ Your response will be posted **directly** as a GitHub PR comment. Write it as th
 
 4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them with the original title for context: \`- ~~finding-id: Original title of the finding~~ ✅\`
 
-5. **Footer** — End the visible comment with:
-   \`<sub>Polaris Review #N · Automated by Polaris</sub>\`
+5. **Footer** — End the visible comment with the review number and the head commit SHA you reviewed (from Review Scope above):
+   \`<sub>Polaris Review #N · \`<head-sha-short>\` · Automated by Polaris</sub>\`
 
 ### Metadata block
 
