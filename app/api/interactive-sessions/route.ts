@@ -37,7 +37,12 @@ export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
-  const { agentType, agentSecretId, repositoryId, prompt } = body;
+  const agentType = body.agentType;
+  const repositoryId = body.repositoryId;
+  const prompt = body.prompt;
+  // Normalize empty strings to null to prevent invalid UUIDs leaking to DB
+  const agentSecretId = body.agentSecretId || null;
+  const keyPoolId = body.keyPoolId || null;
 
   if (!prompt?.trim()) {
     return NextResponse.json(
@@ -60,12 +65,21 @@ export const POST = withEvlog(async (req: Request) => {
     );
   }
 
+  // Validate mutual exclusivity
+  if (agentSecretId && keyPoolId) {
+    return NextResponse.json(
+      { error: "Cannot set both agentSecretId and keyPoolId" },
+      { status: 400 },
+    );
+  }
+
   // Validate credentials exist before creating the session
   try {
     await resolveSessionCredentials({
       organizationId: orgId,
       agentType: agentType ?? "claude",
-      agentSecretId: agentSecretId ?? null,
+      agentSecretId,
+      keyPoolId,
       repositoryId,
     });
   } catch (err) {
@@ -81,6 +95,7 @@ export const POST = withEvlog(async (req: Request) => {
     createdBy: session.user.id,
     agentType: agentType ?? "claude",
     agentSecretId,
+    keyPoolId,
     repositoryId,
     prompt,
   });

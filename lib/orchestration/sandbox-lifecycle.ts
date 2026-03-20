@@ -16,6 +16,8 @@ import { GitOperations } from "@/lib/sandbox/GitOperations";
 import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap";
 import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import type { AgentType } from "@/lib/sandbox-agent/types";
+import type { CredentialRef } from "@/lib/key-pools/types";
+import { allocateKeyFromPool, resolveSecretKey } from "@/lib/key-pools/resolve";
 import { useLogger } from "@/lib/evlog";
 import { createStepTimer } from "@/lib/metrics/step-timer";
 import {
@@ -55,7 +57,7 @@ export type EnsureSandboxResult = {
 export async function ensureSandboxReady(
   sessionId: string,
   credentials: {
-    agentApiKey: string;
+    credentialRef: CredentialRef;
     agentType: AgentType;
     repositoryOwner: string;
     repositoryName: string;
@@ -70,6 +72,8 @@ export async function ensureSandboxReady(
 
   const session = await getInteractiveSession(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  const orgId = session.organizationId;
 
   // Mint GitHub token
   const { mintInstallationToken } = await import("@/lib/integrations/github");
@@ -137,6 +141,38 @@ export async function ensureSandboxReady(
     status: "creating",
   });
 
+  // Resolve the actual API key — delayed until after sandbox creation so
+  // failed provisioning doesn't advance LRU and skew fairness for retries.
+  // Wrapped in try/catch to destroy the sandbox if allocation fails (e.g. all
+  // pool keys revoked between validation and provisioning).
+  const ref = credentials.credentialRef;
+  let agentApiKey: string;
+  try {
+    switch (ref.type) {
+      case "pool": {
+        const { poolId } = ref;
+        const allocated = await timer.time("allocateKey", () =>
+          allocateKeyFromPool(poolId, orgId),
+        );
+        agentApiKey = allocated.decryptedKey;
+        break;
+      }
+      case "secret": {
+        const { secretId } = ref;
+        const resolved = await timer.time("resolveKey", () =>
+          resolveSecretKey(secretId, orgId),
+        );
+        agentApiKey = resolved.decryptedKey;
+        break;
+      }
+    }
+  } catch (err) {
+    // Clean up the orphaned sandbox + runtime before re-throwing
+    await sandboxManager.destroyById(sandbox.sandboxId).catch(() => {});
+    await updateRuntime(runtime.id, { status: "failed", endedAt: new Date() });
+    throw err;
+  }
+
   // Bootstrap agent server
   const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
   const git = new GitOperations(commands);
@@ -144,7 +180,7 @@ export async function ensureSandboxReady(
 
   const rawEnv = buildSessionEnv(
     credentials.agentType,
-    credentials.agentApiKey,
+    agentApiKey,
     credentials.extraEnv,
   );
   const sessionEnv = await timer.time("provisionCreds", () => bootstrap.provisionCredentialFiles(rawEnv));

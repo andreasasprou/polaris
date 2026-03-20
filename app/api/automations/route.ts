@@ -19,10 +19,11 @@ export const POST = withEvlog(async (req: Request) => {
   const body = await req.json();
 
   try {
-    const { repositoryId, agentSecretId } = await validateAutomationRelationsForOrg({
+    const { repositoryId, agentSecretId, keyPoolId } = await validateAutomationRelationsForOrg({
       organizationId: orgId,
       repositoryId: body.repositoryId ?? null,
       agentSecretId: body.agentSecretId ?? null,
+      keyPoolId: body.keyPoolId ?? null,
     });
 
     const automation = await createAutomation({
@@ -37,6 +38,7 @@ export const POST = withEvlog(async (req: Request) => {
       agentMode: body.agentMode,
       repositoryId: repositoryId ?? undefined,
       agentSecretId: agentSecretId ?? undefined,
+      keyPoolId: keyPoolId ?? undefined,
       maxDurationSeconds: body.maxDurationSeconds,
       maxConcurrentRuns: body.maxConcurrentRuns,
       allowPush: body.allowPush,

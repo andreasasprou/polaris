@@ -388,7 +388,7 @@ async function retryReviewDispatch(
     if (!alive) {
       const creds = await resolveSessionCredentials(session);
       const result = await ensureSandboxReady(session.id, {
-        agentApiKey: creds.agentApiKey,
+        credentialRef: creds.credentialRef,
         agentType: session.agentType as Parameters<typeof ensureSandboxReady>[1]["agentType"],
         repositoryOwner: creds.repositoryOwner,
         repositoryName: creds.repositoryName,

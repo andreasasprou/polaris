@@ -244,6 +244,7 @@ export async function dispatchPrReview(
         createdBy: "automation",
         agentType: automation.agentType ?? "claude",
         agentSecretId: automation.agentSecretId ?? undefined,
+        keyPoolId: automation.keyPoolId ?? undefined,
         repositoryId: automation.repositoryId!,
         prompt: reviewPrompt,
       });
@@ -345,7 +346,7 @@ export async function dispatchPrReview(
 
         const { ensureSandboxReady } = await import("./sandbox-lifecycle");
         const result = await ensureSandboxReady(targetSessionId, {
-          agentApiKey: creds.agentApiKey,
+          credentialRef: creds.credentialRef,
           agentType: session.agentType as AgentType,
           repositoryOwner: creds.repositoryOwner,
           repositoryName: creds.repositoryName,

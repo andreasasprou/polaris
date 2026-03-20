@@ -39,20 +39,39 @@ export const PUT = withEvlog(async (
   const repositoryId = Object.prototype.hasOwnProperty.call(body, "repositoryId")
     ? body.repositoryId ?? null
     : existing.repositoryId;
-  const agentSecretId = Object.prototype.hasOwnProperty.call(body, "agentSecretId")
-    ? body.agentSecretId ?? null
-    : existing.agentSecretId;
+
+  // Determine agentSecretId / keyPoolId with explicit nulling on switch
+  const hasSecretInBody = Object.prototype.hasOwnProperty.call(body, "agentSecretId");
+  const hasPoolInBody = Object.prototype.hasOwnProperty.call(body, "keyPoolId");
+
+  // Reject payloads that explicitly set both credential fields
+  if (hasSecretInBody && hasPoolInBody && body.agentSecretId && body.keyPoolId) {
+    return NextResponse.json(
+      { error: "Cannot set both agentSecretId and keyPoolId" },
+      { status: 400 },
+    );
+  }
+
+  // When setting one, null the other to satisfy the CHECK constraint
+  let agentSecretId = hasSecretInBody ? (body.agentSecretId || null) : existing.agentSecretId;
+  let keyPoolId = hasPoolInBody ? (body.keyPoolId || null) : existing.keyPoolId;
+
+  // Auto-null the other column when switching credential source
+  if (hasPoolInBody && keyPoolId) agentSecretId = null;
+  else if (hasSecretInBody && agentSecretId) keyPoolId = null;
 
   try {
     const validated = await validateAutomationRelationsForOrg({
       organizationId: orgId,
       repositoryId,
       agentSecretId,
+      keyPoolId,
     });
     const automation = await updateAutomation(id, {
       ...body,
       repositoryId: validated.repositoryId,
       agentSecretId: validated.agentSecretId,
+      keyPoolId: validated.keyPoolId,
     });
 
     return NextResponse.json({ automation });

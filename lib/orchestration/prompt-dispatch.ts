@@ -103,9 +103,9 @@ export async function dispatchPromptToSession(input: {
   log.set({ dispatch: { tier, sandboxAlive, agentType: session.agentType } });
 
   if (!sandboxAlive) {
-    // Tier 2: Provision sandbox
+    // Tier 2: Provision sandbox (key allocation happens inside ensureSandboxReady)
     const result = await timer.time("ensureSandboxReady", () => ensureSandboxReady(sessionId, {
-      agentApiKey: creds.agentApiKey,
+      credentialRef: creds.credentialRef,
       agentType: session.agentType as Parameters<typeof ensureSandboxReady>[1]["agentType"],
       repositoryOwner: creds.repositoryOwner,
       repositoryName: creds.repositoryName,
@@ -238,40 +238,36 @@ export function buildCallbackUrl(): string {
 }
 
 /**
- * Resolve agent API key + repository info for a session.
- * Shared by session creation and prompt dispatch.
+ * Resolve credential reference + repository info for a session.
+ *
+ * This is the VALIDATION layer — it checks that credentials exist and are valid,
+ * but does NOT decrypt keys or allocate from pools. Key allocation happens
+ * inside ensureSandboxReady() at provisioning time.
  */
 export async function resolveSessionCredentials(session: {
   organizationId: string;
   agentType: string;
   agentSecretId: string | null;
+  keyPoolId: string | null;
   repositoryId: string | null;
 }) {
-  let agentApiKey: string | undefined;
+  const { credentialRefFromRow } = await import("@/lib/key-pools/types");
+  const { validateCredentialRef } = await import("@/lib/key-pools/validate");
 
-  if (session.agentSecretId) {
-    const { findSecretByIdAndOrg } = await import("@/lib/secrets/queries");
-    const secret = await findSecretByIdAndOrg(
-      session.agentSecretId,
-      session.organizationId,
-    );
-    if (!secret) {
-      throw new RequestError("Secret not found", 404);
-    }
-    if (secret.revokedAt) {
-      throw new RequestError("This API key has been revoked", 400);
-    }
+  const credentialRef = credentialRefFromRow({
+    agentSecretId: session.agentSecretId,
+    keyPoolId: session.keyPoolId,
+  });
 
-    const { decrypt } = await import("@/lib/credentials/encryption");
-    agentApiKey = decrypt(secret.encryptedValue);
-  }
-
-  if (!agentApiKey) {
+  if (!credentialRef) {
     throw new RequestError(
       "No agent API key configured. Add one in Settings → Secrets.",
       400,
     );
   }
+
+  // Validate existence, org-scoping, revocation — no key decryption
+  await validateCredentialRef(credentialRef, session.organizationId);
 
   let repositoryOwner: string | undefined;
   let repositoryName: string | undefined;
@@ -310,7 +306,7 @@ export async function resolveSessionCredentials(session: {
   }
 
   return {
-    agentApiKey,
+    credentialRef,
     repositoryOwner,
     repositoryName,
     defaultBranch,

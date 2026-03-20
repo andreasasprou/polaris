@@ -144,22 +144,59 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
 
     if (job.automationId && changes.changed) {
       try {
-        const { resolveCredentials } = await import("./credential-resolver");
-        const creds = await resolveCredentials(job.automationId);
-        if (
-          creds?.provider === "anthropic" &&
-          !creds.agentApiKey.startsWith("sk-ant-oat")
-        ) {
-          const metadataCtx = { apiKey: creds.agentApiKey, provider: creds.provider };
-          const { generateCommitMessage, generatePrTitle } = await import(
-            "./metadata"
-          );
-          const [cmResult, prResult] = await Promise.allSettled([
-            generateCommitMessage(title, changes.diffSummary, changes.filesChanged, metadataCtx),
-            generatePrTitle(title, changes.diffSummary, metadataCtx),
-          ]);
-          if (cmResult.status === "fulfilled") commitMessage = cmResult.value;
-          if (prResult.status === "fulfilled") prTitle = prResult.value;
+        // Use non-allocating resolution to avoid spurious pool rotation.
+        // resolveCredentials() uses the allocator which advances LRU state —
+        // postprocessing only needs a key for metadata generation, not dispatch.
+        const { findAutomationById } = await import("@/lib/automations/queries");
+        const { credentialRefFromRow } = await import("@/lib/key-pools/types");
+        const { resolveSecretKey } = await import("@/lib/key-pools/resolve");
+
+        const automation = await findAutomationById(job.automationId);
+        if (automation) {
+          const credRef = credentialRefFromRow({
+            agentSecretId: automation.agentSecretId,
+            keyPoolId: automation.keyPoolId,
+          });
+
+          // For pools, pick any active member without advancing LRU.
+          // For single secrets, resolve directly.
+          let apiKey: string | undefined;
+          let provider: string | undefined;
+
+          if (credRef?.type === "secret") {
+            const resolved = await resolveSecretKey(credRef.secretId, automation.organizationId);
+            apiKey = resolved.decryptedKey;
+            provider = resolved.provider;
+          } else if (credRef?.type === "pool") {
+            // Read-only: find a usable Anthropic API key (not OAuth) without stamping lastSelectedAt.
+            // Iterate members because the first active one may be an OAuth token.
+            const { findKeyPoolMembers } = await import("@/lib/key-pools/queries");
+            const { decrypt } = await import("@/lib/credentials/encryption");
+            const { findSecretByIdAndOrg } = await import("@/lib/secrets/queries");
+            const members = await findKeyPoolMembers(credRef.poolId);
+            for (const member of members) {
+              if (!member.enabled || member.secretRevokedAt) continue;
+              const secret = await findSecretByIdAndOrg(member.secretId, automation.organizationId);
+              if (!secret || secret.revokedAt) continue;
+              const decrypted = decrypt(secret.encryptedValue);
+              // Skip OAuth tokens — they can't be used for direct API calls
+              if (secret.provider === "anthropic" && decrypted.startsWith("sk-ant-oat")) continue;
+              apiKey = decrypted;
+              provider = secret.provider;
+              break;
+            }
+          }
+
+          if (apiKey && provider === "anthropic" && !apiKey.startsWith("sk-ant-oat")) {
+            const metadataCtx = { apiKey, provider };
+            const { generateCommitMessage, generatePrTitle } = await import("./metadata");
+            const [cmResult, prResult] = await Promise.allSettled([
+              generateCommitMessage(title, changes.diffSummary, changes.filesChanged, metadataCtx),
+              generatePrTitle(title, changes.diffSummary, metadataCtx),
+            ]);
+            if (cmResult.status === "fulfilled") commitMessage = cmResult.value;
+            if (prResult.status === "fulfilled") prTitle = prResult.value;
+          }
         }
       } catch {
         // Metadata generation is best-effort — fall through to defaults

@@ -50,6 +50,7 @@ export async function findEnabledAutomationsByTrigger(
       agentMode: automations.agentMode,
       repositoryId: automations.repositoryId,
       agentSecretId: automations.agentSecretId,
+      keyPoolId: automations.keyPoolId,
       mode: automations.mode,
       modelParams: automations.modelParams,
       prReviewConfig: automations.prReviewConfig,
