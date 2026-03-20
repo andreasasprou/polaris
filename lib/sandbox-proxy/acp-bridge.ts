@@ -305,6 +305,8 @@ export class AcpBridge {
       onEvent?: EventCallback;
       timeoutMs?: number;
       signal?: AbortSignal;
+      /** Attachments already written to sandbox filesystem */
+      attachments?: Array<{ name: string; absolutePath: string; mimeType: string }>;
     },
   ): Promise<PromptResult> {
     const startTime = Date.now();
@@ -318,6 +320,18 @@ export class AcpBridge {
       const promptContent: PromptContentPart[] = [
         { type: "text", text: prompt },
       ];
+
+      // Add resource_link parts for each attachment
+      if (options?.attachments?.length) {
+        for (const att of options.attachments) {
+          promptContent.push({
+            type: "resource_link",
+            name: att.name,
+            uri: `file://${att.absolutePath}`,
+            mimeType: att.mimeType,
+          });
+        }
+      }
 
       // Build race guards
       const guards: Promise<never>[] = [];

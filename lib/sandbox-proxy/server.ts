@@ -193,9 +193,10 @@ export class ProxyServer {
    * Execute a prompt asynchronously after returning 202.
    */
   private async executePromptAsync(request: PromptRequest): Promise<void> {
-    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles } =
+    const { jobId, attemptId, epoch, callbackUrl, hmacKey, config, prompt, contextFiles, attachments } =
       request;
     const cwd = config.cwd ?? "/home/user/repo";
+    const uploadDir = `/tmp/polaris-uploads/${jobId}`;
 
     try {
       // Write context files to sandbox filesystem before starting the agent
@@ -205,6 +206,21 @@ export class ProxyServer {
           if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
           fs.writeFileSync(file.path, file.content);
           console.log(`[proxy] Wrote context file: ${file.path} (${Buffer.byteLength(file.content)} bytes)`);
+        }
+      }
+
+      // Write binary attachments to sandbox filesystem
+      const uploadedAttachments: Array<{ name: string; absolutePath: string; mimeType: string }> = [];
+      if (attachments?.length) {
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+        for (let i = 0; i < attachments.length; i++) {
+          const att = attachments[i];
+          const safeName = `${i}-${att.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+          const filePath = path.join(uploadDir, safeName);
+          fs.writeFileSync(filePath, Buffer.from(att.data, "base64"));
+          uploadedAttachments.push({ name: att.name, absolutePath: filePath, mimeType: att.mimeType });
+          console.log(`[proxy] Wrote attachment: ${filePath} (${att.name}, ${att.mimeType})`);
         }
       }
 
@@ -242,6 +258,7 @@ export class ProxyServer {
           onEvent,
           timeoutMs: PROMPT_TIMEOUT_MS,
           signal: this.monitor.signal,
+          attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         },
       );
 
@@ -312,6 +329,15 @@ export class ProxyServer {
     } finally {
       this.state = "idle";
       this.clearActivePrompt();
+
+      // Clean up uploaded attachments
+      if (fs.existsSync(uploadDir)) {
+        try {
+          fs.rmSync(uploadDir, { recursive: true });
+        } catch {
+          // Best-effort cleanup
+        }
+      }
     }
   }
 

@@ -30,14 +30,22 @@ export type DispatchResult = {
  * Tier 1: If sandbox is alive, CAS idle→active and POST /prompt.
  * Tier 2: If sandbox is dead/missing, provision a new one, then Tier 1.
  */
+export type PromptAttachment = {
+  name: string;
+  mimeType: string;
+  /** base64-encoded binary content */
+  data: string;
+};
+
 export async function dispatchPromptToSession(input: {
   organizationId: string;
   sessionId: string;
   prompt: string;
   requestId: string;
   source: string;
+  attachments?: PromptAttachment[];
 }): Promise<DispatchResult> {
-  const { organizationId, sessionId, prompt, requestId, source } = input;
+  const { organizationId, sessionId, prompt, requestId, source, attachments } = input;
 
   const session = await getInteractiveSessionForOrg(sessionId, organizationId);
   if (!session) throw new RequestError("Session not found", 404);
@@ -163,6 +171,7 @@ export async function dispatchPromptToSession(input: {
           agent: session.agentType,
           cwd: "/vercel/sandbox",
         },
+        ...(attachments?.length ? { attachments } : {}),
       }),
       signal: AbortSignal.timeout(30_000),
     });

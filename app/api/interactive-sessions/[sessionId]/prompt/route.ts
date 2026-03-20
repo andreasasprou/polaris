@@ -25,29 +25,72 @@ export const POST = withEvlog(async (
   }
 
   const body = await req.json();
-  const { prompt } = body;
+  const { prompt, attachments } = body;
 
-  if (!prompt?.trim()) {
+  const hasText = !!prompt?.trim();
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+
+  if (!hasText && !hasAttachments) {
     return NextResponse.json(
-      { error: "prompt is required" },
+      { error: "prompt or attachments required" },
       { status: 400 },
     );
   }
 
-  if (prompt.length > 100_000) {
+  if (hasText && prompt.length > 100_000) {
     return NextResponse.json(
       { error: "Prompt exceeds maximum length of 100,000 characters" },
       { status: 400 },
     );
   }
 
+  // Validate attachments if provided
+  const ALLOWED_MIME_TYPES = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+  ];
+  const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB per attachment (base64)
+
+  if (attachments) {
+    if (!Array.isArray(attachments) || attachments.length > 10) {
+      return NextResponse.json(
+        { error: "attachments must be an array of at most 10 items" },
+        { status: 400 },
+      );
+    }
+    for (const att of attachments) {
+      if (!att.name || !att.mimeType || !att.data) {
+        return NextResponse.json(
+          { error: "Each attachment must have name, mimeType, and data" },
+          { status: 400 },
+        );
+      }
+      if (!ALLOWED_MIME_TYPES.includes(att.mimeType)) {
+        return NextResponse.json(
+          { error: `Unsupported attachment type: ${att.mimeType}` },
+          { status: 400 },
+        );
+      }
+      if (att.data.length > MAX_ATTACHMENT_SIZE) {
+        return NextResponse.json(
+          { error: `Attachment "${att.name}" exceeds maximum size` },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
   try {
     const result = await dispatchPromptToSession({
       organizationId: orgId,
       sessionId,
-      prompt,
+      prompt: prompt?.trim() || "",
       requestId: randomUUID(),
       source: "user",
+      attachments: attachments?.length ? attachments : undefined,
     });
 
     return NextResponse.json({ jobId: result.jobId }, { status: 202 });

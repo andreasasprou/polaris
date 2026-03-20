@@ -33,6 +33,15 @@ export type ContextFile = {
   content: string;
 };
 
+export type PromptAttachment = {
+  /** Original filename (e.g. "screenshot.png") */
+  name: string;
+  /** MIME type (e.g. "image/png") */
+  mimeType: string;
+  /** base64-encoded binary content */
+  data: string;
+};
+
 export type PromptRequest = {
   jobId: string;
   attemptId: string;
@@ -43,6 +52,8 @@ export type PromptRequest = {
   config: PromptConfig;
   /** Files to write to the sandbox before starting the agent */
   contextFiles?: ContextFile[];
+  /** Binary attachments (images, PDFs) to upload and reference in the prompt */
+  attachments?: PromptAttachment[];
 };
 
 // ── Active Prompt (persisted to local file for durable accept) ──
@@ -109,7 +120,9 @@ export type ProxyStatus = {
 // ── Agent Session Interface ──
 // Minimal interface satisfied by both SDK sessions and NativeResumedSession.
 
-export type PromptContentPart = { type: "text"; text: string };
+export type PromptContentPart =
+  | { type: "text"; text: string }
+  | { type: "resource_link"; name: string; uri: string; mimeType: string };
 
 export type AgentEvent = {
   eventIndex: number;
