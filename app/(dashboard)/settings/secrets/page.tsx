@@ -243,6 +243,7 @@ export default function SecretsPage() {
       setExpandedPoolId(null);
     } else {
       setExpandedPoolId(poolId);
+      setPoolMembers([]); // Clear stale members from previously expanded pool
       loadPoolMembers(poolId);
     }
   }

@@ -143,25 +143,34 @@ export async function ensureSandboxReady(
 
   // Resolve the actual API key — delayed until after sandbox creation so
   // failed provisioning doesn't advance LRU and skew fairness for retries.
+  // Wrapped in try/catch to destroy the sandbox if allocation fails (e.g. all
+  // pool keys revoked between validation and provisioning).
   const ref = credentials.credentialRef;
   let agentApiKey: string;
-  switch (ref.type) {
-    case "pool": {
-      const { poolId } = ref;
-      const allocated = await timer.time("allocateKey", () =>
-        allocateKeyFromPool(poolId, orgId),
-      );
-      agentApiKey = allocated.decryptedKey;
-      break;
+  try {
+    switch (ref.type) {
+      case "pool": {
+        const { poolId } = ref;
+        const allocated = await timer.time("allocateKey", () =>
+          allocateKeyFromPool(poolId, orgId),
+        );
+        agentApiKey = allocated.decryptedKey;
+        break;
+      }
+      case "secret": {
+        const { secretId } = ref;
+        const resolved = await timer.time("resolveKey", () =>
+          resolveSecretKey(secretId, orgId),
+        );
+        agentApiKey = resolved.decryptedKey;
+        break;
+      }
     }
-    case "secret": {
-      const { secretId } = ref;
-      const resolved = await timer.time("resolveKey", () =>
-        resolveSecretKey(secretId, orgId),
-      );
-      agentApiKey = resolved.decryptedKey;
-      break;
-    }
+  } catch (err) {
+    // Clean up the orphaned sandbox + runtime before re-throwing
+    await sandboxManager.destroyById(sandbox.sandboxId).catch(() => {});
+    await updateRuntime(runtime.id, { status: "failed", endedAt: new Date() });
+    throw err;
   }
 
   // Bootstrap agent server
