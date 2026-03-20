@@ -106,42 +106,64 @@ const SEVERITY_SECTION = `## Severity Levels
 
 const OUTPUT_FORMAT_SECTION = `## Output Format
 
-Structure your response as follows:
+Your response will be posted **directly** as a GitHub PR comment. Write it as the final, reader-facing review — use markdown formatting, headers, code references, and clear language.
 
-1. **Summary** — A 2-3 sentence overview of the changes and your assessment
-2. **Verdict** — One of: APPROVE, ATTENTION, BLOCK
-   - APPROVE: No P0/P1 issues, code is ready to merge
-   - ATTENTION: Has P1 issues that should be addressed
-   - BLOCK: Has P0 issues that must be fixed before merge
-3. **Findings** — List each issue with severity, file, and description
-4. **Resolved Issues** — If this is an incremental review, list IDs of previously raised issues that are now fixed
+### Required structure
 
-End your response with a fenced JSON block containing the structured review state:
+1. **Header line** — Start with a header showing the verdict:
+   - \`## ✅ Polaris Review #N: APPROVE\`
+   - \`## ⚠️ Polaris Review #N: ATTENTION\`
+   - \`## 🚫 Polaris Review #N: BLOCK\`
+   where N is the review sequence number (provided in Review Scope above).
 
+2. **Summary** — 2-3 sentences summarizing the changes and your overall assessment.
+
+3. **Findings** (if any) — List each issue with its severity, file, and explanation. Use this format:
+   \`\`\`
+   #### 🔴 [P0] Title of finding
+   **File:** \`path/to/file.ts\` · **Category:** Correctness
+
+   Detailed explanation...
+   \`\`\`
+   Severity emoji mapping: 🔴 P0, 🟡 P1, 🔵 P2
+
+4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them: \`- ~~finding-id~~ ✅\`
+
+5. **Footer** — End the visible comment with:
+   \`<sub>Polaris Review #N · Automated by Polaris</sub>\`
+
+### Metadata block
+
+After the footer, append a metadata block using this exact format:
+
+\`\`\`\`
+<!-- polaris:metadata -->
 \`\`\`json
 {
   "verdict": "APPROVE" | "ATTENTION" | "BLOCK",
-  "summary": "...",
+  "summary": "1-2 sentence summary",
   "severityCounts": { "P0": 0, "P1": 0, "P2": 0 },
-  "findings": [
-    {
-      "id": "finding-1",
-      "severity": "P0" | "P1" | "P2",
-      "category": "Correctness" | "Design" | "Security" | "Performance" | "Tests" | "Style",
-      "file": "path/to/file.ts",
-      "title": "Short description",
-      "body": "Detailed explanation"
-    }
-  ],
   "resolvedIssueIds": ["finding-id-from-previous-review"],
   "reviewState": {
     "lastReviewedSha": "<head sha>",
-    "openIssues": [...],
-    "resolvedIssues": [...],
+    "openIssues": [
+      { "id": "finding-1", "file": "path/to/file.ts", "severity": "P0", "summary": "Short description" }
+    ],
+    "resolvedIssues": [
+      { "id": "old-finding", "file": "path/to/old.ts", "summary": "Was fixed", "resolvedInReview": 2 }
+    ],
     "reviewCount": <N>
   }
 }
-\`\`\``;
+\`\`\`
+\`\`\`\`
+
+**Critical rules:**
+- The metadata block MUST use the \`<!-- polaris:metadata -->\` HTML comment as its delimiter.
+- The JSON must be valid and match the schema exactly.
+- Do NOT duplicate finding details in the metadata — findings only appear in the markdown body above.
+- \`openIssues\` must include all unresolved findings from this review.
+- For incremental reviews, \`resolvedIssueIds\` must list IDs of previously raised issues that are now fixed.`;
 
 // ── Formatting helpers ──
 

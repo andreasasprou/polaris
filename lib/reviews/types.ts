@@ -155,22 +155,22 @@ export interface ManualReviewCommand {
 
 export type ReviewVerdict = "BLOCK" | "ATTENTION" | "APPROVE";
 
-export interface ReviewFinding {
-  id: string;
-  severity: "P0" | "P1" | "P2";
-  category: string;
-  file: string;
-  title: string;
-  body: string;
-}
-
-export interface ParsedReviewOutput {
+/** Machine-readable metadata the agent appends after the comment body. */
+export interface ReviewMetadata {
   verdict: ReviewVerdict;
+  /** 1-2 sentence summary for the GitHub check run */
   summary: string;
   severityCounts: { P0: number; P1: number; P2: number };
-  findings: ReviewFinding[];
   resolvedIssueIds: string[];
   reviewState: ReviewState;
+}
+
+/** Result of parsing agent output: comment body + extracted metadata. */
+export interface ParsedReviewOutput {
+  /** The agent's markdown output verbatim, with metadata block stripped. Posted directly as the GitHub comment. */
+  commentBody: string;
+  /** Machine-readable metadata extracted from the trailing JSON block. */
+  metadata: ReviewMetadata;
 }
 
 // ── Repo guidelines ──

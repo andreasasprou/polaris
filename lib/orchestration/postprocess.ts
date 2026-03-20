@@ -243,9 +243,6 @@ async function postprocessReview(job: JobRow): Promise<void> {
     updateAutomationSession,
   } = await import("@/lib/automations/actions");
   const { parseReviewOutput } = await import("@/lib/reviews/output-parser");
-  const { renderReviewComment, renderStaleComment } = await import(
-    "@/lib/reviews/comment-renderer"
-  );
   const {
     postReviewComment,
     markCommentStale,
@@ -280,15 +277,17 @@ async function postprocessReview(job: JobRow): Promise<void> {
     // 2. Mark previous comment stale
     if (lastCommentId && !sideEffects.stale_marked) {
       try {
+        const staleBody =
+          `> **Superseded** — See Review #${reviewSequence} for the latest review.\n\n` +
+          `<details><summary>Previous review (collapsed)</summary>\n\n` +
+          `*(original review content)*` +
+          `\n\n</details>`;
         await markCommentStale({
           installationId,
           owner,
           repo,
           commentId: lastCommentId,
-          newBody: renderStaleComment(
-            "*(original review content)*",
-            reviewSequence,
-          ),
+          newBody: staleBody,
         });
         await markSideEffect(job.id, "stale_marked");
       } catch (err) {
@@ -314,7 +313,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
           ...(parsed
             ? {
                 lastReviewedSha: toSha,
-                reviewState: parsed.reviewState,
+                reviewState: parsed.metadata.reviewState,
               }
             : {}),
         };
@@ -331,13 +330,13 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (!sideEffects.comment_posted) {
       try {
         if (parsed) {
-          const commentBody = renderReviewComment(parsed, reviewSequence);
+          // Comment body IS the agent's output, already stripped of metadata
           const commentResult = await postReviewComment({
             installationId,
             owner,
             repo,
             prNumber,
-            body: commentBody,
+            body: parsed.commentBody.slice(0, 60000),
           });
           commentId = commentResult.commentId;
         } else {
@@ -347,7 +346,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             owner,
             repo,
             prNumber,
-            body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>Warning: Could not parse structured output. Raw review shown above.</sub>`,
+            body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>Warning: Could not parse review metadata. Raw review shown above.</sub>`,
           });
           commentId = commentResult.commentId;
         }
@@ -385,8 +384,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
             owner,
             repo,
             checkRunId,
-            verdict: parsed.verdict,
-            summary: parsed.summary,
+            verdict: parsed.metadata.verdict,
+            summary: parsed.metadata.summary,
             detailsUrl,
           });
         } else {
@@ -411,9 +410,9 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (automationRunId && !sideEffects.run_updated) {
       await updateAutomationRun(automationRunId, {
         status: "completed",
-        summary: parsed?.summary ?? "Review completed",
-        verdict: parsed?.verdict,
-        severityCounts: parsed?.severityCounts,
+        summary: parsed?.metadata.summary ?? "Review completed",
+        verdict: parsed?.metadata.verdict,
+        severityCounts: parsed?.metadata.severityCounts,
         githubCommentId: commentId,
         completedAt: new Date(),
       });
