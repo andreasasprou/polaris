@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 // ── Automation mode ──
 
 export type AutomationMode = "oneshot" | "continuous";
@@ -155,15 +157,40 @@ export interface ManualReviewCommand {
 
 export type ReviewVerdict = "BLOCK" | "ATTENTION" | "APPROVE";
 
+/** Zod schema for the metadata block the agent appends after the comment body. Single source of truth. */
+export const ReviewMetadataSchema = z.object({
+  verdict: z.enum(["BLOCK", "ATTENTION", "APPROVE"]),
+  summary: z.string(),
+  severityCounts: z.object({
+    P0: z.number(),
+    P1: z.number(),
+    P2: z.number(),
+  }),
+  resolvedIssueIds: z.array(z.string()).default([]),
+  reviewState: z.object({
+    lastReviewedSha: z.string().nullable(),
+    openIssues: z.array(
+      z.object({
+        id: z.string(),
+        file: z.string(),
+        severity: z.enum(["P0", "P1", "P2"]),
+        summary: z.string().optional(),
+      }),
+    ),
+    resolvedIssues: z.array(
+      z.object({
+        id: z.string(),
+        file: z.string(),
+        summary: z.string().optional(),
+        resolvedInReview: z.number().optional(),
+      }),
+    ),
+    reviewCount: z.number(),
+  }),
+});
+
 /** Machine-readable metadata the agent appends after the comment body. */
-export interface ReviewMetadata {
-  verdict: ReviewVerdict;
-  /** 1-2 sentence summary for the GitHub check run */
-  summary: string;
-  severityCounts: { P0: number; P1: number; P2: number };
-  resolvedIssueIds: string[];
-  reviewState: ReviewState;
-}
+export type ReviewMetadata = z.infer<typeof ReviewMetadataSchema>;
 
 /** Result of parsing agent output: comment body + extracted metadata. */
 export interface ParsedReviewOutput {

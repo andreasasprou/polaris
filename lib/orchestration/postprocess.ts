@@ -273,6 +273,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
   try {
     // 1. Parse output
     const parsed = agentOutput ? parseReviewOutput(agentOutput) : null;
+    const metadata = parsed?.metadata ?? null;
 
     // 2. Mark previous comment stale
     if (lastCommentId && !sideEffects.stale_marked) {
@@ -313,7 +314,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
           ...(parsed
             ? {
                 lastReviewedSha: toSha,
-                reviewState: parsed.metadata.reviewState,
+                reviewState: metadata!.reviewState,
               }
             : {}),
         };
@@ -384,8 +385,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
             owner,
             repo,
             checkRunId,
-            verdict: parsed.metadata.verdict,
-            summary: parsed.metadata.summary,
+            verdict: metadata!.verdict,
+            summary: metadata!.summary,
             detailsUrl,
           });
         } else {
@@ -410,9 +411,9 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (automationRunId && !sideEffects.run_updated) {
       await updateAutomationRun(automationRunId, {
         status: "completed",
-        summary: parsed?.metadata.summary ?? "Review completed",
-        verdict: parsed?.metadata.verdict,
-        severityCounts: parsed?.metadata.severityCounts,
+        summary: metadata?.summary ?? "Review completed",
+        verdict: metadata?.verdict,
+        severityCounts: metadata?.severityCounts,
         githubCommentId: commentId,
         completedAt: new Date(),
       });
