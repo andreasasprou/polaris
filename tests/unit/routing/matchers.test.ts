@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { matchesGitHubTrigger } from "@/lib/routing/matchers";
+import { matchesRepository } from "@/lib/routing/trigger-router";
 import type { GitHubTriggerConfig } from "@/lib/automations/types";
 
 describe("matchesGitHubTrigger", () => {
@@ -143,5 +144,35 @@ describe("matchesGitHubTrigger", () => {
       expect(matchesGitHubTrigger("release", "published", undefined, config)).toBe(true);
       expect(matchesGitHubTrigger("issues", "opened", undefined, config)).toBe(false);
     });
+  });
+});
+
+describe("matchesRepository", () => {
+  it("matches when automation repo equals webhook repo", () => {
+    expect(matchesRepository("andreasasprou", "polaris", "andreasasprou/polaris")).toBe(true);
+  });
+
+  it("rejects when repos differ", () => {
+    expect(matchesRepository("andreasasprou", "x-list-synthesizer", "andreasasprou/polaris")).toBe(false);
+  });
+
+  it("rejects when automation has no repo owner", () => {
+    expect(matchesRepository(null, "polaris", "andreasasprou/polaris")).toBe(false);
+  });
+
+  it("rejects when automation has no repo name", () => {
+    expect(matchesRepository("andreasasprou", null, "andreasasprou/polaris")).toBe(false);
+  });
+
+  it("rejects when webhook has no repo", () => {
+    expect(matchesRepository("andreasasprou", "polaris", null)).toBe(false);
+  });
+
+  it("rejects when all are null", () => {
+    expect(matchesRepository(null, null, null)).toBe(false);
+  });
+
+  it("is case-sensitive (GitHub repos are lowercase)", () => {
+    expect(matchesRepository("AndreasAsprou", "Polaris", "andreasasprou/polaris")).toBe(false);
   });
 });

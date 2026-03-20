@@ -61,11 +61,9 @@ export async function routeGitHubEvent(input: {
     const fullEvent = input.action ? `${input.eventType}.${input.action}` : input.eventType;
 
     // Filter by repository — only trigger if the automation's repo matches the webhook's repo
-    if (automation.repoOwner && automation.repoName && webhookRepoFullName) {
-      const automationRepoFullName = `${automation.repoOwner}/${automation.repoName}`;
-      if (automationRepoFullName !== webhookRepoFullName) {
-        continue; // Silent skip — not this automation's repo
-      }
+    if (!matchesRepository(automation.repoOwner, automation.repoName, webhookRepoFullName)) {
+      log.set({ router: { [`skip_${automation.id}`]: `repo mismatch: automation=${automation.repoOwner}/${automation.repoName}, webhook=${webhookRepoFullName}` } });
+      continue;
     }
 
     if (!matchesGitHubTrigger(input.eventType, input.action, input.ref, config)) {
@@ -306,4 +304,25 @@ async function dispatchContinuousReview(
   }
 
   return true;
+}
+
+// ── Repository matching ──
+
+/**
+ * Check if an automation's repository matches the webhook's repository.
+ *
+ * Returns true only when both sides have a repo AND they match.
+ * If the automation has no repo configured, or the webhook has no repo
+ * (shouldn't happen for PR/push events), the automation is skipped.
+ */
+export function matchesRepository(
+  automationRepoOwner: string | null,
+  automationRepoName: string | null,
+  webhookRepoFullName: string | null,
+): boolean {
+  // Both sides must have repo info — skip if either is missing
+  if (!automationRepoOwner || !automationRepoName || !webhookRepoFullName) {
+    return false;
+  }
+  return `${automationRepoOwner}/${automationRepoName}` === webhookRepoFullName;
 }
