@@ -35,6 +35,8 @@ export class SessionEventBatcher {
   private allCollected: DriverEvent[] = [];
   private nextIndex: number;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private inflightFlush: Promise<void> | null = null;
+  private _batchSize: number;
 
   constructor(
     private readonly sessionId: string,
@@ -47,24 +49,19 @@ export class SessionEventBatcher {
     },
   ) {
     this.nextIndex = opts?.nextEventIndex ?? 0;
-    const batchSize = opts?.batchSize ?? DEFAULT_BATCH_SIZE;
+    this._batchSize = opts?.batchSize ?? DEFAULT_BATCH_SIZE;
     const intervalMs = opts?.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
 
     // Periodic flush timer
     this.timer = setInterval(() => {
       if (this.buffer.length > 0) {
-        this.flush().catch(() => {});
+        this.doFlush().catch(() => {});
       }
     }, intervalMs);
     if (typeof this.timer === "object" && "unref" in this.timer) {
       this.timer.unref();
     }
-
-    // Auto-flush at batch size threshold
-    this._batchSize = batchSize;
   }
-
-  private _batchSize: number;
 
   /** Add a raw agent event, assigning driver-compatible metadata. */
   push(event: AgentEvent): void {
@@ -82,26 +79,44 @@ export class SessionEventBatcher {
     this.allCollected.push(driverEvent);
 
     if (this.buffer.length >= this._batchSize) {
-      this.flush().catch(() => {});
+      this.doFlush().catch(() => {});
     }
   }
 
-  /** Flush buffered events via the callback. Returns the flushed events. */
-  async flush(): Promise<DriverEvent[]> {
-    if (this.buffer.length === 0) return [];
-    const batch = this.buffer;
-    this.buffer = [];
-    await this.flushFn(this.sessionId, batch);
-    return batch;
+  /**
+   * Flush buffered events. Only clears the buffer AFTER flushFn resolves
+   * successfully — on failure the batch stays in the buffer for the next
+   * flush attempt. Serializes flushes so finalize() can await in-flight work.
+   */
+  private async doFlush(): Promise<void> {
+    // Wait for any in-flight flush to finish before starting a new one
+    if (this.inflightFlush) await this.inflightFlush;
+    if (this.buffer.length === 0) return;
+
+    const batch = this.buffer.slice(); // snapshot, don't clear yet
+    const promise = this.flushFn(this.sessionId, batch).then(
+      () => {
+        // Success — remove flushed events from buffer.
+        // New events may have been pushed during the flush; only remove
+        // the ones we successfully sent (they're at the front of buffer).
+        this.buffer.splice(0, batch.length);
+      },
+      // Failure — leave buffer intact for retry on next flush cycle
+    );
+    this.inflightFlush = promise.then(() => { this.inflightFlush = null; });
+    await promise;
   }
 
-  /** Force flush + stop timer. Call before emitting terminal callbacks. */
+  /** Force flush + stop timer. Awaits in-flight flush first. */
   async finalize(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
-    await this.flush();
+    // Wait for any background flush to complete
+    if (this.inflightFlush) await this.inflightFlush;
+    // Flush remaining buffer
+    await this.doFlush();
   }
 
   /** All events collected during this prompt execution (for output reconstruction). */

@@ -76,8 +76,8 @@ export default function RunDetailPage() {
     }
   }, [runId]);
 
-  // Single effect: fetch on mount + start polling. No derived state in deps.
-  // Polling self-stops when run reaches terminal state (inside fetchRun).
+  // TODO: Replace with useQuery/useMountEffect once a data-fetching primitive
+  // is adopted (see CLAUDE.md no-useEffect rule). Same pattern as session page.
   useEffect(() => {
     lastJsonRef.current = "";
     setLoading(true);
