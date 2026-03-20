@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,20 +161,20 @@ export function AutomationForm({
     [pools, compatibleProviders],
   );
 
-  // Reset credential if the selected item was deleted or filtered out.
-  // This handles the edge case where secrets/pools data changes (e.g. deletion).
-  // Agent-type-driven resets are handled in handleAgentTypeChange.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only react to list changes
-  useEffect(() => {
-    if (credentialValue === "__none__") return;
+  // Derived: validate that the selected credential still exists in the filtered lists.
+  // Falls back to "__none__" if the item was deleted or filtered out by agent type change.
+  const validatedCredentialValue = useMemo(() => {
+    if (credentialValue === "__none__") return "__none__";
     if (credentialValue.startsWith("secret:")) {
       const id = credentialValue.slice(7);
-      if (!filteredSecrets.some((s) => s.id === id)) setCredentialValue("__none__");
-    } else if (credentialValue.startsWith("pool:")) {
-      const id = credentialValue.slice(5);
-      if (!filteredPools.some((p) => p.id === id)) setCredentialValue("__none__");
+      return filteredSecrets.some((s) => s.id === id) ? credentialValue : "__none__";
     }
-  }, [filteredSecrets, filteredPools]);
+    if (credentialValue.startsWith("pool:")) {
+      const id = credentialValue.slice(5);
+      return filteredPools.some((p) => p.id === id) ? credentialValue : "__none__";
+    }
+    return "__none__";
+  }, [credentialValue, filteredSecrets, filteredPools]);
 
   // Reset model/effort/key when agent type changes if current value is invalid
   const handleAgentTypeChange = (newType: string) => {
@@ -188,15 +188,15 @@ export function AutomationForm({
       setEffortLevel("");
     }
     // Reset credential if it's no longer compatible with the new agent type
-    if (credentialValue !== "__none__") {
+    if (validatedCredentialValue !== "__none__") {
       const providers = getCompatibleProviders(newType as AgentType);
-      if (credentialValue.startsWith("secret:")) {
-        const selectedSecret = secrets.find((s) => s.id === credentialValue.slice(7));
+      if (validatedCredentialValue.startsWith("secret:")) {
+        const selectedSecret = secrets.find((s) => s.id === validatedCredentialValue.slice(7));
         if (selectedSecret && !providers.includes(selectedSecret.provider as "anthropic" | "openai")) {
           setCredentialValue("__none__");
         }
-      } else if (credentialValue.startsWith("pool:")) {
-        const selectedPool = pools.find((p) => p.id === credentialValue.slice(5));
+      } else if (validatedCredentialValue.startsWith("pool:")) {
+        const selectedPool = pools.find((p) => p.id === validatedCredentialValue.slice(5));
         if (selectedPool && !providers.includes(selectedPool.provider as "anthropic" | "openai")) {
           setCredentialValue("__none__");
         }
@@ -233,8 +233,8 @@ export function AutomationForm({
       agentType,
       model: model || undefined,
       repositoryId: repositoryId === "__none__" ? undefined : repositoryId,
-      agentSecretId: credentialValue.startsWith("secret:") ? credentialValue.slice(7) : undefined,
-      keyPoolId: credentialValue.startsWith("pool:") ? credentialValue.slice(5) : undefined,
+      agentSecretId: validatedCredentialValue.startsWith("secret:") ? validatedCredentialValue.slice(7) : undefined,
+      keyPoolId: validatedCredentialValue.startsWith("pool:") ? validatedCredentialValue.slice(5) : undefined,
       mode,
       modelParams: effortLevel ? { effortLevel } : {},
     };
@@ -404,7 +404,7 @@ export function AutomationForm({
           <Field>
             <FieldLabel htmlFor="secret">API key</FieldLabel>
             <Select
-              value={credentialValue}
+              value={validatedCredentialValue}
               onValueChange={setCredentialValue}
               disabled={filteredSecrets.length === 0 && filteredPools.length === 0}
             >
