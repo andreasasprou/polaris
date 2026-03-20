@@ -397,11 +397,9 @@ steps have completed (e.g., `committed`, `pr_created`, `comment_posted`,
 `run_updated`, `sandbox_destroyed`). Each step checks the flag before executing,
 making post-processing idempotent across retries.
 
-### v2 dispatch uses the jobs table
+### All dispatch uses the jobs table
 All async work coordination flows through the `jobs` + `jobAttempts` tables.
-Legacy Trigger.dev naming persists in some schema references (e.g.,
-`triggerRunId` columns may still exist) but the runtime no longer uses
-Trigger.dev. The sweeper cron replaces Trigger.dev's retry/timeout mechanisms.
+The sweeper cron handles retry/timeout mechanisms.
 
 ### Sweeper uses advisory locks
 `runSweep()` acquires Postgres advisory lock `42_000_001` via

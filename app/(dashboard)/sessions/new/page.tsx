@@ -79,7 +79,17 @@ export default function NewSessionPage() {
       }
 
       const data = await res.json();
-      router.push(`/sessions/${data.session.id}`);
+      const sessionId = data.session.id;
+
+      // Dispatch the initial prompt before navigating — the session starts
+      // at "creating" with canSend:false, so nobody else will send it.
+      await fetch(`/api/interactive-sessions/${sessionId}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+
+      router.push(`/sessions/${sessionId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setSubmitting(false);

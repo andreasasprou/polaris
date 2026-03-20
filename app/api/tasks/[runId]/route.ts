@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * GET /api/tasks/:runId — legacy Trigger.dev run status endpoint.
- * Replaced by job-based status in v2. Will be removed.
+ * GET /api/tasks/:runId — legacy run status endpoint (deprecated).
+ * Use GET /api/jobs/[id] instead.
  */
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ runId: string }> },
 ) {
   return NextResponse.json(
-    { error: "Trigger.dev run endpoints are deprecated. Use job-based API." },
+    { error: "This endpoint is deprecated. Use the job-based API." },
     { status: 410 },
   );
 }

@@ -2,7 +2,7 @@
  * HITL (Human-in-the-Loop) via REST
  *
  * Forwards permission replies and question answers to the sandbox proxy.
- * Replaces the Trigger.dev input stream HITL mechanism.
+ * Forwards replies via REST to the sandbox proxy's HITL endpoints.
  */
 
 import { getInteractiveSession } from "./actions";

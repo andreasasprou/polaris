@@ -15,7 +15,7 @@ import { automations, automationRuns } from "@/lib/automations/schema";
 
 /**
  * Jobs — coordination record for all async work.
- * Replaces Trigger.dev runs. One job per prompt, review, coding task, etc.
+ * One job per prompt, review, coding task, etc.
  *
  * Status lifecycle:
  *   pending → accepted → running → agent_completed → postprocess_pending → completed
