@@ -15,6 +15,12 @@ export function credentialRefFromRow(row: {
   agentSecretId: string | null;
   keyPoolId: string | null;
 }): CredentialRef | null {
+  if (row.keyPoolId && row.agentSecretId) {
+    throw new Error(
+      "Invariant violation: both agentSecretId and keyPoolId are set. " +
+      "The DB CHECK constraint should prevent this.",
+    );
+  }
   if (row.keyPoolId) return { type: "pool", poolId: row.keyPoolId };
   if (row.agentSecretId) return { type: "secret", secretId: row.agentSecretId };
   return null;

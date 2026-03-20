@@ -9,7 +9,12 @@ type RouteParams = { params: Promise<{ id: string }> };
 export const POST = withEvlog(async (req: Request, ctx: RouteParams) => {
   const { orgId } = await getSessionWithOrg();
   const { id: poolId } = await ctx.params;
-  const body = await req.json();
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
   if (typeof body.secretId !== "string" || !body.secretId) {
     return NextResponse.json({ error: "secretId is required" }, { status: 400 });

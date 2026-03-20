@@ -34,11 +34,14 @@ export const POST = withEvlog(async (req: Request) => {
     });
     return NextResponse.json({ pool }, { status: 201 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to create key pool";
+    const message = err instanceof Error ? err.message : "";
     const isDupe = message.includes("unique") || message.includes("duplicate");
-    return NextResponse.json(
-      { error: isDupe ? "A pool with that name already exists" : message },
-      { status: isDupe ? 409 : 500 },
-    );
+    if (isDupe) {
+      return NextResponse.json(
+        { error: "A pool with that name already exists" },
+        { status: 409 },
+      );
+    }
+    throw err; // Let withEvlog handle the generic 500
   }
 });

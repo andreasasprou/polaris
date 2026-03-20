@@ -161,7 +161,10 @@ export function AutomationForm({
     [pools, compatibleProviders],
   );
 
-  // Sync selected credential with filtered lists
+  // Reset credential if the selected item was deleted or filtered out.
+  // This handles the edge case where secrets/pools data changes (e.g. deletion).
+  // Agent-type-driven resets are handled in handleAgentTypeChange.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only react to list changes
   useEffect(() => {
     if (credentialValue === "__none__") return;
     if (credentialValue.startsWith("secret:")) {
@@ -171,7 +174,7 @@ export function AutomationForm({
       const id = credentialValue.slice(5);
       if (!filteredPools.some((p) => p.id === id)) setCredentialValue("__none__");
     }
-  }, [credentialValue, filteredSecrets, filteredPools]);
+  }, [filteredSecrets, filteredPools]);
 
   // Reset model/effort/key when agent type changes if current value is invalid
   const handleAgentTypeChange = (newType: string) => {

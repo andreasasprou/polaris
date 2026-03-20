@@ -86,10 +86,11 @@ export default function SecretsPage() {
     setPools(data.pools ?? []);
   }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only data load
   useEffect(() => {
     loadSecrets();
     loadPools();
-  }, [loadSecrets, loadPools]);
+  }, []); // stable callbacks, mount-only
 
   useEffect(() => {
     if (provider !== "openai") setOpenaiMode("api-key");
@@ -210,17 +211,29 @@ export default function SecretsPage() {
   }
 
   async function handleRemoveFromPool(poolId: string, secretId: string) {
-    await fetch(`/api/key-pools/${poolId}/members/${secretId}`, { method: "DELETE" });
+    setError(null);
+    const res = await fetch(`/api/key-pools/${poolId}/members/${secretId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to remove key from pool");
+      return;
+    }
     loadPoolMembers(poolId);
     loadPools();
   }
 
   async function handleToggleMember(poolId: string, secretId: string, enabled: boolean) {
-    await fetch(`/api/key-pools/${poolId}/members/${secretId}`, {
+    setError(null);
+    const res = await fetch(`/api/key-pools/${poolId}/members/${secretId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Failed to update pool member");
+      return;
+    }
     loadPoolMembers(poolId);
     loadPools();
   }

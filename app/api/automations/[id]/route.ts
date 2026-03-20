@@ -43,14 +43,22 @@ export const PUT = withEvlog(async (
   // Determine agentSecretId / keyPoolId with explicit nulling on switch
   const hasSecretInBody = Object.prototype.hasOwnProperty.call(body, "agentSecretId");
   const hasPoolInBody = Object.prototype.hasOwnProperty.call(body, "keyPoolId");
-  let agentSecretId = hasSecretInBody ? (body.agentSecretId ?? null) : existing.agentSecretId;
-  let keyPoolId = hasPoolInBody ? (body.keyPoolId ?? null) : existing.keyPoolId;
 
-  // If switching to pool, null the secret (and vice versa)
-  if (keyPoolId && agentSecretId) {
-    if (hasPoolInBody) agentSecretId = null;
-    else if (hasSecretInBody) keyPoolId = null;
+  // Reject payloads that explicitly set both credential fields
+  if (hasSecretInBody && hasPoolInBody && body.agentSecretId && body.keyPoolId) {
+    return NextResponse.json(
+      { error: "Cannot set both agentSecretId and keyPoolId" },
+      { status: 400 },
+    );
   }
+
+  // When setting one, null the other to satisfy the CHECK constraint
+  let agentSecretId = hasSecretInBody ? (body.agentSecretId || null) : existing.agentSecretId;
+  let keyPoolId = hasPoolInBody ? (body.keyPoolId || null) : existing.keyPoolId;
+
+  // Auto-null the other column when switching credential source
+  if (hasPoolInBody && keyPoolId) agentSecretId = null;
+  else if (hasSecretInBody && agentSecretId) keyPoolId = null;
 
   try {
     const validated = await validateAutomationRelationsForOrg({

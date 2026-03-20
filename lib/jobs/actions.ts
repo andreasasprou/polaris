@@ -96,6 +96,7 @@ export async function createJobAttempt(input: {
   attemptNumber: number;
   epoch: number;
   sandboxId?: string;
+  resolvedSecretId?: string;
 }) {
   const [row] = await db
     .insert(jobAttempts)

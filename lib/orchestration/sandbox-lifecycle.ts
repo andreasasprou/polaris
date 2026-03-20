@@ -73,28 +73,7 @@ export async function ensureSandboxReady(
   const session = await getInteractiveSession(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-  // Resolve the actual API key — this is where pool rotation happens
   const orgId = session.organizationId;
-  const ref = credentials.credentialRef;
-  let agentApiKey: string;
-  switch (ref.type) {
-    case "pool": {
-      const { poolId } = ref;
-      const allocated = await timer.time("allocateKey", () =>
-        allocateKeyFromPool(poolId, orgId),
-      );
-      agentApiKey = allocated.decryptedKey;
-      break;
-    }
-    case "secret": {
-      const { secretId } = ref;
-      const resolved = await timer.time("resolveKey", () =>
-        resolveSecretKey(secretId, orgId),
-      );
-      agentApiKey = resolved.decryptedKey;
-      break;
-    }
-  }
 
   // Mint GitHub token
   const { mintInstallationToken } = await import("@/lib/integrations/github");
@@ -161,6 +140,29 @@ export async function ensureSandboxReady(
     restoreSnapshotId,
     status: "creating",
   });
+
+  // Resolve the actual API key — delayed until after sandbox creation so
+  // failed provisioning doesn't advance LRU and skew fairness for retries.
+  const ref = credentials.credentialRef;
+  let agentApiKey: string;
+  switch (ref.type) {
+    case "pool": {
+      const { poolId } = ref;
+      const allocated = await timer.time("allocateKey", () =>
+        allocateKeyFromPool(poolId, orgId),
+      );
+      agentApiKey = allocated.decryptedKey;
+      break;
+    }
+    case "secret": {
+      const { secretId } = ref;
+      const resolved = await timer.time("resolveKey", () =>
+        resolveSecretKey(secretId, orgId),
+      );
+      agentApiKey = resolved.decryptedKey;
+      break;
+    }
+  }
 
   // Bootstrap agent server
   const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);

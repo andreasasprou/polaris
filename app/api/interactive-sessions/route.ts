@@ -37,7 +37,12 @@ export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
-  const { agentType, agentSecretId, keyPoolId, repositoryId, prompt } = body;
+  const agentType = body.agentType;
+  const repositoryId = body.repositoryId;
+  const prompt = body.prompt;
+  // Normalize empty strings to null to prevent invalid UUIDs leaking to DB
+  const agentSecretId = body.agentSecretId || null;
+  const keyPoolId = body.keyPoolId || null;
 
   if (!prompt?.trim()) {
     return NextResponse.json(
@@ -73,8 +78,8 @@ export const POST = withEvlog(async (req: Request) => {
     await resolveSessionCredentials({
       organizationId: orgId,
       agentType: agentType ?? "claude",
-      agentSecretId: agentSecretId ?? null,
-      keyPoolId: keyPoolId ?? null,
+      agentSecretId,
+      keyPoolId,
       repositoryId,
     });
   } catch (err) {
@@ -89,8 +94,8 @@ export const POST = withEvlog(async (req: Request) => {
     organizationId: orgId,
     createdBy: session.user.id,
     agentType: agentType ?? "claude",
-    agentSecretId: agentSecretId ?? null,
-    keyPoolId: keyPoolId ?? null,
+    agentSecretId,
+    keyPoolId,
     repositoryId,
     prompt,
   });
