@@ -127,7 +127,7 @@ Your response will be posted **directly** as a GitHub PR comment. Write it as th
    \`\`\`
    Severity emoji mapping: 🔴 P0, 🟡 P1, 🔵 P2
 
-4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them: \`- ~~finding-id~~ ✅\`
+4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them with the original title for context: \`- ~~finding-id: Original title of the finding~~ ✅\`
 
 5. **Footer** — End the visible comment with:
    \`<sub>Polaris Review #N · Automated by Polaris</sub>\`

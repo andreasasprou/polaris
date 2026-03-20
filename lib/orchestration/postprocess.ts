@@ -275,13 +275,26 @@ async function postprocessReview(job: JobRow): Promise<void> {
     const parsed = agentOutput ? parseReviewOutput(agentOutput) : null;
     const metadata = parsed?.metadata ?? null;
 
-    // 2. Mark previous comment stale
+    // 2. Mark previous comment stale (preserve original body in collapsed section)
     if (lastCommentId && !sideEffects.stale_marked) {
       try {
+        const { getReviewOctokit } = await import("@/lib/reviews/github");
+        const octokit = await getReviewOctokit(installationId);
+        let previousBody = "";
+        try {
+          const { data: comment } = await octokit.rest.issues.getComment({
+            owner,
+            repo,
+            comment_id: Number(lastCommentId),
+          });
+          previousBody = comment.body ?? "";
+        } catch {
+          // Best-effort — if we can't fetch, collapse is empty
+        }
         const staleBody =
           `> **Superseded** — See Review #${reviewSequence} for the latest review.\n\n` +
           `<details><summary>Previous review (collapsed)</summary>\n\n` +
-          `*(original review content)*` +
+          previousBody +
           `\n\n</details>`;
         await markCommentStale({
           installationId,
