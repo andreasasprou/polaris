@@ -387,7 +387,7 @@ export default function SecretsPage() {
                         variant="outline"
                         size="sm"
                         className="w-fit"
-                        onClick={() => setAddingToPoolId(pool.id)}
+                        onClick={() => { setAddingToPoolId(pool.id); setAddSecretId(""); }}
                       >
                         Add key to pool
                       </Button>
