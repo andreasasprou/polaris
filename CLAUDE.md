@@ -52,6 +52,18 @@ These have caused real production bugs — avoid them:
 6. **Terminal session checklist**: `turnInProgress` must be `false`, all pending tool calls show interrupted (not spinner), `pollIntervalMs` must be `0`.
 7. **Full QA matrix**: See `docs/qa-checklist.md` for the complete state matrix and flow test list.
 
+## Observability
+
+Production logs go to **Axiom** via evlog. Use Axiom MCP tools to debug.
+
+1. **Query the `vercel` dataset** — contains all request logs with structured wide events from evlog.
+   - Filter by path: `['vercel'] | where ['request.path'] == "/api/webhooks/github"`
+   - Find errors: `['vercel'] | where level == "error" | project _time, message`
+   - The `message` field contains JSON with structured context (`webhook.*`, `dispatch.*`, `sweep.*`, `router.*`, `error.*`).
+2. **Always set a time range** — use `startTime`/`endTime` params (e.g. `now-30m`).
+3. **Get schema first** — run `['vercel'] | take 1` to see available fields before writing complex queries.
+4. **Key fields**: `request.path`, `request.statusCode`, `level`, `message` (JSON string with evlog wide event data).
+
 ## Key Commands
 
 - `pnpm typecheck` — must pass before considering work complete
