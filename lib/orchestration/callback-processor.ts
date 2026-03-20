@@ -146,16 +146,16 @@ async function processCallback(input: {
       await appendJobEvent(jobId, "agent_completed", attemptId);
 
       if (completedJobRow?.sessionId) {
-        // We own the transition — safe to heal session and persist agent identifiers
-        const { casSessionStatus, updateInteractiveSession } = await import("@/lib/sessions/actions");
-        await casSessionStatus(completedJobRow.sessionId, ["active"], "idle");
-
-        // Persist sdkSessionId so events can be fetched for the session detail page
-        if (result.sdkSessionId) {
-          await updateInteractiveSession(completedJobRow.sessionId, {
-            sdkSessionId: result.sdkSessionId as string,
-          });
-        }
+        // We own the transition — atomically heal session status AND persist
+        // agent identifiers in a single CAS (prevents race where client polls
+        // between status change and metadata write).
+        const { casSessionStatus } = await import("@/lib/sessions/actions");
+        await casSessionStatus(completedJobRow.sessionId, ["active"], "idle", {
+          ...(result.sdkSessionId ? { sdkSessionId: result.sdkSessionId as string } : {}),
+          ...(result.nativeAgentSessionId ? { nativeAgentSessionId: result.nativeAgentSessionId as string } : {}),
+          ...(result.cwd ? { cwd: result.cwd as string } : {}),
+          error: null, // clear stale errors on success
+        });
       }
 
       // Trigger post-processing (coding task PR creation, review comment, etc.)
@@ -222,10 +222,15 @@ async function processCallback(input: {
         reason,
       });
 
-      // Only heal session if we actually transitioned the job (not a stale callback)
+      // Only heal session if we actually transitioned the job (not a stale callback).
+      // Persist session IDs even on failure so partial event history is accessible.
       if (jobCasSucceeded && job.sessionId) {
         const { casSessionStatus } = await import("@/lib/sessions/actions");
-        await casSessionStatus(job.sessionId, ["active"], "idle");
+        await casSessionStatus(job.sessionId, ["active"], "idle", {
+          ...(payload.sdkSessionId ? { sdkSessionId: payload.sdkSessionId as string } : {}),
+          ...(payload.nativeAgentSessionId ? { nativeAgentSessionId: payload.nativeAgentSessionId as string } : {}),
+          ...(payload.cwd ? { cwd: payload.cwd as string } : {}),
+        });
       }
       break;
     }

@@ -7,6 +7,7 @@ import { ChatItemRenderer } from "./chat-item-renderer";
 import { TurnIndicator } from "./session-status";
 import { ScrollToBottomButton } from "./scroll-to-bottom";
 import { Spinner } from "./spinner";
+import { getStatusConfig } from "@/lib/sessions/status";
 import type { ChatItem } from "@/lib/sandbox-agent/event-types";
 
 type SessionChatProps = {
@@ -14,6 +15,7 @@ type SessionChatProps = {
   turnInProgress: boolean;
   loading?: boolean;
   error?: Error | null;
+  sessionStatus?: string | null;
 };
 
 export function SessionChat({
@@ -21,6 +23,7 @@ export function SessionChat({
   turnInProgress,
   loading,
   error,
+  sessionStatus,
 }: SessionChatProps) {
   const { scrollRef, isAtBottom, scrollToBottom, handleScroll } = useAutoScroll({
     dependency: items.length,
@@ -45,6 +48,24 @@ export function SessionChat({
   }
 
   if (items.length === 0) {
+    const config = sessionStatus ? getStatusConfig(sessionStatus) : null;
+
+    if (config?.isTerminal) {
+      return (
+        <div className="flex flex-col items-center gap-3 py-16">
+          <p className="text-sm text-muted-foreground">No events recorded for this session.</p>
+        </div>
+      );
+    }
+
+    if (sessionStatus === "idle" || sessionStatus === "hibernated") {
+      return (
+        <div className="flex flex-col items-center gap-3 py-16">
+          <p className="text-sm text-muted-foreground">Session ready. Send a message to begin.</p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col items-center gap-3 py-16">
         <Spinner className="text-muted-foreground" />

@@ -40,6 +40,8 @@ type UseSessionChatReturn = {
   error: Error | null;
   /** Trigger a manual refresh. */
   refresh: () => void;
+  /** Whether the hook has a valid sdkSessionId to fetch from. */
+  ready: boolean;
 };
 
 // Poll intervals by session status
@@ -151,5 +153,6 @@ export function useSessionChat({
     loading: loading && items.length === 0,
     error,
     refresh: fetchEvents,
+    ready: sdkSessionId != null,
   };
 }

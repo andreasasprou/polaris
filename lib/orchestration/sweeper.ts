@@ -449,17 +449,19 @@ async function retryReviewDispatch(
           model: resolved.model,
           thoughtLevel: resolved.thoughtLevel,
           cwd: "/vercel/sandbox",
+          sdkSessionId: session.sdkSessionId ?? undefined,
+          nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
         },
       }),
       signal: AbortSignal.timeout(30_000),
     });
 
     if (response.status === 202) {
-      // Update run metadata
+      // Update run metadata — preserve original startedAt from first attempt
+      // so time-window event filtering doesn't miss earlier events.
       await updateAutomationRun(automationRunId, {
         interactiveSessionId: session.id,
         status: "running",
-        startedAt: new Date(),
       }).catch(() => {});
       log.set({ sweep: { retrySucceeded: job.id } });
       return;

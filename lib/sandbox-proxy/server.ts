@@ -367,6 +367,8 @@ export class ProxyServer {
             error: result.error ?? "Unknown error",
             reason,
             durationMs: result.durationMs,
+            sdkSessionId: result.sdkSessionId,
+            nativeAgentSessionId: result.nativeAgentSessionId,
             metrics,
             requestId,
           },
@@ -393,7 +395,16 @@ export class ProxyServer {
         attemptId,
         epoch,
         callbackType: "prompt_failed",
-        payload: { error, reason, metrics, requestId },
+        payload: {
+          error,
+          reason,
+          ...(this.bridge.hasSession ? {
+            sdkSessionId: this.bridge.getSession().id,
+            nativeAgentSessionId: this.bridge.getSession().agentSessionId,
+          } : {}),
+          metrics,
+          requestId,
+        },
         callbackUrl,
         hmacKey,
       });

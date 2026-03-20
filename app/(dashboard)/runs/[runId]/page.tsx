@@ -50,27 +50,45 @@ export default function RunDetailPage() {
   const [run, setRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const isTerminal = run ? TERMINAL_RUN_STATUSES.has(run.status) : false;
+
   useEffect(() => {
     const controller = new AbortController();
     let current = true;
     setLoading(true);
     setRun(null);
-    fetch(`/api/runs/${runId}`, { signal: controller.signal })
-      .then((r) => r.json())
-      .then((data) => {
-        if (current) setRun(data.run ?? null);
-      })
-      .catch(() => {
-        // Aborted or network error — leave run as null
-      })
-      .finally(() => {
-        if (current) setLoading(false);
-      });
+
+    const fetchRun = () => {
+      fetch(`/api/runs/${runId}`, { signal: controller.signal })
+        .then((r) => r.json())
+        .then((data) => {
+          if (current) setRun(data.run ?? null);
+        })
+        .catch(() => {
+          // Aborted or network error — leave run as null
+        })
+        .finally(() => {
+          if (current) setLoading(false);
+        });
+    };
+
+    fetchRun();
+
+    // Poll while run is not terminal or sdkSessionId is missing
+    if (!isTerminal) {
+      const timer = setInterval(fetchRun, 3000);
+      return () => {
+        current = false;
+        controller.abort();
+        clearInterval(timer);
+      };
+    }
+
     return () => {
       current = false;
       controller.abort();
     };
-  }, [runId]);
+  }, [runId, isTerminal]);
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
@@ -146,7 +164,7 @@ export default function RunDetailPage() {
       {run.jobId && <JobLifecycle jobId={run.jobId} />}
 
       {run.interactiveSessionId && (
-        <SandboxLogs sessionId={run.interactiveSessionId} />
+        <SandboxLogs sessionId={run.interactiveSessionId} runTerminal={isTerminal} />
       )}
     </div>
   );
@@ -307,6 +325,7 @@ function RunSessionChat({
       turnInProgress={chat.turnInProgress}
       loading={chat.loading}
       error={chat.error}
+      sessionStatus={terminal ? "completed" : "active"}
     />
   );
 }
@@ -546,7 +565,7 @@ type SandboxLogsData = {
   error?: string;
 };
 
-function SandboxLogs({ sessionId }: { sessionId: string }) {
+function SandboxLogs({ sessionId, runTerminal }: { sessionId: string; runTerminal?: boolean }) {
   const [data, setData] = useState<SandboxLogsData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -594,7 +613,9 @@ function SandboxLogs({ sessionId }: { sessionId: string }) {
             </p>
           )}
           {error && (
-            <p className="text-sm text-muted-foreground">{error}</p>
+            <p className="text-sm text-muted-foreground">
+              {runTerminal ? "Sandbox stopped after completion." : error}
+            </p>
           )}
 
           {/* Process list */}

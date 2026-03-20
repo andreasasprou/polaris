@@ -356,6 +356,7 @@ export default function SessionDetailPage() {
             turnInProgress={chat.turnInProgress}
             loading={chat.loading}
             error={chat.error}
+            sessionStatus={session.status}
           />
           {pendingPrompt && <UserMessage text={pendingPrompt} />}
         </div>

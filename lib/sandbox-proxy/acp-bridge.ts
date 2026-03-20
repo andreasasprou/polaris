@@ -393,6 +393,8 @@ export class AcpBridge {
       return {
         success: false,
         error: message,
+        sdkSessionId: session.id,
+        nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
       };
     } finally {

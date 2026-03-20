@@ -76,6 +76,9 @@ export async function casSessionStatus(
     error: string | null;
     endedAt: Date | null;
     latestCheckpointId: string;
+    sdkSessionId: string;
+    nativeAgentSessionId: string;
+    cwd: string;
   }>,
 ) {
   const [row] = await db

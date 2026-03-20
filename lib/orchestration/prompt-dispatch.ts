@@ -181,6 +181,8 @@ export async function dispatchPromptToSession(input: {
         config: {
           agent: session.agentType,
           cwd: "/vercel/sandbox",
+          sdkSessionId: session.sdkSessionId ?? undefined,
+          nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
         },
         ...(attachments?.length ? { attachments } : {}),
       }),
