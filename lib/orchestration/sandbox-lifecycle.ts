@@ -223,7 +223,6 @@ export async function ensureSandboxReady(
   const proxyBaseUrl = await timer.time("startProxy", () => bootstrap.startProxy({
     ...sessionEnv,
     CALLBACK_URL: getCallbackUrl(),
-    DATABASE_URL: process.env.DATABASE_URL!,
   }));
 
   // Update runtime + session

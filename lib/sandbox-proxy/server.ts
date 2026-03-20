@@ -291,9 +291,13 @@ export class ProxyServer {
       this.monitor.reset();
       this.monitor.start();
 
-      // Set up event handler for HITL callbacks
+      // Collect events for platform-side persistence + handle HITL callbacks.
+      // Events are buffered in memory and included in the prompt_complete/prompt_failed
+      // callback so the platform can persist them — no DATABASE_URL needed in sandbox.
+      const collectedEvents: AgentEvent[] = [];
       const onEvent = (event: AgentEvent) => {
         this.eventCount++;
+        collectedEvents.push(event);
         this.handleAgentEvent(event, jobId, attemptId, epoch, callbackUrl, hmacKey);
       };
 
@@ -337,6 +341,7 @@ export class ProxyServer {
               cwd: result.cwd,
               durationMs: result.durationMs,
             },
+            events: collectedEvents,
             metrics,
             requestId,
             completedAt: new Date().toISOString(),
@@ -370,6 +375,7 @@ export class ProxyServer {
             durationMs: result.durationMs,
             sdkSessionId: result.sdkSessionId,
             nativeAgentSessionId: result.nativeAgentSessionId,
+            events: collectedEvents,
             metrics,
             requestId,
           },

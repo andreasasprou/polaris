@@ -52,53 +52,45 @@ export default function RunDetailPage() {
 
   const isTerminal = run ? TERMINAL_RUN_STATUSES.has(run.status) : false;
   const lastJsonRef = useRef<string>("");
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Initial fetch — only re-runs when runId changes
-  useEffect(() => {
-    const controller = new AbortController();
-    let current = true;
-    setLoading(true);
-    setRun(null);
-    lastJsonRef.current = "";
+  const fetchRun = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/runs/${runId}`);
+      const data = await r.json();
+      const json = JSON.stringify(data.run);
+      if (json !== lastJsonRef.current) {
+        lastJsonRef.current = json;
+        setRun(data.run ?? null);
 
-    fetch(`/api/runs/${runId}`, { signal: controller.signal })
-      .then((r) => r.json())
-      .then((data) => {
-        if (current) {
-          const json = JSON.stringify(data.run);
-          lastJsonRef.current = json;
-          setRun(data.run ?? null);
+        // Stop polling once terminal
+        if (data.run && TERMINAL_RUN_STATUSES.has(data.run.status) && timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
         }
-      })
-      .catch(() => {})
-      .finally(() => { if (current) setLoading(false); });
-
-    return () => { current = false; controller.abort(); };
+      }
+    } catch {
+      // Network error — leave current state
+    } finally {
+      setLoading(false);
+    }
   }, [runId]);
 
-  // Polling — runs while non-terminal, skips no-op updates
+  // Single effect: fetch on mount + start polling. No derived state in deps.
+  // Polling self-stops when run reaches terminal state (inside fetchRun).
   useEffect(() => {
-    if (isTerminal) return;
-
-    const controller = new AbortController();
-    let current = true;
-
-    const timer = setInterval(() => {
-      fetch(`/api/runs/${runId}`, { signal: controller.signal })
-        .then((r) => r.json())
-        .then((data) => {
-          if (!current) return;
-          const json = JSON.stringify(data.run);
-          if (json !== lastJsonRef.current) {
-            lastJsonRef.current = json;
-            setRun(data.run ?? null);
-          }
-        })
-        .catch(() => {});
-    }, 3000);
-
-    return () => { current = false; controller.abort(); clearInterval(timer); };
-  }, [runId, isTerminal]);
+    lastJsonRef.current = "";
+    setLoading(true);
+    setRun(null);
+    fetchRun();
+    timerRef.current = setInterval(fetchRun, 3000);
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [fetchRun]);
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;

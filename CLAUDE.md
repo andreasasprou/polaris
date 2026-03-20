@@ -38,6 +38,7 @@ These have caused real production bugs — avoid them:
 - **Sandbox proxy is bundled, not live code** — `lib/sandbox-proxy/` runs inside the VM. Changes require rebuilding (`pnpm build:proxy`) and redeploying.
 - **Never use `git diff A..B` syntax** — it's invalid for `git diff`. Use `git diff A B` (separate args) or `git log A..B` for log.
 - **Don't trust `git diff --cached origin/main` in sandbox** — can return empty even with staged changes. Use `git show --stat` as fallback.
+- **Never pass production credentials (DATABASE_URL, secrets) to sandbox VMs** — the sandbox runs untrusted agent code that can read process env vars. Use callback-based patterns to persist data platform-side instead. The proxy collects events in-memory and sends them in callbacks; the platform persists them.
 - **Never use `useEffect` directly** — use derived state, event handlers, `useQuery`, `useMountEffect`, or `key` resets. See [`docs/guides/no-use-effect.md`](docs/guides/no-use-effect.md).
 
 ## Testing & Verification

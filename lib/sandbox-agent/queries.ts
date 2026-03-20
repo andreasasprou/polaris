@@ -55,6 +55,49 @@ export async function getSessionEvents(
   };
 }
 
+/**
+ * Persist events received from the sandbox proxy callback.
+ * This replaces in-sandbox persistence via DATABASE_URL — events are collected
+ * in-memory by the proxy and sent in the prompt_complete/prompt_failed callback.
+ */
+export async function persistSessionEvents(
+  sessionId: string,
+  events: Array<{ eventIndex: number; sender: string; payload: Record<string, unknown> }>,
+) {
+  if (events.length === 0) return;
+
+  // Ensure schema + table exist
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS "${SCHEMA}"`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "${SCHEMA}"."events" (
+      id BIGSERIAL PRIMARY KEY,
+      event_index BIGINT NOT NULL,
+      session_id TEXT NOT NULL,
+      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+      connection_id TEXT,
+      sender TEXT NOT NULL,
+      payload_json JSONB NOT NULL
+    )
+  `);
+
+  // Batch insert all events
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+  let idx = 1;
+
+  for (const event of events) {
+    placeholders.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++})`);
+    values.push(event.eventIndex, sessionId, event.sender, JSON.stringify(event.payload));
+  }
+
+  await pool.query(
+    `INSERT INTO "${SCHEMA}"."events" (event_index, session_id, sender, payload_json)
+     VALUES ${placeholders.join(", ")}
+     ON CONFLICT DO NOTHING`,
+    values,
+  );
+}
+
 export async function getSessionRecord(sessionId: string) {
   const tableCheck = await pool.query(
     `SELECT EXISTS (

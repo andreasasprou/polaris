@@ -169,6 +169,10 @@ async function processCallback(input: {
         });
       }
 
+      // Persist events from the proxy callback (platform-side persistence —
+      // the sandbox never has DATABASE_URL for security).
+      await persistCallbackEvents(result, payload);
+
       // Trigger post-processing (coding task PR creation, review comment, etc.)
       const { runPostProcessing } = await import("./postprocess");
       await runPostProcessing(jobId);
@@ -241,6 +245,9 @@ async function processCallback(input: {
           ...pickSessionIdentifiers(payload),
         });
       }
+
+      // Persist partial events even on failure
+      await persistCallbackEvents(payload, payload);
       break;
     }
 
@@ -272,5 +279,36 @@ async function processCallback(input: {
       await appendJobEvent(jobId, "resumed", attemptId);
       break;
     }
+  }
+}
+
+/**
+ * Persist events from proxy callback to sandbox_agent.events.
+ * Events are collected in-memory by the proxy and sent in the callback —
+ * the sandbox never has DATABASE_URL (security: no production DB credentials in VMs).
+ */
+async function persistCallbackEvents(
+  result: Record<string, unknown>,
+  payload: Record<string, unknown>,
+) {
+  const sdkSessionId = typeof result.sdkSessionId === "string" ? result.sdkSessionId : null;
+  const events = Array.isArray(payload.events) ? payload.events : [];
+
+  if (!sdkSessionId || events.length === 0) return;
+
+  try {
+    const { persistSessionEvents } = await import("@/lib/sandbox-agent/queries");
+    await persistSessionEvents(
+      sdkSessionId,
+      events.map((e: Record<string, unknown>, i: number) => ({
+        eventIndex: typeof e.eventIndex === "number" ? e.eventIndex : i,
+        sender: typeof e.sender === "string" ? e.sender : "agent",
+        payload: (typeof e.payload === "object" && e.payload != null ? e.payload : e) as Record<string, unknown>,
+      })),
+    );
+  } catch (err) {
+    // Best-effort — don't fail the callback if event persistence fails
+    const log = useLogger();
+    log.set({ eventPersist: { error: err instanceof Error ? err.message : String(err) } });
   }
 }
