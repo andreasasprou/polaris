@@ -45,7 +45,15 @@ export const POST = withEvlog(async (req: Request) => {
     );
   }
 
-  log.set({ callback: { jobId: body.jobId, attemptId: body.attemptId, callbackType: body.callbackType } });
+  log.set({
+    callback: {
+      jobId: body.jobId,
+      attemptId: body.attemptId,
+      callbackType: body.callbackType,
+      epoch: body.epoch,
+      requestId: (body.payload as Record<string, unknown>)?.requestId,
+    },
+  });
 
   // Look up job to get HMAC key
   const job = await getJob(body.jobId);

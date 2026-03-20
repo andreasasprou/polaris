@@ -17,6 +17,7 @@ import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap
 import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import type { AgentType } from "@/lib/sandbox-agent/types";
 import { useLogger } from "@/lib/evlog";
+import { createStepTimer } from "@/lib/metrics/step-timer";
 import {
   incrementEpoch,
   getInteractiveSession,
@@ -63,16 +64,20 @@ export async function ensureSandboxReady(
     extraEnv?: Record<string, string>;
   },
 ): Promise<EnsureSandboxResult> {
+  const log = useLogger();
+  const timer = createStepTimer();
+  log.set({ lifecycle: { sessionId, agentType: credentials.agentType } });
+
   const session = await getInteractiveSession(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
   // Mint GitHub token
   const { mintInstallationToken } = await import("@/lib/integrations/github");
-  const gitToken = await mintInstallationToken(
+  const gitToken = await timer.time("mintToken", () => mintInstallationToken(
     credentials.githubInstallationId,
     [credentials.repositoryName],
     { contents: "write", pull_requests: "write" },
-  );
+  ));
 
   const repoUrl = `https://github.com/${credentials.repositoryOwner}/${credentials.repositoryName}.git`;
 
@@ -84,12 +89,12 @@ export async function ensureSandboxReady(
   if (session.latestCheckpointId) {
     const checkpoint = await getCheckpoint(session.latestCheckpointId);
     if (checkpoint?.snapshotId) {
-      sandbox = await sandboxManager.createFromSnapshot({
+      sandbox = await timer.time("createFromSnapshot", () => sandboxManager.createFromSnapshot({
         snapshotId: checkpoint.snapshotId,
         gitToken,
         timeoutMs: 3_600_000,
         ports: [2468, 2469],
-      });
+      }));
       restoreSource = "snapshot";
       restoreSnapshotId = checkpoint.snapshotId;
     }
@@ -104,7 +109,7 @@ export async function ensureSandboxReady(
       credentials.agentType,
     );
 
-    sandbox = await sandboxManager.create({
+    sandbox = await timer.time("createSandbox", () => sandboxManager.create({
       source: agentSnapshot
         ? { type: "snapshot", snapshotId: agentSnapshot }
         : { type: "git" },
@@ -113,8 +118,10 @@ export async function ensureSandboxReady(
       baseBranch: credentials.defaultBranch ?? "main",
       timeoutMs: 3_600_000,
       ports: [2468, 2469],
-    });
+    }));
   }
+
+  timer.setMeta("restoreSource", restoreSource);
 
   // Increment epoch (invalidates callbacks from previous sandbox)
   const epoch = await incrementEpoch(sessionId);
@@ -140,7 +147,7 @@ export async function ensureSandboxReady(
     credentials.agentApiKey,
     credentials.extraEnv,
   );
-  const sessionEnv = await bootstrap.provisionCredentialFiles(rawEnv);
+  const sessionEnv = await timer.time("provisionCreds", () => bootstrap.provisionCredentialFiles(rawEnv));
 
   if (restoreSource === "cold") {
     const { getActiveSnapshot: getSnap } = await import(
@@ -149,21 +156,21 @@ export async function ensureSandboxReady(
     const snap = await getSnap(credentials.agentType);
     if (!snap) {
       // No snapshot — install sandbox-agent from scratch
-      await bootstrap.install();
+      await timer.time("installSandboxAgent", () => bootstrap.install());
     }
     // Always install the agent CLI (snapshot may have sandbox-agent
     // but not the specific agent CLI like claude/codex)
-    await bootstrap.installAgent(credentials.agentType, sessionEnv);
+    await timer.time("installAgent", () => bootstrap.installAgent(credentials.agentType, sessionEnv));
   } else {
     // Snapshot restore — ensure agent CLI is available
-    await bootstrap.installAgent(credentials.agentType, sessionEnv);
+    await timer.time("installAgent", () => bootstrap.installAgent(credentials.agentType, sessionEnv));
   }
 
   // Configure git
-  await git.configure({ repoUrl });
+  await timer.time("gitConfigure", () => git.configure({ repoUrl }));
 
   // Start agent server
-  const serverUrl = await bootstrap.start(2468, sessionEnv);
+  const serverUrl = await timer.time("startAgentServer", () => bootstrap.start(2468, sessionEnv));
 
   // Install + start REST proxy
   const fs = await import("node:fs");
@@ -175,12 +182,12 @@ export async function ensureSandboxReady(
     "../sandbox-proxy/dist/proxy.js",
   );
   const proxyBundle = fs.readFileSync(proxyBundlePath, "utf-8");
-  await bootstrap.installProxy(proxyBundle);
+  await timer.time("installProxy", () => bootstrap.installProxy(proxyBundle));
 
-  const proxyBaseUrl = await bootstrap.startProxy({
+  const proxyBaseUrl = await timer.time("startProxy", () => bootstrap.startProxy({
     ...sessionEnv,
     CALLBACK_URL: getCallbackUrl(),
-  });
+  }));
 
   // Update runtime + session
   // Store the proxy URL as sandboxBaseUrl since all v2 communication
@@ -196,6 +203,9 @@ export async function ensureSandboxReady(
     sandboxId: sandbox.sandboxId,
     sandboxBaseUrl: proxyBaseUrl,
   });
+
+  log.set({ timing: timer.finalize() });
+  log.set({ lifecycle: { phase: "ready", restoreSource, sandboxId: sandbox.sandboxId } });
 
   return {
     sandboxId: sandbox.sandboxId,

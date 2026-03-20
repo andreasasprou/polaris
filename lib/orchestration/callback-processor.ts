@@ -9,6 +9,7 @@ import {
   getJob,
 } from "@/lib/jobs/actions";
 import type { CallbackType } from "@/lib/jobs/status";
+import { useLogger } from "@/lib/evlog";
 
 type IngestResult =
   | { accepted: true }
@@ -115,8 +116,26 @@ async function processCallback(input: {
 
     case "prompt_complete": {
       const result = (payload.result ?? payload) as Record<string, unknown>;
+      const metrics = payload.metrics as Record<string, unknown> | undefined;
+
+      // Log proxy metrics to evlog → Axiom for observability
+      if (metrics) {
+        const log = useLogger();
+        log.set({
+          proxyMetrics: {
+            connectMs: metrics.connectMs,
+            sessionCreateMs: metrics.sessionCreateMs,
+            promptExecutionMs: metrics.promptExecutionMs,
+            totalMs: metrics.totalMs,
+            resumeType: metrics.resumeType,
+            eventCount: metrics.eventCount,
+            healthChecks: metrics.healthChecks,
+          },
+        });
+      }
+
       await casAttemptStatus(attemptId, ["running", "accepted"], "completed", {
-        resultPayload: result,
+        resultPayload: { ...result, ...(metrics ? { proxyMetrics: metrics } : {}) },
         completedAt: new Date(),
       });
       // CAS job status — only proceed with session healing if this CAS
@@ -150,6 +169,23 @@ async function processCallback(input: {
         typeof payload.error === "string"
           ? payload.error
           : "Agent execution failed";
+
+      // Log proxy metrics to evlog → Axiom even on failure
+      const failedMetrics = payload.metrics as Record<string, unknown> | undefined;
+      if (failedMetrics) {
+        const log = useLogger();
+        log.set({
+          proxyMetrics: {
+            connectMs: failedMetrics.connectMs,
+            sessionCreateMs: failedMetrics.sessionCreateMs,
+            promptExecutionMs: failedMetrics.promptExecutionMs,
+            totalMs: failedMetrics.totalMs,
+            resumeType: failedMetrics.resumeType,
+            eventCount: failedMetrics.eventCount,
+            healthChecks: failedMetrics.healthChecks,
+          },
+        });
+      }
 
       await casAttemptStatus(
         attemptId,
