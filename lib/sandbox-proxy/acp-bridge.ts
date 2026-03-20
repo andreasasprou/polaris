@@ -45,14 +45,18 @@ type EventCallback = (event: AgentEvent) => void;
 class NativeResumedSession implements AgentSession {
   readonly id: string;
   readonly agentSessionId: string;
+  /** The original SDK session ID for event persistence lookup. */
+  readonly originalSdkSessionId: string | undefined;
 
   constructor(
     nativeSessionId: string,
     private readonly acp: AcpHttpClient,
     private readonly eventListeners: Set<EventCallback>,
+    originalSdkSessionId?: string,
   ) {
     this.id = nativeSessionId;
     this.agentSessionId = nativeSessionId;
+    this.originalSdkSessionId = originalSdkSessionId;
   }
 
   onEvent(listener: EventCallback): () => void {
@@ -155,6 +159,7 @@ export class AcpBridge {
         config.nativeAgentSessionId,
         config.agent,
         cwd,
+        config.sdkSessionId,
       );
       if (nativeSession) {
         this.lastResumeType = "native";
@@ -262,6 +267,7 @@ export class AcpBridge {
     nativeSessionId: string,
     agent: AgentType,
     cwd: string,
+    originalSdkSessionId?: string,
   ): Promise<NativeResumedSession | null> {
     try {
       const serverId = `native-${agent}-${Date.now()}`;
@@ -297,7 +303,7 @@ export class AcpBridge {
         mcpServers: [],
       });
 
-      return new NativeResumedSession(nativeSessionId, acp, eventListeners);
+      return new NativeResumedSession(nativeSessionId, acp, eventListeners, originalSdkSessionId);
     } catch {
       return null;
     }
@@ -382,20 +388,25 @@ export class AcpBridge {
       // Read persisted events for output reconstruction (correct order guaranteed)
       const { allOutput, lastMessage } = await this.readPersistedOutput(session.id);
 
+      // For native resume, session.id is the native CLI session ID, not the SDK
+      // session ID used for event persistence. Use originalSdkSessionId if available.
+      const sdkId = (session as NativeResumedSession).originalSdkSessionId ?? session.id;
+
       return {
         success: true,
         lastMessage,
         allOutput,
-        sdkSessionId: session.id,
+        sdkSessionId: sdkId,
         nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const sdkId = (session as NativeResumedSession).originalSdkSessionId ?? session.id;
       return {
         success: false,
         error: message,
-        sdkSessionId: session.id,
+        sdkSessionId: sdkId,
         nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
       };
