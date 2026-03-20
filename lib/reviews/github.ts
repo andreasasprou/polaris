@@ -107,21 +107,45 @@ export async function postReviewComment(input: {
 }
 
 /**
- * Mark a previous review comment as stale by editing it.
+ * Mark a previous review comment as stale.
+ *
+ * Fetches the original comment body, wraps it in a collapsed `<details>`
+ * section, and prepends a "Superseded" banner pointing to the new review.
  */
 export async function markCommentStale(input: {
   installationId: number;
   owner: string;
   repo: string;
   commentId: string;
-  newBody: string;
+  supersededBySequence: number;
 }) {
   const octokit = await getInstallationOctokitById(input.installationId);
+  const commentId = Number(input.commentId);
+
+  // Fetch existing body so we can preserve it in the collapsed section
+  let previousBody = "";
+  try {
+    const { data } = await octokit.rest.issues.getComment({
+      owner: input.owner,
+      repo: input.repo,
+      comment_id: commentId,
+    });
+    previousBody = data.body ?? "";
+  } catch {
+    // Best-effort — comment may have been deleted
+  }
+
+  const staleBody =
+    `> **Superseded** — See Review #${input.supersededBySequence} for the latest review.\n\n` +
+    (previousBody
+      ? `<details><summary>Previous review (collapsed)</summary>\n\n${previousBody}\n\n</details>`
+      : "");
+
   await octokit.rest.issues.updateComment({
     owner: input.owner,
     repo: input.repo,
-    comment_id: Number(input.commentId),
-    body: input.newBody,
+    comment_id: commentId,
+    body: staleBody,
   });
 }
 
