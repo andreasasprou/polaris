@@ -127,9 +127,16 @@ async function processCallback(input: {
       await appendJobEvent(jobId, "agent_completed", attemptId);
 
       if (completedJobRow?.sessionId) {
-        // We own the transition — safe to heal session
-        const { casSessionStatus } = await import("@/lib/sessions/actions");
+        // We own the transition — safe to heal session and persist agent identifiers
+        const { casSessionStatus, updateInteractiveSession } = await import("@/lib/sessions/actions");
         await casSessionStatus(completedJobRow.sessionId, ["active"], "idle");
+
+        // Persist sdkSessionId so events can be fetched for the session detail page
+        if (result.sdkSessionId) {
+          await updateInteractiveSession(completedJobRow.sessionId, {
+            sdkSessionId: result.sdkSessionId as string,
+          });
+        }
       }
 
       // Trigger post-processing (coding task PR creation, review comment, etc.)
