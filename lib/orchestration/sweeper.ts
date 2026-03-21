@@ -164,6 +164,22 @@ async function sweepTimedOutJobs(): Promise<number> {
           // Best-effort — controller will catch it next cycle
         }
       }
+
+      // Mark automation_run as failed so the UI shows the correct status.
+      // Without this, non-review timed-out jobs leave their automation_run
+      // stuck in 'running' forever.
+      if (job.automationRunId) {
+        try {
+          const { updateAutomationRun } = await import("@/lib/automations/actions");
+          await updateAutomationRun(job.automationRunId, {
+            status: "failed",
+            error: "Timed out",
+            completedAt: new Date(),
+          });
+        } catch {
+          // Best-effort
+        }
+      }
     }
   }
 

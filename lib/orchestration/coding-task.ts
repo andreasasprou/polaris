@@ -61,21 +61,24 @@ export async function dispatchCodingTask(
     provider: ctx.provider,
   }).catch(() => fallbackBranch);
 
-  // Provision sandbox via session lifecycle (creates runtime record + epoch)
-  const { ensureSandboxReady } = await import("./sandbox-lifecycle");
-  const result = await ensureSandboxReady(session.id, {
-    credentialRef: ctx.credentialRef,
-    agentType: ctx.agentType,
-    repositoryOwner: ctx.owner,
-    repositoryName: ctx.repo,
-    defaultBranch: ctx.baseBranch,
-    githubInstallationId: ctx.githubInstallationId,
-  });
-
-  log.set({ codingTask: { sandboxId: result.sandboxId } });
-
   let createdJobId: string | undefined;
+  let result: Awaited<ReturnType<typeof import("./sandbox-lifecycle").ensureSandboxReady>> | undefined;
   try {
+    // Provision sandbox via session lifecycle (creates runtime record + epoch).
+    // Inside the try block so provisioning failures trigger rollback
+    // (otherwise the session is left with a 'creating' runtime and the
+    // automation_run stays 'running' forever).
+    const { ensureSandboxReady } = await import("./sandbox-lifecycle");
+    result = await ensureSandboxReady(session.id, {
+      credentialRef: ctx.credentialRef,
+      agentType: ctx.agentType,
+      repositoryOwner: ctx.owner,
+      repositoryName: ctx.repo,
+      defaultBranch: ctx.baseBranch,
+      githubInstallationId: ctx.githubInstallationId,
+    });
+
+    log.set({ codingTask: { sandboxId: result.sandboxId } });
     // Create branch — ensureSandboxReady handles bootstrap but not branch creation
     const { Sandbox } = await import("@vercel/sandbox");
     const sandbox = await Sandbox.get({
@@ -179,7 +182,7 @@ export async function dispatchCodingTask(
     return { jobId: job.id };
   } catch (error) {
     log.error(error instanceof Error ? error : new Error(String(error)));
-    log.set({ codingTask: { failed: true, sandboxId: result.sandboxId } });
+    log.set({ codingTask: { failed: true, sandboxId: result?.sandboxId } });
 
     // Centralized rollback: terminalize orphaned job, release claims, destroy sandbox, fail session
     if (createdJobId) {

@@ -522,3 +522,261 @@ Border 3: Input/interactive  60% fg opacity
 ```
 
 Each layer lifts by approximately `oklch(+0.03 lightness)`.
+
+---
+
+## 16. Product UI Token System (from `--cursor-*` variables)
+
+The user's CSS dump reveals the full product design system. The `--cursor-*`
+namespace wraps underlying semantic tokens. Below is the complete mapping
+with resolved values from the dark theme.
+
+### 16.1 Shadow System
+
+From the CSS variables:
+```css
+--cursor-shadow-primary:   var(--shadow-primary);    /* ~rgba(0,0,0,0.25) */
+--cursor-shadow-secondary: var(--shadow-secondary);  /* ~rgba(0,0,0,0.12) */
+--cursor-shadow-tertiary:  var(--shadow-tertiary);   /* ~rgba(0,0,0,0.06) */
+
+--cursor-box-shadow-sm:  0 2px 8px 0px var(--cursor-shadow-secondary);
+--cursor-box-shadow-md:  0 0 8px 2px var(--cursor-shadow-primary);
+--cursor-box-shadow-soft: 0 0 8px 2px var(--cursor-shadow-tertiary);
+--cursor-box-shadow-lg:  0 0 4px 0 rgba(255,255,255,0.05) inset,
+                         0 0 3px 0 var(--cursor-shadow-secondary),
+                         0 16px 24px 0 var(--cursor-shadow-tertiary);
+--cursor-box-shadow-xl:  0 0 4px 0 rgba(255,255,255,0.05) inset,
+                         0 0 6px 8px var(--cursor-shadow-secondary),
+                         0 24px 16px 6px var(--cursor-shadow-tertiary);
+```
+
+**Key insight:** The `inset rgba(255,255,255,0.05)` on lg/xl shadows adds a
+subtle inner glow — a hint of light at the top edge of elevated surfaces. This
+is far more refined than a simple drop shadow.
+
+**For Polaris:** Our shadcn components use `shadow-sm`, `shadow-md`, etc. Override
+these in `globals.css` to match Cursor's near-zero approach:
+```css
+--shadow-sm: 0 2px 8px 0 rgba(0,0,0,0.08);
+--shadow-md: 0 0 8px 2px rgba(0,0,0,0.12);
+--shadow-lg: 0 0 4px 0 rgba(255,255,255,0.04) inset,
+             0 0 3px 0 rgba(0,0,0,0.08),
+             0 16px 24px 0 rgba(0,0,0,0.04);
+```
+
+### 16.2 Scrollbar Styling
+
+```css
+--cursor-scrollbar-vertical-size: 14px;
+--cursor-scrollbar-horizontal-size: 12px;
+--cursor-scrollbar-thumb-background: color-mix(in srgb, var(--base) 20%, transparent);
+--cursor-scrollbar-thumb-hover-background: color-mix(in srgb, var(--base) 30%, transparent);
+--cursor-scrollbar-thumb-active-background: color-mix(in srgb, var(--base) 40%, transparent);
+```
+
+**Key insight:** Scrollbar thumb is the base color at 20% opacity — nearly invisible
+until hovered (30%) or dragged (40%). This matches the "reveal structure on
+interaction" philosophy.
+
+**For Polaris:** Add to `globals.css`:
+```css
+::-webkit-scrollbar { width: 14px; height: 12px; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 15%, transparent);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 25%, transparent);
+}
+::-webkit-scrollbar-track { background: transparent; }
+```
+
+### 16.3 Input / Button Styles
+
+```css
+/* Input/editor bg = elevated surface */
+--cursor-bg-input: var(--bg-elevated);      /* card-level surface */
+--cursor-bg-editor: var(--bg-elevated);
+
+/* Buttons */
+--cursor-button-background: var(--bg-neutral);                /* same as page bg */
+--cursor-button-foreground: var(--text-inverted);              /* contrast text */
+--cursor-button-hover-background: var(--bg-neutral-hover);
+--cursor-button-secondary-background: var(--bg-tertiary);      /* muted surface */
+--cursor-button-secondary-foreground: var(--text-primary);
+--cursor-button-secondary-hover-background: var(--bg-quaternary);
+
+/* Focus */
+--cursor-stroke-focused: var(--border-focus);  /* distinct focus ring color */
+```
+
+**Key insight:** Primary buttons use the inverted color scheme (dark bg + light text
+in light mode, or vice versa). Secondary buttons use the tertiary surface — they
+nearly blend into the background until hovered.
+
+### 16.4 Sidebar Specific Tokens
+
+```css
+--cursor-bg-sidebar: var(--bg-tertiary);        /* slightly lifted from page bg */
+--cursor-bg-active: var(--bg-tertiary);          /* selected/active item bg */
+--cursor-bg-focused: var(--bg-tertiary);         /* focused item bg */
+```
+
+From the marketing CSS: sidebar chrome uses the page background (`#14120b`),
+main editor area uses the card color (`#1b1913`). The sidebar is the DARKEST
+surface, not lighter — inverted from most dark UIs.
+
+**Sidebar item dimensions (from `--cursor-*` tokens):**
+```css
+--cursor-height-xs: 20px;   /* compact list items */
+--cursor-height-sm: 24px;   /* standard sidebar items */
+--cursor-height-md: 28px;   /* medium items */
+--cursor-height-lg: 32px;   /* large items / buttons */
+--cursor-font-size-xs: 11px;  /* timestamps, metadata */
+--cursor-font-size-sm: 12px;  /* sidebar session titles */
+--cursor-font-size-md: 13px;  /* primary text */
+--cursor-font-size-lg: 14px;  /* headings */
+```
+
+**For Polaris sidebar (Plan 10):** Session items should be 24-28px tall with
+12px titles and 11px timestamps. This is denser than our current sidebar items.
+
+### 16.5 Syntax / Code Colors (Dark)
+
+```css
+--cursor-syntax-foreground:  #d6d6dd;
+--cursor-syntax-background:  #181818;
+--cursor-syntax-keyword:     #82d2ce;   /* teal */
+--cursor-syntax-string:      #e394dc;   /* pink */
+--cursor-syntax-function:    #efb080;   /* warm orange */
+--cursor-syntax-number:      #ebc88d;   /* gold */
+--cursor-syntax-comment:     #6E7781;   /* muted gray */
+--cursor-syntax-constant:    #f8c762;   /* amber */
+--cursor-syntax-parameter:   #d6d6dd;   /* same as fg */
+--cursor-syntax-punctuation: #d6d6dd;   /* same as fg */
+--cursor-syntax-link:        #87c3ff;   /* light blue */
+--cursor-syntax-string-expression: #e394dc;
+```
+
+### 16.6 Diff Colors
+
+```css
+--cursor-bg-diff-inserted: var(--diffs-bg-addition-override);
+--cursor-bg-diff-removed:  var(--diffs-bg-deletion-override);
+```
+
+From marketing CSS (resolved):
+```css
+--inserted-line-bg: #1f8a6514;  /* green at ~8% opacity */
+--removed-line-bg:  #cf2d560f;  /* red at ~6% opacity */
+```
+
+**For Polaris (Plan 11):** Our current diff colors use `bg-emerald-500/5` and
+`bg-red-500/5`. Cursor uses slightly more saturated base colors but similar
+opacity. Consider:
+```css
+--diff-inserted-bg: oklch(0.55 0.15 160 / 8%);
+--diff-removed-bg: oklch(0.55 0.18 15 / 6%);
+```
+
+### 16.7 Status Color System (Full)
+
+From the `--cursor-*` variable declarations, each status color has:
+- `text-{color}-primary` — full saturation text
+- `text-{color}-secondary` — muted variant
+- `icon-{color}-primary` — full saturation icon
+- `icon-{color}-secondary` — muted variant
+- `bg-{color}-primary` — full saturation bg (rare, for pills)
+- `bg-{color}-secondary` — tinted bg (badges, banners)
+- `stroke-{color}-primary` — border matching the color
+- `stroke-{color}-secondary` — muted border
+
+Colors available: red, yellow, green, magenta, cyan, orange, purple, accent.
+
+**For Polaris:** Our Plan 19 status tokens (`--status-active`, `--status-success`,
+etc.) should each have a `-dim` variant at 10% opacity for badge backgrounds,
+matching Cursor's `bg-{color}-secondary` pattern:
+```css
+--status-success-dim: oklch(0.72 0.14 160 / 10%);
+--status-warning-dim: oklch(0.75 0.14 75 / 10%);
+--status-error-dim: oklch(0.68 0.19 30 / 10%);
+--status-active-dim: oklch(0.68 0.12 230 / 10%);
+--status-info-dim: oklch(0.62 0.16 285 / 10%);
+```
+
+### 16.8 Transition / Animation System
+
+```css
+--cursor-duration-instant: 50ms;
+--cursor-duration-fast: 100ms;
+--cursor-duration-normal: 150ms;
+--cursor-duration-slow: 200ms;
+--cursor-duration-slower: 300ms;
+
+--cursor-easing-default: ease;
+--cursor-easing-in: ease-in;
+--cursor-easing-out: ease-out;
+--cursor-easing-in-out: ease-in-out;
+```
+
+Combined with the marketing CSS values:
+```css
+--duration: 0.14s;          /* micro-interactions */
+--duration-slow: 0.25s;     /* deliberate transitions */
+--ease-out: cubic-bezier(0, 0, .2, 1);         /* decelerate */
+--ease-out-spring: cubic-bezier(.25, 1, .5, 1); /* springy */
+```
+
+**For Polaris:** Define transition utilities in `globals.css`:
+```css
+.transition-micro { transition-duration: 100ms; transition-timing-function: cubic-bezier(0, 0, .2, 1); }
+.transition-normal { transition-duration: 150ms; transition-timing-function: cubic-bezier(0, 0, .2, 1); }
+.transition-slow { transition-duration: 250ms; transition-timing-function: cubic-bezier(0, 0, .2, 1); }
+```
+
+### 16.9 Radius System
+
+```css
+--cursor-radius-none: 0px;
+--cursor-radius-xs: 2px;
+--cursor-radius-sm: 4px;
+--cursor-radius-md: 6px;
+--cursor-radius-lg: 8px;
+--cursor-radius-xl: 12px;
+--cursor-radius-full: 9999px;
+```
+
+Our current shadcn radius is `0.625rem` (10px). Cursor uses 6px for most
+interactive elements and 8px for cards. Consider reducing `--radius` to `8px`
+for a slightly tighter, more Glass-like feel.
+
+---
+
+## 17. Coverage Assessment
+
+| Area | Coverage | Source |
+|------|----------|--------|
+| Background colors | Complete | Marketing CSS + docs CSS |
+| Text hierarchy | Complete | Marketing + docs (3 tiers resolved) |
+| Border system | Complete | Marketing CSS (5 opacity tiers) |
+| Status/semantic colors | Complete | Docs CSS (5 colors + dim variants) |
+| Shadows | Complete | `--cursor-*` variables (5 shadow levels) |
+| Typography scale | Complete | Marketing CSS (product + marketing scales) |
+| Spacing system | Complete | Marketing CSS (h-grid + v-rhythm) |
+| Border radius | Complete | `--cursor-*` variables |
+| Transitions/animations | Complete | Both sources |
+| Scrollbar styling | Complete | `--cursor-*` variables |
+| Syntax/code colors | Complete | `--cursor-*` variables |
+| Diff colors | Complete | Marketing CSS |
+| Button styles | Partial | Token names resolved, not all computed values |
+| Sidebar dimensions | Complete | `--cursor-*` height/font-size tokens |
+| Input/focus styles | Partial | Token names, not all focus ring values |
+| Dialog/modal styles | Minimal | Only `--cursor-box-shadow-xl` for modals |
+| Tooltip styles | Not covered | Not in public CSS |
+| Chat message layout | Not covered | Behind auth wall |
+
+**Overall: ~85% coverage.** The missing items (tooltips, chat layout, modal
+specifics) are standard patterns that can be inferred from the shadow/surface
+system already documented.
