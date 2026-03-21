@@ -185,7 +185,7 @@ jobs:
           script: |
             const check = await github.rest.checks.create({
               ...context.repo,
-              name: 'Codex Code Review',
+              name: 'Codex Review Result',
               head_sha: '${{ steps.pr.outputs.head_sha }}',
               status: 'in_progress',
               started_at: new Date().toISOString(),
