@@ -179,7 +179,10 @@ export async function dispatchCodingTask(
     log.error(error instanceof Error ? error : new Error(String(error)));
     log.set({ codingTask: { failed: true, sandboxId: result.sandboxId } });
 
-    // Clean up via session lifecycle — controller will catch anything we miss
+    // Centralized rollback: release claims, destroy sandbox, fail session
+    const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+    await releaseClaimsByClaimant(session.id, "dispatch").catch(() => {});
+
     const { destroySandbox } = await import("./sandbox-lifecycle");
     await destroySandbox(session.id).catch(() => {});
 

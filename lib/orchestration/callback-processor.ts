@@ -182,12 +182,22 @@ async function processCallback(input: {
         });
       }
 
-      // Release compute claim — job is done, sandbox no longer needed for execution.
-      // Post-processing for reviews doesn't need the sandbox (reads from DB).
-      // Coding tasks manage sandbox lifecycle separately (no session).
       if (completedJobRow?.sessionId) {
-        const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+        const { releaseClaimsByClaimant, createClaim } = await import("@/lib/compute/claims");
+        // Release the job_active claim — execution is done.
         await releaseClaimsByClaimant(completedJobRow.sessionId, jobId).catch(() => {});
+
+        // Coding tasks need the sandbox during postprocess (git push, PR creation).
+        // Create a short-lived postprocess_finalizer claim so the controller doesn't
+        // destroy the sandbox while postprocess is running.
+        if (completedJobRow.type === "coding_task") {
+          await createClaim({
+            sessionId: completedJobRow.sessionId,
+            claimant: `postprocess:${jobId}`,
+            reason: "postprocess_finalizer",
+            ttlMs: 10 * 60 * 1000, // 10 min max for git push + PR creation
+          }).catch(() => {});
+        }
       }
 
       // Trigger post-processing (coding task PR creation, review comment, etc.)

@@ -329,6 +329,7 @@ export async function dispatchPrReview(
 
     // Shared primitives
     const { probeSandboxHealth, buildCallbackUrl } = await import("./prompt-dispatch");
+    const { getNextEventIndex } = await import("@/lib/sandbox-agent/queries");
     const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
     const callbackUrl = buildCallbackUrl();
 
@@ -379,6 +380,10 @@ export async function dispatchPrReview(
         sandboxId: currentSandboxId ?? undefined,
       });
 
+      // Compute resume fields so subsequent reviews in the same session
+      // continue the agent session instead of creating a fresh one.
+      const nextEventIndex = await getNextEventIndex(session.sdkSessionId);
+
       const promptBody = {
         jobId: job.id,
         attemptId: attempt.id,
@@ -392,6 +397,9 @@ export async function dispatchPrReview(
           model: resolved.model,
           thoughtLevel: resolved.thoughtLevel,
           cwd: "/vercel/sandbox",
+          sdkSessionId: session.sdkSessionId ?? undefined,
+          nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
+          nextEventIndex: nextEventIndex ?? undefined,
         },
         contextFiles: [
           {

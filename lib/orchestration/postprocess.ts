@@ -264,8 +264,10 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
       } catch {
         // Best-effort — runtime controller will catch it next cycle
       }
+      // Release both the job claim and the postprocess finalizer claim
       const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
       await releaseClaimsByClaimant(job.sessionId, job.id).catch(() => {});
+      await releaseClaimsByClaimant(job.sessionId, `postprocess:${job.id}`).catch(() => {});
     } else if (!job.sessionId && !sideEffects.sandbox_destroyed) {
       // Legacy path: jobs created before session migration
       try {

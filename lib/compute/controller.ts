@@ -242,17 +242,32 @@ async function destroyRuntime(runtime: {
 }): Promise<boolean> {
   const log = useLogger();
 
+  // Attempt to stop the Vercel sandbox. Only mark the runtime as stopped
+  // if the destroy succeeds or the sandbox is already gone. If the destroy
+  // throws a non-"not found" error, the sandbox may still be running —
+  // leave the runtime as-is so the next sweep cycle retries.
+  let destroyConfirmed = false;
   try {
     const { SandboxManager } = await import("@/lib/sandbox/SandboxManager");
     const manager = new SandboxManager();
     await manager.destroyById(runtime.sandbox_id);
+    destroyConfirmed = true;
   } catch (err) {
+    // "not found" / "already stopped" = sandbox is gone, safe to mark stopped
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("not found") || msg.includes("not_found") || msg.includes("already")) {
+      destroyConfirmed = true;
+    }
     log.set({
       controller: {
-        [`destroyError_${runtime.runtime_id}`]:
-          err instanceof Error ? err.message : String(err),
+        [`destroyError_${runtime.runtime_id}`]: msg,
       },
     });
+  }
+
+  if (!destroyConfirmed) {
+    // Sandbox may still be running — don't mark stopped, retry next cycle
+    return false;
   }
 
   try {

@@ -283,22 +283,27 @@ async function sweepStaleReviewLocks(): Promise<number> {
   let count = 0;
 
   for (const lock of staleLocks) {
-    await forceReleaseAutomationSessionLock(lock.automation_session_id);
-
-    // Also mark the stale run as failed so it doesn't block future sweeps
+    // Per-item try/catch — one failure must not block other lock releases
     try {
-      const { updateAutomationRun } = await import("@/lib/automations/actions");
-      await updateAutomationRun(lock.review_lock_job_id, {
-        status: "failed",
-        error: "Sweeper: lock held too long without progress",
-        completedAt: new Date(),
-      });
-    } catch {
-      // Run may not exist or already terminal — best effort
-    }
+      await forceReleaseAutomationSessionLock(lock.automation_session_id);
 
-    count++;
-    log.set({ sweep: { [`releasedLock_${lock.automation_session_id}`]: lock.review_lock_job_id } });
+      // Mark the stale run as failed so it doesn't block future sweeps
+      try {
+        const { updateAutomationRun } = await import("@/lib/automations/actions");
+        await updateAutomationRun(lock.review_lock_job_id, {
+          status: "failed",
+          error: "Sweeper: lock held too long without progress",
+          completedAt: new Date(),
+        });
+      } catch {
+        // Run may not exist or already terminal — best effort
+      }
+
+      count++;
+      log.set({ sweep: { [`releasedLock_${lock.automation_session_id}`]: lock.review_lock_job_id } });
+    } catch (err) {
+      log.set({ sweep: { [`lockReleaseError_${lock.automation_session_id}`]: err instanceof Error ? err.message : String(err) } });
+    }
   }
 
   return count;
