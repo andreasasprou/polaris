@@ -288,8 +288,12 @@ function parseOutput(outputDir) {
   // If files weren't written, extract from NDJSON output
   if (!reviewBody) {
     const ndjsonPath = path.join(outputDir, 'codex-output.json');
+    console.log(`[codex-review] NDJSON path: ${ndjsonPath}, exists: ${fs.existsSync(ndjsonPath)}`);
     if (fs.existsSync(ndjsonPath)) {
-      const result = extractFromNdjson(fs.readFileSync(ndjsonPath, 'utf8'));
+      const ndjsonContent = fs.readFileSync(ndjsonPath, 'utf8');
+      console.log(`[codex-review] NDJSON size: ${ndjsonContent.length} bytes, lines: ${ndjsonContent.split('\n').length}`);
+      const result = extractFromNdjson(ndjsonContent);
+      console.log(`[codex-review] NDJSON extraction: body=${!!result.reviewBody} (${result.reviewBody?.length || 0} chars), state=${!!result.reviewState}`);
       if (result.reviewBody) reviewBody = result.reviewBody;
       if (result.reviewState) reviewState = result.reviewState;
     }
