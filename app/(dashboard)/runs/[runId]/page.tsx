@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -79,9 +80,7 @@ export default function RunDetailPage() {
     }
   }, [runId]);
 
-  // TODO: Replace with useQuery/useMountEffect once a data-fetching primitive
-  // is adopted (see CLAUDE.md no-useEffect rule). Same pattern as session page.
-  useEffect(() => {
+  useMountEffect(() => {
     controllerRef.current = new AbortController();
     lastJsonRef.current = "";
     setLoading(true);
@@ -96,7 +95,7 @@ export default function RunDetailPage() {
         timerRef.current = null;
       }
     };
-  }, [fetchRun]);
+  });
 
   if (loading) {
     return <p className="text-sm text-muted-foreground">Loading...</p>;
@@ -405,7 +404,7 @@ function JobLifecycle({ jobId }: { jobId: string }) {
   const [data, setData] = useState<JobDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  useMountEffect(() => {
     fetch(`/api/jobs/${jobId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -413,7 +412,7 @@ function JobLifecycle({ jobId }: { jobId: string }) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, [jobId]);
+  });
 
   if (loading) {
     return (

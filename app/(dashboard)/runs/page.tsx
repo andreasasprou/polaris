@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import {
@@ -67,14 +68,14 @@ export default function RunsPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  useMountEffect(() => {
     fetch("/api/runs")
       .then((r) => r.json())
       .then((data) => {
         setRuns(data.runs);
         setLoading(false);
       });
-  }, []);
+  });
 
   return (
     <div className="flex flex-col gap-6">
