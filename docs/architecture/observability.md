@@ -128,6 +128,55 @@ The sandbox proxy emits JSON to stdout:
 }
 ```
 
+## Sandbox Lifecycle Observability
+
+The runtime controller and provider janitor emit structured metrics every sweeper cycle (2 min).
+These flow to Axiom via evlog and power the **Sandbox Lifecycle** dashboard + monitors.
+
+### Data emitted per sweep cycle
+
+```typescript
+// Runtime controller (lib/compute/controller.ts)
+log.set({ sandbox_gauge: { liveRuntimes, maxAgeMs, over1h } });
+log.set({ controller: { expiredClaims, destroyedOrphans, hibernatedOrphans, destroyedTtlExceeded } });
+
+// Provider janitor (lib/compute/provider-janitor.ts)
+log.set({ sweep: { providerJanitor: { vercelRunning, unknownStopped, withinGrace, errors } } });
+```
+
+### Dashboard: `polaris-sandbox-lifecycle`
+
+Created via IaC: `scripts/axiom-sandbox-observability.sh`
+
+| Panel | What it shows |
+|-------|--------------|
+| **Live Now** (stat) | Current running sandbox count. Warns >10, errors >20. |
+| **Over 1h** (stat) | Sandboxes running longer than 1 hour. Any >0 is a warning. |
+| **Live Sandboxes** (time series) | Sandbox count over time. |
+| **Max Sandbox Age** (time series) | Oldest sandbox age in minutes. |
+| **Controller Actions** (bar chart) | Destroyed orphans, hibernated, TTL exceeded, expired claims per cycle. |
+| **Provider Janitor** (bar chart) | Vercel running total, unknowns stopped, errors per cycle. |
+| **Sweeper Health** (bar chart) | Timed-out jobs, stale sessions healed, retried jobs, locks released. |
+| **Active Alerts** (monitor list) | All firing monitors. |
+
+### Monitors
+
+| Monitor | Condition | Severity |
+|---------|-----------|----------|
+| Long-running sandboxes | `sandbox_gauge.over1h > 0` sustained 20min | Warning |
+| High sandbox count | `sandbox_gauge.liveRuntimes > 20` sustained 20min | Warning |
+| Janitor killing unknowns | `providerJanitor.unknownStopped > 0` | Info |
+| Controller orphan spike | `runtimeController.destroyedOrphans > 3` | Warning |
+| Sandbox exceeded 8h | `sandbox_gauge.maxAgeMs > 28800000` | Critical |
+
+### Setup
+
+```bash
+AXIOM_TOKEN=xaat-xxx ./scripts/axiom-sandbox-observability.sh
+# Optionally attach to a notifier (Slack, email):
+AXIOM_TOKEN=xaat-xxx AXIOM_NOTIFIER_ID=not_xxx ./scripts/axiom-sandbox-observability.sh
+```
+
 ## Axiom Query Cookbook
 
 ### Find a failed session's lifecycle
@@ -173,4 +222,44 @@ The sandbox proxy emits JSON to stdout:
 ['vercel']
 | where message contains "proxyMetrics"
   and message contains "JOB_ID_HERE"
+```
+
+### Sandbox gauge over time (live count + max age)
+
+```apl
+['vercel']
+| where ['request.path'] == "/api/cron/sweeper"
+| extend p = parse_json(message)
+| where isnotnull(p.sandbox_gauge)
+| project _time,
+    live = toint(p.sandbox_gauge.liveRuntimes),
+    maxAgeMin = todouble(p.sandbox_gauge.maxAgeMs) / 60000
+| sort by _time desc
+```
+
+### Controller actions (orphans destroyed, claims expired)
+
+```apl
+['vercel']
+| where ['request.path'] == "/api/cron/sweeper"
+| extend p = parse_json(message)
+| where isnotnull(p.sweep.runtimeController)
+| project _time,
+    orphans = toint(p.sweep.runtimeController.destroyedOrphans),
+    hibernated = toint(p.sweep.runtimeController.hibernatedOrphans),
+    ttl = toint(p.sweep.runtimeController.destroyedTtlExceeded),
+    expired = toint(p.sweep.runtimeController.expiredClaims)
+| where orphans > 0 or hibernated > 0 or ttl > 0 or expired > 0
+```
+
+### Provider janitor — unknown sandboxes stopped
+
+```apl
+['vercel']
+| where ['request.path'] == "/api/cron/sweeper"
+| extend p = parse_json(message)
+| where toint(p.sweep.providerJanitor.unknownStopped) > 0
+| project _time,
+    vercelRunning = toint(p.sweep.providerJanitor.vercelRunning),
+    unknownStopped = toint(p.sweep.providerJanitor.unknownStopped)
 ```
