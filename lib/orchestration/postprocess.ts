@@ -384,13 +384,19 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (!sideEffects.comment_posted) {
       try {
         if (parsed) {
-          // Comment body IS the agent's output, already stripped of metadata
+          // Comment body IS the agent's output, already stripped of metadata.
+          // Append collapsible pipeline latency section from proxy metrics.
+          const latencySection = formatLatencySection(result);
+          const fullBody = latencySection
+            ? `${parsed.commentBody}\n\n${latencySection}`
+            : parsed.commentBody;
+
           const commentResult = await postReviewComment({
             installationId,
             owner,
             repo,
             prNumber,
-            body: parsed.commentBody.slice(0, 60000),
+            body: fullBody.slice(0, 60000),
           });
           commentId = commentResult.commentId;
         } else {
@@ -521,4 +527,58 @@ async function markSideEffect(
       sideEffectsCompleted: sql`COALESCE(${jobs.sideEffectsCompleted}, '{}'::jsonb) || ${JSON.stringify({ [effectName]: true })}::jsonb`,
     })
     .where(eq(jobs.id, jobId));
+}
+
+// ── Pipeline latency formatting ──
+
+function fmtMs(ms: number | undefined): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Build a collapsible GitHub markdown section showing pipeline latency
+ * breakdown from proxy metrics stored in the job result.
+ */
+function formatLatencySection(result: Record<string, unknown>): string | null {
+  const metrics = result.proxyMetrics as Record<string, unknown> | undefined;
+  if (!metrics) return null;
+
+  const connectMs = typeof metrics.connectMs === "number" ? metrics.connectMs : undefined;
+  const sessionCreateMs = typeof metrics.sessionCreateMs === "number" ? metrics.sessionCreateMs : undefined;
+  const promptExecutionMs = typeof metrics.promptExecutionMs === "number" ? metrics.promptExecutionMs : undefined;
+  const totalMs = typeof metrics.totalMs === "number" ? metrics.totalMs : undefined;
+  const resumeType = typeof metrics.resumeType === "string" ? metrics.resumeType : undefined;
+  const eventCount = typeof metrics.eventCount === "number" ? metrics.eventCount : undefined;
+
+  const lines: string[] = [];
+
+  if (connectMs != null) lines.push(`| Agent connect | ${fmtMs(connectMs)} |`);
+  if (sessionCreateMs != null) {
+    const label = resumeType && resumeType !== "fresh"
+      ? `Session resume (${resumeType})`
+      : "Session create";
+    lines.push(`| ${label} | ${fmtMs(sessionCreateMs)} |`);
+  }
+  if (promptExecutionMs != null) lines.push(`| Prompt execution | ${fmtMs(promptExecutionMs)} |`);
+  if (totalMs != null) lines.push(`| **Total** | **${fmtMs(totalMs)}** |`);
+
+  if (lines.length === 0) return null;
+
+  const extras: string[] = [];
+  if (eventCount != null) extras.push(`${eventCount} events`);
+  if (resumeType) extras.push(`resume: ${resumeType}`);
+  const extraLine = extras.length > 0 ? `\n\n${extras.join(" · ")}` : "";
+
+  return [
+    `<details>`,
+    `<summary>Pipeline latency</summary>`,
+    ``,
+    `| Step | Duration |`,
+    `|------|----------|`,
+    ...lines,
+    extraLine,
+    `</details>`,
+  ].join("\n");
 }
