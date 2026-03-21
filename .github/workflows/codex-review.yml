@@ -424,33 +424,28 @@ jobs:
           echo "Model: $CODEX_MODEL | Reasoning: $CODEX_REASONING"
           START_TIME=$(date +%s)
 
-          set -o pipefail
           if codex exec \
             --model "$CODEX_MODEL" \
             --full-auto \
             -c "model_reasoning_effort=\"$CODEX_REASONING\"" \
-            --json \
-            - < /tmp/review-prompt.md \
-            2>&1 | tee /tmp/codex-output.json; then
+            --output-schema .github/scripts/codex-review/output-schema.json \
+            -o /tmp/codex-review-output.json \
+            - < /tmp/review-prompt.md; then
             EXIT_CODE=0
           else
             EXIT_CODE=$?
           fi
-          set +o pipefail
 
           DURATION=$(( $(date +%s) - START_TIME ))
 
-          # Extract token usage from the last turn.completed event
-          USAGE=$(grep '"type":"turn.completed"' /tmp/codex-output.json | tail -1 || echo '{}')
-          INPUT=$(echo "$USAGE" | jq -r '.usage.input_tokens // 0')
-          OUTPUT=$(echo "$USAGE" | jq -r '.usage.output_tokens // 0')
-
-          if [ "$EXIT_CODE" -eq 0 ]; then
+          if [ "$EXIT_CODE" -eq 0 ] && [ -s /tmp/codex-review-output.json ]; then
             echo "review_generated=true" >> "$GITHUB_OUTPUT"
-            echo "Review completed in ${DURATION}s (input=${INPUT}, output=${OUTPUT} tokens)"
+            echo "Review completed in ${DURATION}s"
+            # Preview the review markdown
+            jq -r '.review_markdown' /tmp/codex-review-output.json | head -20
           else
             echo "review_generated=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Codex exited with code $EXIT_CODE"
+            echo "::warning::Codex exited with code $EXIT_CODE or produced no output"
           fi
 
           echo "duration=$DURATION" >> "$GITHUB_OUTPUT"

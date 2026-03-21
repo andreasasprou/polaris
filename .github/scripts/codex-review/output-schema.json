@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "review_markdown": {
+      "type": "string",
+      "description": "The full code review in markdown format"
+    },
+    "state": {
+      "type": "object",
+      "description": "Machine-readable state for review continuity across runs",
+      "properties": {
+        "schema_version": { "type": "integer" },
+        "last_reviewed_head_sha": { "type": "string" },
+        "review_count": { "type": "integer" },
+        "updated_at": { "type": "string" },
+        "open_issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "severity": { "type": "string", "enum": ["P0", "P1", "P2"] },
+              "category": { "type": "string" },
+              "title": { "type": "string" },
+              "location": { "type": "string" },
+              "status": { "type": "string" },
+              "first_seen_head_sha": { "type": "string" },
+              "last_seen_head_sha": { "type": "string" }
+            },
+            "required": ["id", "severity", "title", "location", "status"]
+          }
+        },
+        "recently_resolved_issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "resolved_in_head_sha": { "type": "string" },
+              "resolution": { "type": "string" }
+            },
+            "required": ["id"]
+          }
+        }
+      },
+      "required": ["schema_version", "last_reviewed_head_sha", "review_count", "open_issues"]
+    }
+  },
+  "required": ["review_markdown", "state"],
+  "additionalProperties": false
+}

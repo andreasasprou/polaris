@@ -257,154 +257,35 @@ function loadGuidelines(repoRoot) {
 // ─── Output Parsing ───────────────────────────────────────────────────────────
 
 /**
- * Parse review output from the Codex NDJSON stream.
+ * Parse the structured JSON output from Codex.
  *
- * Codex's sandbox blocks filesystem writes, so the review is output as the
- * agent's final text message. We extract:
- * 1. The review markdown (everything from "## Codex Review" to the state marker)
- * 2. The state JSON (between codex-review:state-json markers)
- *
- * Falls back to reading /tmp files if they exist (for local testing).
+ * Codex writes a JSON file via `--output-schema` + `-o` containing:
+ *   { review_markdown: string, state: object }
  */
 function parseOutput(outputDir) {
-  let reviewBody = null;
-  let reviewState = null;
+  const outputPath = path.join(outputDir, 'codex-review-output.json');
 
-  // Try /tmp files first (works in local testing)
-  const reviewPath = path.join(outputDir, 'codex-review.md');
-  if (fs.existsSync(reviewPath)) {
-    const content = fs.readFileSync(reviewPath, 'utf8').trim();
-    if (content) reviewBody = content;
-  }
-  const statePath = path.join(outputDir, 'codex-review-state.json');
-  if (fs.existsSync(statePath)) {
-    try {
-      reviewState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    } catch (e) {
-      console.log(`Warning: Failed to parse state JSON from file: ${e.message}`);
-    }
+  if (!fs.existsSync(outputPath)) {
+    console.log(`[codex-review] Output file not found: ${outputPath}`);
+    return { reviewBody: null, reviewState: null };
   }
 
-  // If files weren't written, extract from NDJSON output
-  if (!reviewBody) {
-    const ndjsonPath = path.join(outputDir, 'codex-output.json');
-    console.log(`[codex-review] NDJSON path: ${ndjsonPath}, exists: ${fs.existsSync(ndjsonPath)}`);
-    if (fs.existsSync(ndjsonPath)) {
-      const ndjsonContent = fs.readFileSync(ndjsonPath, 'utf8');
-      console.log(`[codex-review] NDJSON size: ${ndjsonContent.length} bytes, lines: ${ndjsonContent.split('\n').length}`);
-      const result = extractFromNdjson(ndjsonContent);
-      console.log(`[codex-review] NDJSON extraction: body=${!!result.reviewBody} (${result.reviewBody?.length || 0} chars), state=${!!result.reviewState}`);
-      if (result.reviewBody) reviewBody = result.reviewBody;
-      if (result.reviewState) reviewState = result.reviewState;
-    }
+  try {
+    const raw = fs.readFileSync(outputPath, 'utf8');
+    const output = JSON.parse(raw);
+
+    const reviewBody = output.review_markdown?.trim() || null;
+    const reviewState = output.state || null;
+
+    console.log(
+      `[codex-review] Parsed output: body=${!!reviewBody} (${reviewBody?.length || 0} chars), state=${!!reviewState}, issues=${reviewState?.open_issues?.length || 0}`
+    );
+
+    return { reviewBody, reviewState };
+  } catch (e) {
+    console.log(`[codex-review] Failed to parse output JSON: ${e.message}`);
+    return { reviewBody: null, reviewState: null };
   }
-
-  return { reviewBody, reviewState };
-}
-
-/**
- * Extract review markdown and state JSON from Codex NDJSON output.
- *
- * Scans all agent_message items for text containing the review header
- * ("## Codex Review"). Takes the last (most complete) match.
- * Extracts state JSON from <!-- codex-review:state-json --> markers
- * or from a standalone ```json block after the review.
- */
-function extractFromNdjson(ndjsonContent) {
-  let reviewBody = null;
-  let reviewState = null;
-
-  const lines = ndjsonContent.split('\n').filter(Boolean);
-
-  // Collect all agent message texts
-  const agentTexts = [];
-  for (const line of lines) {
-    try {
-      const event = JSON.parse(line);
-      // Direct agent messages
-      if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item?.text) {
-        agentTexts.push(event.item.text);
-      }
-      // Sub-agent messages (collab_tool_call results contain agent state messages)
-      if (event.type === 'item.completed' && event.item?.type === 'collab_tool_call' && event.item?.agents_states) {
-        for (const state of Object.values(event.item.agents_states)) {
-          if (state.message) agentTexts.push(state.message);
-        }
-      }
-    } catch {
-      // Skip non-JSON lines
-    }
-  }
-
-  // Find the best (longest) text containing the review header
-  let bestText = null;
-  for (const text of agentTexts) {
-    if (text.includes('## Codex Review') && text.includes('Verdict:')) {
-      if (!bestText || text.length > bestText.length) {
-        bestText = text;
-      }
-    }
-  }
-
-  if (!bestText) return { reviewBody: null, reviewState: null };
-
-  // Extract review body: from "## Codex Review" to the state marker or end
-  const reviewStart = bestText.indexOf('## Codex Review');
-  if (reviewStart === -1) return { reviewBody: null, reviewState: null };
-
-  // Check for state JSON marker
-  const stateMarker = '<!-- codex-review:state-json -->';
-  const stateMarkerEnd = '<!-- /codex-review:state-json -->';
-  const stateStart = bestText.indexOf(stateMarker, reviewStart);
-
-  if (stateStart !== -1) {
-    // Review body is everything from header to state marker
-    reviewBody = bestText.slice(reviewStart, stateStart).trim();
-
-    // State JSON is between the markers, inside a ```json block
-    const stateEnd = bestText.indexOf(stateMarkerEnd, stateStart);
-    const stateBlock = stateEnd !== -1
-      ? bestText.slice(stateStart + stateMarker.length, stateEnd)
-      : bestText.slice(stateStart + stateMarker.length);
-
-    const jsonMatch = stateBlock.match(/```json\s*\n([\s\S]*?)\n\s*```/);
-    if (jsonMatch) {
-      try {
-        reviewState = JSON.parse(jsonMatch[1].trim());
-      } catch (e) {
-        console.log(`Warning: Failed to parse state JSON from marker: ${e.message}`);
-      }
-    }
-  } else {
-    // No state marker — try to split on the last ```json block
-    const jsonBlockRegex = /```json\s*\n(\{[\s\S]*?"schema_version"[\s\S]*?\})\s*\n```/g;
-    let lastJsonMatch = null;
-    let match;
-    while ((match = jsonBlockRegex.exec(bestText)) !== null) {
-      lastJsonMatch = match;
-    }
-
-    if (lastJsonMatch) {
-      reviewBody = bestText.slice(reviewStart, lastJsonMatch.index).trim();
-      try {
-        reviewState = JSON.parse(lastJsonMatch[1].trim());
-      } catch (e) {
-        console.log(`Warning: Failed to parse state JSON from block: ${e.message}`);
-      }
-    } else {
-      reviewBody = bestText.slice(reviewStart).trim();
-    }
-  }
-
-  // Clean up: remove markdown code fence wrappers if the review was inside one
-  if (reviewBody.startsWith('```markdown')) {
-    reviewBody = reviewBody.replace(/^```markdown\s*\n/, '').replace(/\n```\s*$/, '');
-  }
-  if (reviewBody.startsWith('```')) {
-    reviewBody = reviewBody.replace(/^```\s*\n/, '').replace(/\n```\s*$/, '');
-  }
-
-  return { reviewBody, reviewState };
 }
 
 function extractVerdict(body) {
