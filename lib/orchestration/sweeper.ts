@@ -5,7 +5,8 @@
  * to prevent concurrent sweeps.
  *
  * Responsibilities:
- * - Timed-out jobs → failed_terminal + heal session
+ * - Runtime controller: reconcile sandbox lifecycle via claims + policies
+ * - Timed-out jobs → failed_terminal + heal session + destroy sandbox
  * - dispatch_unknown attempts → probe sandbox GET /status, reconcile
  * - Stuck postprocess_pending → retry
  * - Stale active sessions (no nonterminal job) → idle
@@ -38,6 +39,7 @@ export async function runSweep(): Promise<{
   staleSessionsHealed: number;
   staleLocksReleased: number;
   retriedJobs: number;
+  runtimeController: { expiredClaims: number; destroyedOrphans: number; destroyedTtlExceeded: number };
 }> {
   const log = useLogger();
 
@@ -56,10 +58,23 @@ export async function runSweep(): Promise<{
       staleSessionsHealed: 0,
       staleLocksReleased: 0,
       retriedJobs: 0,
+      runtimeController: { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0 },
     };
   }
 
   try {
+    // Runtime controller: reconcile sandbox lifecycle via claims + policies.
+    // Runs first so orphaned sandboxes are cleaned before job retries
+    // try to re-provision (avoids creating new sandboxes alongside leaked ones).
+    const { reconcileRuntimes } = await import("@/lib/compute/controller");
+    let runtimeController = { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0 };
+    try {
+      runtimeController = await reconcileRuntimes();
+    } catch (err) {
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { runtimeControllerError: true } });
+    }
+
     const timedOut = await sweepTimedOutJobs();
     const unknownReconciled = await sweepDispatchUnknown();
     const postprocessRetried = await sweepStuckPostprocess();
@@ -67,7 +82,7 @@ export async function runSweep(): Promise<{
     const staleLocksReleased = await sweepStaleReviewLocks();
     const retriedJobs = await sweepRetryableJobs();
 
-    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased } });
+    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, runtimeController } });
 
     return {
       timedOut,
@@ -76,6 +91,7 @@ export async function runSweep(): Promise<{
       staleSessionsHealed,
       staleLocksReleased,
       retriedJobs,
+      runtimeController,
     };
   } finally {
     // Release advisory lock
@@ -113,6 +129,14 @@ async function sweepTimedOutJobs(): Promise<number> {
           await casSessionStatus(job.sessionId, ["active"], "idle");
         } catch {
           // Best-effort
+        }
+
+        // Destroy sandbox — timed-out work means the sandbox is likely dead or stuck
+        try {
+          const { destroySandbox } = await import("./sandbox-lifecycle");
+          await destroySandbox(job.sessionId);
+        } catch {
+          // Best-effort — controller will catch it next cycle
         }
       }
     }
@@ -489,7 +513,7 @@ async function retryReviewDispatch(
  * Fails the check, marks the run, releases the lock, drains the pending queue.
  */
 async function finalizeFailedReviewJob(
-  job: { id: string; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
+  job: { id: string; sessionId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
 ): Promise<void> {
   const payload = job.payload;
   const automationSessionId = payload.automationSessionId as string;
@@ -498,6 +522,16 @@ async function finalizeFailedReviewJob(
   const installationId = payload.installationId as number;
   const owner = payload.owner as string;
   const repo = payload.repo as string;
+
+  // Destroy sandbox — review exhausted retries, no more work for this session
+  if (job.sessionId) {
+    try {
+      const { destroySandbox } = await import("./sandbox-lifecycle");
+      await destroySandbox(job.sessionId);
+    } catch {
+      // Best-effort — controller will catch it next cycle
+    }
+  }
 
   // Mark automation run as failed
   if (automationRunId) {

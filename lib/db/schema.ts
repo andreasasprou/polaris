@@ -8,3 +8,4 @@ export * from "@/lib/sandbox/snapshots/schema";
 export * from "@/lib/sandbox-env/schema";
 export * from "@/lib/jobs/schema";
 export * from "@/lib/key-pools/schema";
+export * from "@/lib/compute/schema";

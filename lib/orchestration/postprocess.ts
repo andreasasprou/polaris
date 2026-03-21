@@ -457,7 +457,19 @@ async function postprocessReview(job: JobRow): Promise<void> {
       await markSideEffect(job.id, "run_updated");
     }
   } finally {
-    // 7. Release lock + dispatch queued review (always runs)
+    // 7. Destroy sandbox — review postprocess doesn't need the VM
+    // (all data is already persisted platform-side via callbacks).
+    if (job.sessionId && !sideEffects.sandbox_destroyed) {
+      try {
+        const { destroySandbox } = await import("./sandbox-lifecycle");
+        await destroySandbox(job.sessionId);
+        await markSideEffect(job.id, "sandbox_destroyed");
+      } catch {
+        // Best-effort — runtime controller will catch it next cycle
+      }
+    }
+
+    // 8. Release lock + dispatch queued review (always runs)
     if (automationSessionId) {
       const { finalizeReviewRun } = await import(
         "./review-lifecycle"
