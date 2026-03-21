@@ -309,6 +309,15 @@ export async function dispatchPrReview(
       throw new Error(`Job already exists for review request review-${automationRunId}`);
     }
 
+    // Create compute claim — declares this review job needs the sandbox.
+    const { createClaim } = await import("@/lib/compute/claims");
+    await createClaim({
+      sessionId: targetSessionId,
+      claimant: job.id,
+      reason: "job_active",
+      ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
+    });
+
     // Resolve agent config
     const agentType = (automation.agentType ?? "claude") as AgentType;
     const resolved = resolveAgentConfig({

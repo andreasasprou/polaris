@@ -181,6 +181,14 @@ async function processCallback(input: {
         });
       }
 
+      // Release compute claim — job is done, sandbox no longer needed for execution.
+      // Post-processing for reviews doesn't need the sandbox (reads from DB).
+      // Coding tasks manage sandbox lifecycle separately (no session).
+      if (completedJobRow?.sessionId) {
+        const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+        await releaseClaimsByClaimant(completedJobRow.sessionId, jobId).catch(() => {});
+      }
+
       // Trigger post-processing (coding task PR creation, review comment, etc.)
       const { runPostProcessing } = await import("./postprocess");
       await runPostProcessing(jobId);
@@ -252,6 +260,10 @@ async function processCallback(input: {
         await casSessionStatus(job.sessionId, ["active"], "idle", {
           ...pickSessionIdentifiers(payload),
         });
+
+        // Release compute claim — job failed, sandbox no longer needed.
+        const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+        await releaseClaimsByClaimant(job.sessionId, jobId).catch(() => {});
       }
 
       break;

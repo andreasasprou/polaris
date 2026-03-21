@@ -131,6 +131,14 @@ async function sweepTimedOutJobs(): Promise<number> {
           // Best-effort
         }
 
+        // Release compute claim — job timed out, no more work
+        try {
+          const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+          await releaseClaimsByClaimant(job.sessionId, job.id);
+        } catch {
+          // Best-effort
+        }
+
         // Destroy sandbox — timed-out work means the sandbox is likely dead or stuck
         try {
           const { destroySandbox } = await import("./sandbox-lifecycle");
@@ -305,13 +313,16 @@ async function sweepRetryableJobs(): Promise<number> {
         });
         log.set({ sweep: { exhaustedRetries: job.id, attempts: attempts.length, maxAttempts: job.maxAttempts } });
 
-        // Heal session
+        // Heal session + release claim
         if (job.sessionId) {
           const { casSessionStatus } = await import("@/lib/sessions/actions");
           await casSessionStatus(job.sessionId, ["active"], "idle").catch(() => {});
+
+          const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+          await releaseClaimsByClaimant(job.sessionId, job.id).catch(() => {});
         }
 
-        // Review-specific cleanup: fail check, release lock, drain queue
+        // Review-specific cleanup: fail check, release lock, drain queue, destroy sandbox
         if (job.type === "review") {
           await finalizeFailedReviewJob(job);
         }

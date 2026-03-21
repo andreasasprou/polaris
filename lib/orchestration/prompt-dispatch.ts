@@ -146,6 +146,16 @@ export async function dispatchPromptToSession(input: {
     throw new RequestError(`Job already exists for request ${requestId}`, 409);
   }
 
+  // Create compute claim — declares this job needs the sandbox.
+  // The runtime controller will destroy the sandbox when the claim expires or is released.
+  const { createClaim } = await import("@/lib/compute/claims");
+  await createClaim({
+    sessionId,
+    claimant: job.id,
+    reason: "job_active",
+    ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
+  });
+
   const attempt = await createJobAttempt({
     jobId: job.id,
     attemptNumber: 1,
