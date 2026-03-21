@@ -122,16 +122,19 @@ jobs:
             const fs = require('fs');
             fs.writeFileSync('/tmp/pr-body.txt', pr.body || '(no description)');
 
-            // Parse /codex-review command options
+            // Parse /codex-review command options (inline — runs before checkout)
             let forceFullReview = false;
             let resetState = false;
             let sinceSha = '';
             if (context.eventName === 'issue_comment') {
-              const { parseCommand } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/codex-review/index.cjs`);
-              const opts = parseCommand(context.payload.comment?.body || '');
-              forceFullReview = opts.forceFullReview;
-              resetState = opts.resetState;
-              sinceSha = opts.sinceSha;
+              const tokens = (context.payload.comment?.body || '').trim().split(/\s+/).slice(1);
+              for (let i = 0; i < tokens.length; i++) {
+                const t = tokens[i];
+                if (['full', '--full', 'all', '--all'].includes(t)) forceFullReview = true;
+                else if (['reset', '--reset'].includes(t)) resetState = true;
+                else if (t === '--since' && /^[0-9a-f]{7,40}$/i.test(tokens[i+1] || '')) sinceSha = tokens[++i];
+                else { const m = t.match(/^--since=([0-9a-f]{7,40})$/i); if (m) sinceSha = m[1]; }
+              }
             }
             core.setOutput('force_full_review', String(forceFullReview));
             core.setOutput('reset_state', String(resetState));
