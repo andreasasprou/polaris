@@ -148,6 +148,13 @@ export async function getMaxEventIndex(sessionId: string): Promise<number | null
   return val != null ? Number(val) : null;
 }
 
+/** Compute the next event index for a session (MAX + 1, or 0 if no events). */
+export async function getNextEventIndex(sdkSessionId: string | null | undefined): Promise<number> {
+  if (!sdkSessionId) return 0;
+  const max = await getMaxEventIndex(sdkSessionId);
+  return max != null ? max + 1 : 0;
+}
+
 export async function getSessionRecord(sessionId: string) {
   const tableCheck = await pool.query(
     `SELECT EXISTS (

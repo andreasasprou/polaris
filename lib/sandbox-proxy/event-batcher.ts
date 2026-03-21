@@ -89,8 +89,9 @@ export class SessionEventBatcher {
    * flush attempt. Serializes flushes so finalize() can await in-flight work.
    */
   private async doFlush(): Promise<void> {
-    // Wait for any in-flight flush to finish before starting a new one
-    if (this.inflightFlush) await this.inflightFlush;
+    // Wait for any in-flight flush to finish before starting a new one.
+    // Catch to prevent old rejections from propagating into new flushes.
+    if (this.inflightFlush) await this.inflightFlush.catch(() => {});
     if (this.buffer.length === 0) return;
 
     const batch = this.buffer.slice(); // snapshot, don't clear yet
@@ -103,7 +104,9 @@ export class SessionEventBatcher {
       },
       // Failure — leave buffer intact for retry on next flush cycle
     );
-    this.inflightFlush = promise.then(() => { this.inflightFlush = null; });
+    // Track in-flight work so finalize() can await it. Swallow rejections
+    // so they don't cascade into subsequent doFlush() calls.
+    this.inflightFlush = promise.catch(() => {}).finally(() => { this.inflightFlush = null; });
     await promise;
   }
 

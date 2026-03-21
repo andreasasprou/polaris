@@ -19,7 +19,7 @@ import {
   createTurn,
 } from "@/lib/sessions/actions";
 import { ensureSandboxReady } from "./sandbox-lifecycle";
-import { getMaxEventIndex } from "@/lib/sandbox-agent/queries";
+import { getNextEventIndex } from "@/lib/sandbox-agent/queries";
 import { useLogger } from "@/lib/evlog";
 import { createStepTimer } from "@/lib/metrics/step-timer";
 
@@ -180,8 +180,7 @@ export async function dispatchPromptToSession(input: {
     const proxyUrl = sandboxBaseUrl;
 
     // Compute next event index for resumed sessions so event indexes stay monotonic
-    const maxIdx = session.sdkSessionId ? await getMaxEventIndex(session.sdkSessionId) : null;
-    const nextEventIndex = maxIdx != null ? maxIdx + 1 : 0;
+    const nextEventIndex = await getNextEventIndex(session.sdkSessionId);
 
     log.set({ dispatch: { jobId: job.id, attemptId: attempt.id, epoch } });
 

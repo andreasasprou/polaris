@@ -484,9 +484,8 @@ async function retryReviewDispatch(
     const prompt = payload.prompt as string;
 
     // Compute next event index for monotonic indexes on resume
-    const { getMaxEventIndex } = await import("@/lib/sandbox-agent/queries");
-    const maxIdx = session.sdkSessionId ? await getMaxEventIndex(session.sdkSessionId) : null;
-    const nextEventIndex = maxIdx != null ? maxIdx + 1 : 0;
+    const { getNextEventIndex } = await import("@/lib/sandbox-agent/queries");
+    const nextEventIndex = await getNextEventIndex(session.sdkSessionId);
 
     log.set({ sweep: { retrying: job.id, attemptNumber, sandboxUrl } });
 

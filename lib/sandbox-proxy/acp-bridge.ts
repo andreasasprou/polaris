@@ -36,6 +36,12 @@ type PromptResult = {
 
 type EventCallback = (event: AgentEvent) => void;
 
+/** Resolve the SDK session ID from an AgentSession. For native resume, uses
+ *  the original SDK session ID; for SDK sessions, uses the session's own ID. */
+export function resolveSdkSessionId(session: AgentSession): string {
+  return (session as NativeResumedSession).originalSdkSessionId ?? session.id;
+}
+
 /**
  * NativeResumedSession — adapter that makes a direct AcpHttpClient session
  * look like an SDK Session. Ported from SandboxAgentClient.ts.
@@ -385,7 +391,7 @@ export class AcpBridge {
 
       // For native resume, session.id is the native CLI session ID, not the SDK
       // session ID used for event persistence. Use originalSdkSessionId if available.
-      const sdkId = (session as NativeResumedSession).originalSdkSessionId ?? session.id;
+      const sdkId = resolveSdkSessionId(session);
 
       return {
         success: true,
@@ -395,7 +401,7 @@ export class AcpBridge {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const sdkId = (session as NativeResumedSession).originalSdkSessionId ?? session.id;
+      const sdkId = resolveSdkSessionId(session);
       return {
         success: false,
         error: message,

@@ -569,7 +569,6 @@ function formatLatencySection(result: Record<string, unknown>): string | null {
   const extras: string[] = [];
   if (eventCount != null) extras.push(`${eventCount} events`);
   if (resumeType) extras.push(`resume: ${resumeType}`);
-  const extraLine = extras.length > 0 ? `\n\n${extras.join(" · ")}` : "";
 
   return [
     `<details>`,
@@ -578,7 +577,7 @@ function formatLatencySection(result: Record<string, unknown>): string | null {
     `| Step | Duration |`,
     `|------|----------|`,
     ...lines,
-    extraLine,
+    ...(extras.length > 0 ? [``, extras.join(" · ")] : []),
     `</details>`,
   ].join("\n");
 }

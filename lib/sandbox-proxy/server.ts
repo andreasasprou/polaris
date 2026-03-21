@@ -17,7 +17,7 @@ import type {
   ProxyMetrics,
   CallbackDeliveryMetric,
 } from "./types";
-import { AcpBridge } from "./acp-bridge";
+import { AcpBridge, resolveSdkSessionId } from "./acp-bridge";
 import { AgentMonitor } from "./agent-monitor";
 import { SessionEventBatcher, reconstructOutput } from "./event-batcher";
 import { emitCallback, replayPendingCallbacks } from "./callback-delivery";
@@ -279,7 +279,7 @@ export class ProxyServer {
       // Resolve session IDs now (after createOrResumeSession) so they're
       // available for prompt_accepted and the event batcher.
       const currentSession = this.bridge.getSession();
-      const sdkSessionId = (currentSession as { originalSdkSessionId?: string }).originalSdkSessionId ?? currentSession.id;
+      const sdkSessionId = resolveSdkSessionId(currentSession);
 
       // Emit prompt_accepted callback — includes sdkSessionId so the platform
       // can persist it immediately, making events queryable from the first turn.

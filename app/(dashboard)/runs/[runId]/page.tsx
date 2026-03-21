@@ -53,10 +53,13 @@ export default function RunDetailPage() {
   const isTerminal = run ? TERMINAL_RUN_STATUSES.has(run.status) : false;
   const lastJsonRef = useRef<string>("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
 
   const fetchRun = useCallback(async () => {
     try {
-      const r = await fetch(`/api/runs/${runId}`);
+      const r = await fetch(`/api/runs/${runId}`, {
+        signal: controllerRef.current?.signal,
+      });
       const data = await r.json();
       const json = JSON.stringify(data.run);
       if (json !== lastJsonRef.current) {
@@ -70,7 +73,7 @@ export default function RunDetailPage() {
         }
       }
     } catch {
-      // Network error — leave current state
+      // Aborted or network error — leave current state
     } finally {
       setLoading(false);
     }
@@ -79,12 +82,15 @@ export default function RunDetailPage() {
   // TODO: Replace with useQuery/useMountEffect once a data-fetching primitive
   // is adopted (see CLAUDE.md no-useEffect rule). Same pattern as session page.
   useEffect(() => {
+    controllerRef.current = new AbortController();
     lastJsonRef.current = "";
     setLoading(true);
     setRun(null);
     fetchRun();
     timerRef.current = setInterval(fetchRun, 3000);
     return () => {
+      controllerRef.current?.abort();
+      controllerRef.current = null;
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
