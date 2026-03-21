@@ -73,7 +73,7 @@ Review **the changes in scope** for issues that materially risk correctness, arc
 
 ## Output Format
 
-Write your review to `/tmp/codex-review.md` with this exact structure:
+Output your review as your **final text response** using this exact structure (do NOT attempt to write files — just output the text directly):
 
 ```markdown
 ## Codex Review #${REVIEW_NUMBER} — Verdict: [BLOCK | ATTENTION | OK]
@@ -120,7 +120,14 @@ For each issue, include:
 
 ## State Output
 
-Also write `/tmp/codex-review-state.json` as **valid JSON only** (no markdown, no wrapping):
+After the review markdown above, output a JSON state block on a new line starting with exactly `<!-- codex-review:state-json -->` followed by a fenced code block. This will be extracted automatically:
+
+```
+<!-- codex-review:state-json -->
+```json
+```
+
+The JSON must match this schema:
 
 ```json
 {
@@ -148,6 +155,8 @@ Also write `/tmp/codex-review-state.json` as **valid JSON only** (no markdown, n
     }
   ]
 }
+```
+<!-- /codex-review:state-json -->
 ```
 
 State rules:

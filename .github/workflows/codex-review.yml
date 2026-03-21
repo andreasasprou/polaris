@@ -442,13 +442,12 @@ jobs:
           INPUT=$(echo "$USAGE" | jq -r '.usage.input_tokens // 0')
           OUTPUT=$(echo "$USAGE" | jq -r '.usage.output_tokens // 0')
 
-          if [ "$EXIT_CODE" -eq 0 ] && [ -s /tmp/codex-review.md ]; then
+          if [ "$EXIT_CODE" -eq 0 ]; then
             echo "review_generated=true" >> "$GITHUB_OUTPUT"
-            echo "Review generated in ${DURATION}s (input=${INPUT}, output=${OUTPUT} tokens)"
-            cat /tmp/codex-review.md
+            echo "Review completed in ${DURATION}s (input=${INPUT}, output=${OUTPUT} tokens)"
           else
             echo "review_generated=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Codex exited with code $EXIT_CODE or produced no output"
+            echo "::warning::Codex exited with code $EXIT_CODE"
           fi
 
           echo "duration=$DURATION" >> "$GITHUB_OUTPUT"
