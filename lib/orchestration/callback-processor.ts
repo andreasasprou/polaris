@@ -124,6 +124,18 @@ async function processCallback(input: {
       });
       await casJobStatus(jobId, ["pending"], "accepted");
       await appendJobEvent(jobId, "accepted", attemptId);
+
+      // Persist sdkSessionId early so events are queryable from the first turn
+      // (before prompt_complete). This is the first trusted callback after
+      // session creation — the proxy includes the session IDs.
+      const acceptedJob = await getJob(jobId);
+      if (acceptedJob?.sessionId) {
+        const ids = pickSessionIdentifiers(payload);
+        if (ids.sdkSessionId) {
+          const { updateInteractiveSession } = await import("@/lib/sessions/actions");
+          await updateInteractiveSession(acceptedJob.sessionId, ids);
+        }
+      }
       break;
     }
 
@@ -277,6 +289,31 @@ async function processCallback(input: {
     case "session_events": {
       // Incremental event persistence — the proxy flushes batches during execution
       // so the chat UI can show live progress via DB polling.
+      //
+      // SECURITY: The sessionId is derived from the job's linked interactive session,
+      // NOT from the callback payload. This prevents a compromised sandbox from
+      // injecting events into another session.
+      const job = await getJob(jobId);
+      if (!job?.sessionId) break;
+
+      const { getInteractiveSession } = await import("@/lib/sessions/actions");
+      const session = await getInteractiveSession(job.sessionId);
+      const authorizedSessionId = session?.sdkSessionId;
+      if (!authorizedSessionId) {
+        // sdkSessionId not yet set — persist it from the first trusted batch.
+        // This makes events queryable during the first turn (before prompt_complete).
+        const firstEventSessionId = typeof payload.sessionId === "string" ? payload.sessionId : null;
+        if (firstEventSessionId && session) {
+          const { updateInteractiveSession } = await import("@/lib/sessions/actions");
+          await updateInteractiveSession(job.sessionId, { sdkSessionId: firstEventSessionId });
+        }
+      }
+
+      // Use the platform-derived sessionId, falling back to the first-batch value
+      const trustedSessionId = authorizedSessionId
+        ?? (typeof payload.sessionId === "string" ? payload.sessionId : null);
+      if (!trustedSessionId) break;
+
       const events = Array.isArray(payload.events) ? payload.events as Array<Record<string, unknown>> : [];
       if (events.length > 0) {
         const { persistSessionEvents } = await import("@/lib/sandbox-agent/queries");
@@ -284,7 +321,7 @@ async function processCallback(input: {
           events.map((e) => ({
             id: typeof e.id === "string" ? e.id : `fallback-${Math.random().toString(36).slice(2)}`,
             eventIndex: typeof e.eventIndex === "number" ? e.eventIndex : 0,
-            sessionId: typeof e.sessionId === "string" ? e.sessionId : (typeof payload.sessionId === "string" ? payload.sessionId : ""),
+            sessionId: trustedSessionId, // platform-derived, not from payload events
             createdAt: typeof e.createdAt === "number" ? e.createdAt : Date.now(),
             connectionId: typeof e.connectionId === "string" ? e.connectionId : "platform",
             sender: typeof e.sender === "string" ? e.sender : "agent",

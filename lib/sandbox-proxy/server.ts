@@ -276,13 +276,24 @@ export class ProxyServer {
       sessionCreateMs = Date.now() - sessionStart;
       proxyLog.info("session_ready", { sessionCreateMs, resumeType: this.bridge.lastResumeType });
 
-      // Emit prompt_accepted callback
+      // Resolve session IDs now (after createOrResumeSession) so they're
+      // available for prompt_accepted and the event batcher.
+      const currentSession = this.bridge.getSession();
+      const sdkSessionId = (currentSession as { originalSdkSessionId?: string }).originalSdkSessionId ?? currentSession.id;
+
+      // Emit prompt_accepted callback — includes sdkSessionId so the platform
+      // can persist it immediately, making events queryable from the first turn.
       const acceptedEntry = await emitCallback({
         jobId,
         attemptId,
         epoch,
         callbackType: "prompt_accepted",
-        payload: { startedAt: new Date().toISOString(), requestId },
+        payload: {
+          startedAt: new Date().toISOString(),
+          requestId,
+          sdkSessionId,
+          nativeAgentSessionId: currentSession.agentSessionId,
+        },
         callbackUrl,
         hmacKey,
       });
@@ -295,8 +306,6 @@ export class ProxyServer {
       // Session event batcher: assigns driver-compatible metadata to events
       // and flushes incremental batches via session_events callbacks for
       // platform-side persistence. No DATABASE_URL needed in sandbox.
-      const session = this.bridge.getSession();
-      const sdkSessionId = (session as { originalSdkSessionId?: string }).originalSdkSessionId ?? session.id;
       const batcher = new SessionEventBatcher(
         sdkSessionId,
         attemptId,
@@ -320,7 +329,7 @@ export class ProxyServer {
       // Execute prompt
       const execStart = Date.now();
       const result = await this.bridge.executePrompt(
-        session,
+        currentSession,
         prompt,
         {
           onEvent,
