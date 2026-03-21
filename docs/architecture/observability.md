@@ -76,6 +76,22 @@
 | **Callback delivery** | **Partial** | Delivery metrics in callback payloads | File-based outbox lost if VM dies before delivery |
 | Resource usage | **No** | — | CPU, memory, disk of sandbox unmeasured |
 
+## Sweeper Cron
+
+The sweeper runs every 2 minutes via Vercel Cron, configured in `vercel.ts`:
+
+```typescript
+// vercel.ts
+crons: [{ path: "/api/cron/sweeper", schedule: "*/2 * * * *" }]
+```
+
+Each cycle runs (in order):
+1. **Runtime controller** — expire overdue claims, destroy/hibernate orphaned sandboxes, enforce hard TTLs
+2. **Provider janitor** — list Vercel sandboxes, stop any without a DB runtime record
+3. **Job sweeps** — timeout, dispatch_unknown reconciliation, postprocess retry, stale session healing, stale lock release, retryable job processing
+
+The route at `app/api/cron/sweeper/route.ts` is protected by `CRON_SECRET` in production.
+
 ## Instrumentation Standards
 
 ### Wide Event Field Naming
