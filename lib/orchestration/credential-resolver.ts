@@ -11,6 +11,8 @@ export type ResolvedCredentials = {
   agentApiKey: string;
   provider: string;
   resolvedSecretId: string;
+  /** DB ID for creating interactive sessions. */
+  repositoryId: string;
   repositoryOwner: string;
   repositoryName: string;
   defaultBranch: string;
@@ -85,6 +87,7 @@ export async function resolveCredentials(
     agentApiKey,
     provider,
     resolvedSecretId,
+    repositoryId: automation.repositoryId!,
     repositoryOwner: repo.owner,
     repositoryName: repo.name,
     defaultBranch: repo.defaultBranch,

@@ -35,10 +35,17 @@ type OrphanedRuntime = {
  *
  * Returns counts of actions taken for observability.
  */
+export type SandboxGauge = {
+  liveRuntimes: number;
+  maxAgeMs: number;
+  over1h: number;
+};
+
 export async function reconcileRuntimes(): Promise<{
   expiredClaims: number;
   destroyedOrphans: number;
   destroyedTtlExceeded: number;
+  gauge: SandboxGauge;
 }> {
   const log = useLogger();
 
@@ -100,7 +107,11 @@ export async function reconcileRuntimes(): Promise<{
     }
   }
 
-  return { expiredClaims, destroyedOrphans, destroyedTtlExceeded };
+  // Step 4: Emit gauge metrics for observability/alerting
+  const gauge = await buildGauge();
+  log.set({ sandbox_gauge: gauge });
+
+  return { expiredClaims, destroyedOrphans, destroyedTtlExceeded, gauge };
 }
 
 /**
@@ -224,6 +235,36 @@ async function destroyRuntime(runtime: {
   } catch {
     return false;
   }
+}
+
+/**
+ * Build a gauge snapshot of current runtime state.
+ * Emitted every sweep cycle for Axiom alerting.
+ *
+ * Recommended Axiom monitors:
+ * - sandbox_gauge.over1h > 0 sustained 10min → Warning (long-running sandbox)
+ * - sandbox_gauge.liveRuntimes > 20 sustained 10min → Warning (high count)
+ * - sandbox_gauge.maxAgeMs > 28800000 → Critical (sandbox exceeded 8h)
+ */
+async function buildGauge(): Promise<SandboxGauge> {
+  const rows = await db.execute(sql`
+    SELECT
+      COUNT(*) FILTER (WHERE status IN ('creating', 'running', 'idle')) AS live,
+      COALESCE(MAX(EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000)
+        FILTER (WHERE status IN ('creating', 'running', 'idle')), 0) AS max_age_ms,
+      COUNT(*) FILTER (
+        WHERE status IN ('creating', 'running', 'idle')
+        AND EXTRACT(EPOCH FROM (NOW() - created_at)) > 3600
+      ) AS over_1h
+    FROM interactive_session_runtimes
+    WHERE sandbox_id IS NOT NULL
+  `);
+  const row = rows.rows[0] as Record<string, string | null>;
+  return {
+    liveRuntimes: Number(row.live ?? 0),
+    maxAgeMs: Number(row.max_age_ms ?? 0),
+    over1h: Number(row.over_1h ?? 0),
+  };
 }
 
 function getPolicy(policyName: string | null): (typeof RUNTIME_POLICIES)[RuntimePolicyName] {

@@ -92,7 +92,12 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   const agentType = payload.agentType as string | undefined ?? "agent";
   const allowPush = payload.allowPush !== false;
   const allowPrCreate = payload.allowPrCreate !== false;
-  const sandboxId = payload.sandboxId as string | undefined;
+  // Resolve sandboxId: prefer session-based lookup, fall back to legacy payload
+  const { getInteractiveSession } = await import("@/lib/sessions/actions");
+  const sessionRecord = job.sessionId
+    ? await getInteractiveSession(job.sessionId)
+    : null;
+  const sandboxId = sessionRecord?.sandboxId ?? (payload.sandboxId as string | undefined);
 
   if (!sandboxId || !branchName || !baseSha || !owner || !repo) {
     const log = useLogger();
@@ -250,8 +255,19 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
       await markSideEffect(job.id, "run_updated");
     }
   } finally {
-    // Destroy sandbox
-    if (!sideEffects.sandbox_destroyed) {
+    // Destroy sandbox + release claim
+    if (job.sessionId && !sideEffects.sandbox_destroyed) {
+      try {
+        const { destroySandbox } = await import("./sandbox-lifecycle");
+        await destroySandbox(job.sessionId);
+        await markSideEffect(job.id, "sandbox_destroyed");
+      } catch {
+        // Best-effort — runtime controller will catch it next cycle
+      }
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(job.sessionId, job.id).catch(() => {});
+    } else if (!job.sessionId && !sideEffects.sandbox_destroyed) {
+      // Legacy path: jobs created before session migration
       try {
         await sandbox.stop();
         await markSideEffect(job.id, "sandbox_destroyed");

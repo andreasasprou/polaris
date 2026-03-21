@@ -39,7 +39,8 @@ export async function runSweep(): Promise<{
   staleSessionsHealed: number;
   staleLocksReleased: number;
   retriedJobs: number;
-  runtimeController: { expiredClaims: number; destroyedOrphans: number; destroyedTtlExceeded: number };
+  runtimeController: { expiredClaims: number; destroyedOrphans: number; destroyedTtlExceeded: number; gauge: { liveRuntimes: number; maxAgeMs: number; over1h: number } };
+  providerJanitor: { vercelRunning: number; unknownStopped: number; withinGrace: number; errors: number };
 }> {
   const log = useLogger();
 
@@ -48,6 +49,9 @@ export async function runSweep(): Promise<{
     sql`SELECT pg_try_advisory_lock(${SWEEPER_LOCK_ID}) AS acquired`,
   );
   const lockResult = lockRows.rows?.[0] as { acquired: boolean } | undefined;
+
+  const emptyGauge = { liveRuntimes: 0, maxAgeMs: 0, over1h: 0 };
+  const emptyJanitor = { vercelRunning: 0, unknownStopped: 0, withinGrace: 0, errors: 0 };
 
   if (!lockResult?.acquired) {
     log.set({ sweep: { skipped: true, reason: "lock_held" } });
@@ -58,7 +62,8 @@ export async function runSweep(): Promise<{
       staleSessionsHealed: 0,
       staleLocksReleased: 0,
       retriedJobs: 0,
-      runtimeController: { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0 },
+      runtimeController: { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge },
+      providerJanitor: emptyJanitor,
     };
   }
 
@@ -67,12 +72,23 @@ export async function runSweep(): Promise<{
     // Runs first so orphaned sandboxes are cleaned before job retries
     // try to re-provision (avoids creating new sandboxes alongside leaked ones).
     const { reconcileRuntimes } = await import("@/lib/compute/controller");
-    let runtimeController = { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0 };
+    let runtimeController: { expiredClaims: number; destroyedOrphans: number; destroyedTtlExceeded: number; gauge: typeof emptyGauge } = { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge };
     try {
       runtimeController = await reconcileRuntimes();
     } catch (err) {
       log.error(err instanceof Error ? err : new Error(String(err)));
       log.set({ sweep: { runtimeControllerError: true } });
+    }
+
+    // Provider janitor: compare Vercel's actual running sandboxes against DB.
+    // Catches sandboxes created in Vercel but never recorded in our runtime table.
+    let providerJanitor = emptyJanitor;
+    try {
+      const { reconcileProvider } = await import("@/lib/compute/provider-janitor");
+      providerJanitor = await reconcileProvider();
+    } catch (err) {
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { providerJanitorError: true } });
     }
 
     const timedOut = await sweepTimedOutJobs();
@@ -82,7 +98,7 @@ export async function runSweep(): Promise<{
     const staleLocksReleased = await sweepStaleReviewLocks();
     const retriedJobs = await sweepRetryableJobs();
 
-    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, runtimeController } });
+    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, runtimeController, providerJanitor } });
 
     return {
       timedOut,
@@ -92,6 +108,7 @@ export async function runSweep(): Promise<{
       staleLocksReleased,
       retriedJobs,
       runtimeController,
+      providerJanitor,
     };
   } finally {
     // Release advisory lock
