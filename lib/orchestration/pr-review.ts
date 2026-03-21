@@ -114,6 +114,7 @@ export async function dispatchPrReview(
   // `handedOff` tracks whether we successfully handed execution to the callback path
   // (sandbox accepted the prompt) or the sweeper (dispatch_unknown timeout).
   let handedOff = false;
+  let createdJobId: string | undefined;
   let targetSessionId = automationSession.interactiveSessionId;
 
   try {
@@ -308,6 +309,7 @@ export async function dispatchPrReview(
     if (!job) {
       throw new Error(`Job already exists for review request review-${automationRunId}`);
     }
+    createdJobId = job.id;
 
     // Create compute claim — declares this review job needs the sandbox.
     const { createClaim } = await import("@/lib/compute/claims");
@@ -466,6 +468,16 @@ export async function dispatchPrReview(
     log.set({ dispatch: { exhaustedAttempts: true, deferredToSweeper: true } });
     return { jobId: job.id, retryDeferred: true };
   } catch (err) {
+    // Rollback: terminalize orphaned job + release claim so the shared
+    // session isn't left with a dangling pending job that blocks future
+    // reviews and causes sweepTimedOutJobs to destroy the sandbox.
+    if (createdJobId) {
+      const { casJobStatus: casJ } = await import("@/lib/jobs/actions");
+      await casJ(createdJobId, ["pending"], "failed_terminal").catch(() => {});
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(targetSessionId, createdJobId).catch(() => {});
+    }
+
     // Mark run as failed (best-effort)
     await updateAutomationRun(automationRunId, {
       status: "failed",

@@ -74,6 +74,7 @@ export async function dispatchCodingTask(
 
   log.set({ codingTask: { sandboxId: result.sandboxId } });
 
+  let createdJobId: string | undefined;
   try {
     // Create branch — ensureSandboxReady handles bootstrap but not branch creation
     const { Sandbox } = await import("@vercel/sandbox");
@@ -124,6 +125,7 @@ export async function dispatchCodingTask(
     if (!job) {
       throw new Error("Failed to create job (idempotent conflict)");
     }
+    createdJobId = job.id;
 
     // Create compute claim — the controller will destroy the sandbox
     // when this claim expires or is released.
@@ -179,9 +181,13 @@ export async function dispatchCodingTask(
     log.error(error instanceof Error ? error : new Error(String(error)));
     log.set({ codingTask: { failed: true, sandboxId: result.sandboxId } });
 
-    // Centralized rollback: release claims, destroy sandbox, fail session
-    const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
-    await releaseClaimsByClaimant(session.id, "dispatch").catch(() => {});
+    // Centralized rollback: terminalize orphaned job, release claims, destroy sandbox, fail session
+    if (createdJobId) {
+      const { casJobStatus } = await import("@/lib/jobs/actions");
+      await casJobStatus(createdJobId, ["pending"], "failed_terminal").catch(() => {});
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(session.id, createdJobId).catch(() => {});
+    }
 
     const { destroySandbox } = await import("./sandbox-lifecycle");
     await destroySandbox(session.id).catch(() => {});

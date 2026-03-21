@@ -310,25 +310,18 @@ async function processCallback(input: {
       // Incremental event persistence — the proxy flushes batches during execution
       // so the chat UI can show live progress via DB polling.
       //
-      // SECURITY: Derive the trusted sessionId from the platform DB, not the
-      // callback payload. A compromised sandbox can't inject events into another
-      // session because we only write to the session ID we already know about.
+      // SECURITY: The trustedSessionId comes ONLY from the platform DB's
+      // sdkSessionId field, which is set exclusively by the prompt_accepted
+      // callback. We NEVER hydrate sdkSessionId from session_events payloads —
+      // the sandbox is untrusted and could forge payload.sessionId to inject
+      // events into another session's stream. Events arriving before
+      // prompt_accepted are dropped; the proxy will re-send them.
       if (!callerJob.sessionId) break;
 
-      const { getInteractiveSession, updateInteractiveSession } = await import("@/lib/sessions/actions");
+      const { getInteractiveSession } = await import("@/lib/sessions/actions");
       const session = await getInteractiveSession(callerJob.sessionId);
-      let trustedSessionId = session?.sdkSessionId ?? null;
-
-      // If sdkSessionId isn't set yet (prompt_accepted hasn't arrived — race),
-      // persist it now from the payload so these events aren't lost.
-      if (!trustedSessionId && session) {
-        const payloadSid = typeof payload.sessionId === "string" ? payload.sessionId : null;
-        if (payloadSid) {
-          await updateInteractiveSession(callerJob.sessionId, { sdkSessionId: payloadSid });
-          trustedSessionId = payloadSid;
-        }
-      }
-      if (!trustedSessionId) break;
+      const trustedSessionId = session?.sdkSessionId ?? null;
+      if (!trustedSessionId) break; // prompt_accepted hasn't arrived yet — drop
 
       const events = Array.isArray(payload.events) ? payload.events as Array<Record<string, unknown>> : [];
       if (events.length > 0) {

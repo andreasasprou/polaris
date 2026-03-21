@@ -237,7 +237,11 @@ export async function dispatchPromptToSession(input: {
       return { jobId };
     }
 
-    // Rollback: release claim + heal session back to idle
+    // Rollback: terminalize orphaned job + release claim + heal session
+    if (jobId) {
+      const { casJobStatus } = await import("@/lib/jobs/actions");
+      await casJobStatus(jobId, ["pending"], "failed_terminal").catch(() => {});
+    }
     if (claimCreated && jobId) {
       const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
       await releaseClaimsByClaimant(sessionId, jobId).catch(() => {});
