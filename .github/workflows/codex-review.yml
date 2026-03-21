@@ -12,10 +12,12 @@
 # Setup:
 #   1. Copy .github/workflows/codex-review.yml and
 #      .github/scripts/codex-review/ to your repo
-#   2. Set the CODEX_AUTH_JSON_B64 secret:
+#   2. Authenticate Codex and set the secret:
 #      codex login
 #      gh secret set CODEX_AUTH_JSON_B64 \
 #        --body "$(cat ~/.codex/auth.json | base64 | tr -d '\n')"
+#      See https://developers.openai.com/codex/auth#credential-storage
+#      for where auth.json is stored on your platform.
 #   3. Customize paths and model below
 #
 # Security: Uses pull_request_target for secret access.
@@ -415,6 +417,17 @@ jobs:
             });
 
             fs.writeFileSync('/tmp/review-prompt.md', prompt);
+
+            // Copy output schema to /tmp so it's available regardless of checkout branch
+            const schemaPath = './.github/scripts/codex-review/output-schema.json';
+            if (fs.existsSync(schemaPath)) {
+              fs.copyFileSync(schemaPath, '/tmp/output-schema.json');
+            } else {
+              // Fallback: write schema inline if not on checkout branch
+              const schema = {"type":"object","properties":{"review_markdown":{"type":"string"},"state":{"type":"object","properties":{"schema_version":{"type":"integer"},"last_reviewed_head_sha":{"type":"string"},"review_count":{"type":"integer"},"updated_at":{"type":"string"},"open_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["P0","P1","P2"]},"category":{"type":"string"},"title":{"type":"string"},"location":{"type":"string"},"status":{"type":"string"},"first_seen_head_sha":{"type":"string"},"last_seen_head_sha":{"type":"string"}},"required":["id","severity","title","location","status"]}},"recently_resolved_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"resolved_in_head_sha":{"type":"string"},"resolution":{"type":"string"}},"required":["id"]}}},"required":["schema_version","last_reviewed_head_sha","review_count","open_issues"]}},"required":["review_markdown","state"],"additionalProperties":false};
+              fs.writeFileSync('/tmp/output-schema.json', JSON.stringify(schema, null, 2));
+            }
+
             console.log(`Prompt built (${prompt.length} chars, review #${reviewNumber})`);
 
       - name: Run Codex
@@ -428,7 +441,7 @@ jobs:
             --model "$CODEX_MODEL" \
             --full-auto \
             -c "model_reasoning_effort=\"$CODEX_REASONING\"" \
-            --output-schema .github/scripts/codex-review/output-schema.json \
+            --output-schema /tmp/output-schema.json \
             -o /tmp/codex-review-output.json \
             - < /tmp/review-prompt.md; then
             EXIT_CODE=0
