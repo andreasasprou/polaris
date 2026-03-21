@@ -88,100 +88,103 @@ export async function dispatchPromptToSession(input: {
     );
   }
 
-  // Resolve credentials
-  const creds = await timer.time("resolveCredentials", () => resolveSessionCredentials(session));
-
-  // Determine if sandbox is alive (Tier 1) or needs provisioning (Tier 2)
-  let sandboxBaseUrl = session.sandboxBaseUrl;
-  let epoch = session.epoch;
-  let sandboxId = session.sandboxId;
-
-  const sandboxAlive = sandboxBaseUrl
-    ? await timer.time("healthProbe", () => probeSandboxHealth(sandboxBaseUrl!))
-    : false;
-
-  const tier = sandboxAlive ? 1 : 2;
-  log.set({ dispatch: { tier, sandboxAlive, agentType: session.agentType } });
-
-  if (!sandboxAlive) {
-    // Tier 2: Provision sandbox (key allocation happens inside ensureSandboxReady)
-    const result = await timer.time("ensureSandboxReady", () => ensureSandboxReady(sessionId, {
-      credentialRef: creds.credentialRef,
-      agentType: session.agentType as Parameters<typeof ensureSandboxReady>[1]["agentType"],
-      repositoryOwner: creds.repositoryOwner,
-      repositoryName: creds.repositoryName,
-      defaultBranch: creds.defaultBranch,
-      githubInstallationId: creds.githubInstallationId,
-    }));
-    sandboxBaseUrl = result.proxyBaseUrl;
-    epoch = result.epoch;
-    sandboxId = result.sandboxId;
-  }
-
-  if (!sandboxBaseUrl) {
-    // Rollback CAS
-    await casSessionStatus(sessionId, ["active"], "idle");
-    throw new RequestError("No sandbox URL available after provisioning", 502);
-  }
-
-  // Create job + attempt + turn
-  const hmacKey = generateJobHmacKey();
-  const job = await createJob({
-    organizationId: session.organizationId,
-    type: "prompt",
-    sessionId,
-    requestId,
-    hmacKey,
-    payload: {
-      prompt,
-      source,
-      sandboxId,
-    },
-    timeoutSeconds: 1200, // 20 minutes
-  });
-
-  if (!job) {
-    // Idempotent conflict — job already exists for this request
-    await casSessionStatus(sessionId, ["active"], "idle");
-    throw new RequestError(`Job already exists for request ${requestId}`, 409);
-  }
-
-  // Create compute claim — declares this job needs the sandbox.
-  // The runtime controller will destroy the sandbox when the claim expires or is released.
-  const { createClaim } = await import("@/lib/compute/claims");
-  await createClaim({
-    sessionId,
-    claimant: job.id,
-    reason: "job_active",
-    ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
-  });
-
-  const attempt = await createJobAttempt({
-    jobId: job.id,
-    attemptNumber: 1,
-    epoch,
-    sandboxId: sandboxId ?? undefined,
-  });
-
-  await createTurn({
-    sessionId,
-    requestId,
-    runtimeId: undefined,
-    source,
-    prompt,
-  });
-
-  // POST /prompt to sandbox proxy
-  // sandboxBaseUrl is already the proxy URL (stored as proxy URL by ensureSandboxReady)
-  const proxyUrl = sandboxBaseUrl;
-
-  // Compute next event index for resumed sessions so event indexes stay monotonic
-  const maxIdx = session.sdkSessionId ? await getMaxEventIndex(session.sdkSessionId) : null;
-  const nextEventIndex = maxIdx != null ? maxIdx + 1 : 0;
-
-  log.set({ dispatch: { jobId: job.id, attemptId: attempt.id, epoch } });
+  // Everything after CAS is wrapped in try/catch with rollback.
+  // If any step fails, we roll back session status + clean up the claim/job
+  // so the session doesn't get stuck in 'active' forever.
+  let jobId: string | undefined;
+  let claimCreated = false;
 
   try {
+    // Resolve credentials
+    const creds = await timer.time("resolveCredentials", () => resolveSessionCredentials(session));
+
+    // Determine if sandbox is alive (Tier 1) or needs provisioning (Tier 2)
+    let sandboxBaseUrl = session.sandboxBaseUrl;
+    let epoch = session.epoch;
+    let sandboxId = session.sandboxId;
+
+    const sandboxAlive = sandboxBaseUrl
+      ? await timer.time("healthProbe", () => probeSandboxHealth(sandboxBaseUrl!))
+      : false;
+
+    const tier = sandboxAlive ? 1 : 2;
+    log.set({ dispatch: { tier, sandboxAlive, agentType: session.agentType } });
+
+    if (!sandboxAlive) {
+      // Tier 2: Provision sandbox
+      const result = await timer.time("ensureSandboxReady", () => ensureSandboxReady(sessionId, {
+        credentialRef: creds.credentialRef,
+        agentType: session.agentType as Parameters<typeof ensureSandboxReady>[1]["agentType"],
+        repositoryOwner: creds.repositoryOwner,
+        repositoryName: creds.repositoryName,
+        defaultBranch: creds.defaultBranch,
+        githubInstallationId: creds.githubInstallationId,
+      }));
+      sandboxBaseUrl = result.proxyBaseUrl;
+      epoch = result.epoch;
+      sandboxId = result.sandboxId;
+    }
+
+    if (!sandboxBaseUrl) {
+      throw new RequestError("No sandbox URL available after provisioning", 502);
+    }
+
+    // Create job + attempt + turn
+    const hmacKey = generateJobHmacKey();
+    const job = await createJob({
+      organizationId: session.organizationId,
+      type: "prompt",
+      sessionId,
+      requestId,
+      hmacKey,
+      payload: {
+        prompt,
+        source,
+        sandboxId,
+      },
+      timeoutSeconds: 1200, // 20 minutes
+    });
+
+    if (!job) {
+      throw new RequestError(`Job already exists for request ${requestId}`, 409);
+    }
+
+    jobId = job.id;
+
+    // Create compute claim — declares this job needs the sandbox.
+    const { createClaim } = await import("@/lib/compute/claims");
+    await createClaim({
+      sessionId,
+      claimant: job.id,
+      reason: "job_active",
+      ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
+    });
+    claimCreated = true;
+
+    const attempt = await createJobAttempt({
+      jobId: job.id,
+      attemptNumber: 1,
+      epoch,
+      sandboxId: sandboxId ?? undefined,
+    });
+
+    await createTurn({
+      sessionId,
+      requestId,
+      runtimeId: undefined,
+      source,
+      prompt,
+    });
+
+    // POST /prompt to sandbox proxy
+    const proxyUrl = sandboxBaseUrl;
+
+    // Compute next event index for resumed sessions so event indexes stay monotonic
+    const maxIdx = session.sdkSessionId ? await getMaxEventIndex(session.sdkSessionId) : null;
+    const nextEventIndex = maxIdx != null ? maxIdx + 1 : 0;
+
+    log.set({ dispatch: { jobId: job.id, attemptId: attempt.id, epoch } });
+
     const response = await timer.time("postPrompt", () => fetch(`${proxyUrl}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -210,7 +213,7 @@ export async function dispatchPromptToSession(input: {
       return { jobId: job.id };
     }
 
-    // Non-202: rollback
+    // Non-202: rollback job/attempt (session rollback happens in outer catch)
     const body = await response.text().catch(() => "");
     const { casAttemptStatus, casJobStatus } = await import(
       "@/lib/jobs/actions"
@@ -219,16 +222,29 @@ export async function dispatchPromptToSession(input: {
       error: `Proxy returned ${response.status}: ${body}`,
     });
     await casJobStatus(job.id, ["pending"], "failed_retryable");
-    await casSessionStatus(sessionId, ["active"], "idle");
     throw new RequestError(`Proxy returned ${response.status}: ${body}`, 502);
   } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
-      // Dispatch unknown — sweeper will reconcile
+    // Handle dispatch timeout specially — sweeper will reconcile
+    if (err instanceof Error && err.name === "TimeoutError" && jobId) {
       const { casAttemptStatus } = await import("@/lib/jobs/actions");
-      await casAttemptStatus(attempt.id, ["dispatching"], "dispatch_unknown");
+      // Find the attempt for this job to mark it dispatch_unknown
+      const { getAttemptsByJob } = await import("@/lib/jobs/actions");
+      const attempts = await getAttemptsByJob(jobId);
+      const lastAttempt = attempts[attempts.length - 1];
+      if (lastAttempt) {
+        await casAttemptStatus(lastAttempt.id, ["dispatching"], "dispatch_unknown");
+      }
       log.set({ timing: timer.finalize() });
-      return { jobId: job.id };
+      return { jobId };
     }
+
+    // Rollback: release claim + heal session back to idle
+    if (claimCreated && jobId) {
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(sessionId, jobId).catch(() => {});
+    }
+    await casSessionStatus(sessionId, ["active"], "idle").catch(() => {});
+
     throw err;
   }
 }

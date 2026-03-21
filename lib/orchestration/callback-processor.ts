@@ -302,29 +302,22 @@ async function processCallback(input: {
       // Incremental event persistence — the proxy flushes batches during execution
       // so the chat UI can show live progress via DB polling.
       //
-      // SECURITY: The sessionId is derived from the job's linked interactive session,
-      // NOT from the callback payload. This prevents a compromised sandbox from
-      // injecting events into another session.
+      // SECURITY: The sessionId is derived from the session's persisted sdkSessionId,
+      // which is ONLY set by the trusted prompt_accepted callback. We never hydrate
+      // sdkSessionId from session_events payloads — a compromised sandbox could forge
+      // the payload.sessionId to inject events into another session's stream.
       const job = await getJob(jobId);
       if (!job?.sessionId) break;
 
       const { getInteractiveSession } = await import("@/lib/sessions/actions");
       const session = await getInteractiveSession(job.sessionId);
-      const authorizedSessionId = session?.sdkSessionId;
-      if (!authorizedSessionId) {
-        // sdkSessionId not yet set — persist it from the first trusted batch.
-        // This makes events queryable during the first turn (before prompt_complete).
-        const firstEventSessionId = typeof payload.sessionId === "string" ? payload.sessionId : null;
-        if (firstEventSessionId && session) {
-          const { updateInteractiveSession } = await import("@/lib/sessions/actions");
-          await updateInteractiveSession(job.sessionId, { sdkSessionId: firstEventSessionId });
-        }
+      const trustedSessionId = session?.sdkSessionId;
+      if (!trustedSessionId) {
+        // sdkSessionId not yet set — prompt_accepted hasn't arrived yet.
+        // Drop these events; they'll be re-sent by the proxy or captured
+        // in the final prompt_complete result.
+        break;
       }
-
-      // Use the platform-derived sessionId, falling back to the first-batch value
-      const trustedSessionId = authorizedSessionId
-        ?? (typeof payload.sessionId === "string" ? payload.sessionId : null);
-      if (!trustedSessionId) break;
 
       const events = Array.isArray(payload.events) ? payload.events as Array<Record<string, unknown>> : [];
       if (events.length > 0) {

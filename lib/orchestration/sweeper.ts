@@ -39,7 +39,7 @@ export async function runSweep(): Promise<{
   staleSessionsHealed: number;
   staleLocksReleased: number;
   retriedJobs: number;
-  runtimeController: { expiredClaims: number; destroyedOrphans: number; destroyedTtlExceeded: number; gauge: { liveRuntimes: number; maxAgeMs: number; over1h: number } };
+  runtimeController: { expiredClaims: number; destroyedOrphans: number; hibernatedOrphans: number; destroyedTtlExceeded: number; gauge: { liveRuntimes: number; maxAgeMs: number; over1h: number } };
   providerJanitor: { vercelRunning: number; unknownStopped: number; withinGrace: number; errors: number };
 }> {
   const log = useLogger();
@@ -62,7 +62,7 @@ export async function runSweep(): Promise<{
       staleSessionsHealed: 0,
       staleLocksReleased: 0,
       retriedJobs: 0,
-      runtimeController: { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge },
+      runtimeController: { expiredClaims: 0, destroyedOrphans: 0, hibernatedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge },
       providerJanitor: emptyJanitor,
     };
   }
@@ -72,7 +72,7 @@ export async function runSweep(): Promise<{
     // Runs first so orphaned sandboxes are cleaned before job retries
     // try to re-provision (avoids creating new sandboxes alongside leaked ones).
     const { reconcileRuntimes } = await import("@/lib/compute/controller");
-    let runtimeController: { expiredClaims: number; destroyedOrphans: number; destroyedTtlExceeded: number; gauge: typeof emptyGauge } = { expiredClaims: 0, destroyedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge };
+    let runtimeController: { expiredClaims: number; destroyedOrphans: number; hibernatedOrphans: number; destroyedTtlExceeded: number; gauge: typeof emptyGauge } = { expiredClaims: 0, destroyedOrphans: 0, hibernatedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge };
     try {
       runtimeController = await reconcileRuntimes();
     } catch (err) {

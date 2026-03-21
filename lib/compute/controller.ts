@@ -4,28 +4,41 @@
  * Runs as part of the sweeper cron. Enforces one invariant:
  *
  *   A running sandbox MUST have a valid claim OR be within its idle grace period.
- *   Otherwise, the controller destroys it.
+ *   Otherwise, the controller destroys or hibernates it per policy.
  *
  * This replaces scattered destroy/cleanup calls across consumer code.
  * Consumer code creates/releases claims. The controller does the rest.
  *
  * Two reconciliation loops:
- * 1. Claim-based: no active claims + past idle grace → destroy
+ * 1. Claim-based: no active claims + past idle grace → destroy or hibernate per policy
  * 2. Hard TTL: runtime age > policy hard TTL → destroy regardless
+ *
+ * Design notes:
+ * - Runtimes in 'creating' status are excluded from orphan detection because
+ *   they are mid-provisioning (ensureSandboxReady creates the runtime before
+ *   the dispatch creates a claim).
+ * - Policy is resolved from session context (job type, session created_by),
+ *   not stored on the runtime. This avoids schema changes and lets the policy
+ *   be derived from the same facts the rest of the system uses.
  */
 
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { useLogger } from "@/lib/evlog";
 import { expireOverdueClaims } from "./claims";
-import { RUNTIME_POLICIES, type RuntimePolicyName } from "./policies";
+import {
+  RUNTIME_POLICIES,
+  resolveRuntimePolicy,
+  type RuntimePolicyName,
+} from "./policies";
 
 type OrphanedRuntime = {
   runtime_id: string;
   session_id: string;
   sandbox_id: string;
   runtime_age_ms: number;
-  runtime_policy: string | null;
+  session_created_by: string | null;
+  job_type: string | null;
   has_active_claims: boolean;
   last_claim_released_at: string | null;
 };
@@ -44,6 +57,7 @@ export type SandboxGauge = {
 export async function reconcileRuntimes(): Promise<{
   expiredClaims: number;
   destroyedOrphans: number;
+  hibernatedOrphans: number;
   destroyedTtlExceeded: number;
   gauge: SandboxGauge;
 }> {
@@ -55,12 +69,15 @@ export async function reconcileRuntimes(): Promise<{
     log.set({ controller: { expiredClaims } });
   }
 
-  // Step 2: Find orphaned runtimes (running, no valid claims, past grace)
+  // Step 2: Find orphaned runtimes (running/idle, no valid claims, past grace)
+  // Note: 'creating' runtimes are excluded — they are mid-provisioning
+  // and claims are created after ensureSandboxReady returns.
   const orphans = await findOrphanedRuntimes();
   let destroyedOrphans = 0;
+  let hibernatedOrphans = 0;
 
   for (const orphan of orphans) {
-    const policy = getPolicy(orphan.runtime_policy);
+    const policy = resolvePolicy(orphan);
 
     // Skip if within idle grace period (claim was recently released)
     if (orphan.last_claim_released_at) {
@@ -69,20 +86,37 @@ export async function reconcileRuntimes(): Promise<{
       if (idleMs < policy.idleGraceMs) continue;
     }
 
-    // Destroy the orphan
-    const destroyed = await destroyRuntime(orphan);
-    if (destroyed) {
-      destroyedOrphans++;
-      log.set({
-        controller: {
-          [`destroyed_orphan_${orphan.runtime_id}`]: {
-            sessionId: orphan.session_id,
-            sandboxId: orphan.sandbox_id,
-            reason: "no_active_claims",
-            ageMs: orphan.runtime_age_ms,
+    // Decide action based on policy
+    if (policy.afterLastClaim === "hibernate" && policy.hibernatable) {
+      const hibernated = await hibernateRuntime(orphan);
+      if (hibernated) {
+        hibernatedOrphans++;
+        log.set({
+          controller: {
+            [`hibernated_${orphan.runtime_id}`]: {
+              sessionId: orphan.session_id,
+              sandboxId: orphan.sandbox_id,
+              reason: "no_active_claims",
+              ageMs: orphan.runtime_age_ms,
+            },
           },
-        },
-      });
+        });
+      }
+    } else {
+      const destroyed = await destroyRuntime(orphan);
+      if (destroyed) {
+        destroyedOrphans++;
+        log.set({
+          controller: {
+            [`destroyed_orphan_${orphan.runtime_id}`]: {
+              sessionId: orphan.session_id,
+              sandboxId: orphan.sandbox_id,
+              reason: "no_active_claims",
+              ageMs: orphan.runtime_age_ms,
+            },
+          },
+        });
+      }
     }
   }
 
@@ -111,12 +145,13 @@ export async function reconcileRuntimes(): Promise<{
   const gauge = await buildGauge();
   log.set({ sandbox_gauge: gauge });
 
-  return { expiredClaims, destroyedOrphans, destroyedTtlExceeded, gauge };
+  return { expiredClaims, destroyedOrphans, hibernatedOrphans, destroyedTtlExceeded, gauge };
 }
 
 /**
- * Find running runtimes with no active claims.
- * These are candidates for destruction (subject to idle grace).
+ * Find running/idle runtimes with no active claims.
+ * Excludes 'creating' runtimes — they are mid-provisioning and claims
+ * are created after ensureSandboxReady returns.
  */
 async function findOrphanedRuntimes(): Promise<OrphanedRuntime[]> {
   const rows = await db.execute(sql`
@@ -125,7 +160,13 @@ async function findOrphanedRuntimes(): Promise<OrphanedRuntime[]> {
       r.session_id,
       r.sandbox_id,
       EXTRACT(EPOCH FROM (NOW() - r.created_at)) * 1000 AS runtime_age_ms,
-      s.status AS session_status,
+      s.created_by AS session_created_by,
+      (
+        SELECT j.type FROM jobs j
+        WHERE j.session_id = r.session_id
+        AND j.status NOT IN ('completed', 'failed_terminal', 'cancelled')
+        ORDER BY j.created_at DESC LIMIT 1
+      ) AS job_type,
       (
         SELECT c.released_at::text
         FROM compute_claims c
@@ -133,15 +174,10 @@ async function findOrphanedRuntimes(): Promise<OrphanedRuntime[]> {
         ORDER BY c.released_at DESC NULLS FIRST
         LIMIT 1
       ) AS last_claim_released_at,
-      EXISTS (
-        SELECT 1 FROM compute_claims c
-        WHERE c.session_id = r.session_id
-        AND c.released_at IS NULL
-        AND c.expires_at > NOW()
-      ) AS has_active_claims
+      false AS has_active_claims
     FROM interactive_session_runtimes r
     JOIN interactive_sessions s ON s.id = r.session_id
-    WHERE r.status IN ('creating', 'running', 'idle')
+    WHERE r.status IN ('running', 'idle')
     AND r.sandbox_id IS NOT NULL
     AND NOT EXISTS (
       SELECT 1 FROM compute_claims c
@@ -172,10 +208,16 @@ async function findTtlExceededRuntimes(): Promise<OrphanedRuntime[]> {
       r.session_id,
       r.sandbox_id,
       EXTRACT(EPOCH FROM (NOW() - r.created_at)) * 1000 AS runtime_age_ms,
-      NULL AS runtime_policy,
-      false AS has_active_claims,
-      NULL AS last_claim_released_at
+      s.created_by AS session_created_by,
+      (
+        SELECT j.type FROM jobs j
+        WHERE j.session_id = r.session_id
+        ORDER BY j.created_at DESC LIMIT 1
+      ) AS job_type,
+      NULL AS last_claim_released_at,
+      false AS has_active_claims
     FROM interactive_session_runtimes r
+    JOIN interactive_sessions s ON s.id = r.session_id
     WHERE r.status IN ('creating', 'running', 'idle')
     AND r.sandbox_id IS NOT NULL
     AND EXTRACT(EPOCH FROM (NOW() - r.created_at)) > ${maxTtlSeconds}
@@ -183,13 +225,14 @@ async function findTtlExceededRuntimes(): Promise<OrphanedRuntime[]> {
 
   // Filter by per-policy TTL
   return (rows.rows as unknown as OrphanedRuntime[]).filter((r) => {
-    const policy = getPolicy(r.runtime_policy);
+    const policy = resolvePolicy(r);
     return r.runtime_age_ms > policy.hardTtlMs;
   });
 }
 
 /**
  * Destroy a sandbox and end its runtime record.
+ * Used for ephemeral sessions (reviews, coding tasks).
  * Idempotent — returns false if already stopped.
  */
 async function destroyRuntime(runtime: {
@@ -200,12 +243,10 @@ async function destroyRuntime(runtime: {
   const log = useLogger();
 
   try {
-    // Destroy the Vercel sandbox
     const { SandboxManager } = await import("@/lib/sandbox/SandboxManager");
     const manager = new SandboxManager();
     await manager.destroyById(runtime.sandbox_id);
   } catch (err) {
-    // Best-effort — sandbox may already be stopped
     log.set({
       controller: {
         [`destroyError_${runtime.runtime_id}`]:
@@ -214,7 +255,6 @@ async function destroyRuntime(runtime: {
     });
   }
 
-  // End the runtime record
   try {
     const { updateRuntime } = await import("@/lib/sessions/actions");
     await updateRuntime(runtime.runtime_id, {
@@ -222,7 +262,8 @@ async function destroyRuntime(runtime: {
       endedAt: new Date(),
     });
 
-    // Also heal session if it's idle with this sandbox
+    // Heal session: idle → stopped (for ephemeral sessions only).
+    // Interactive sessions that should hibernate go through hibernateRuntime instead.
     const { casSessionStatus } = await import("@/lib/sessions/actions");
     await casSessionStatus(
       runtime.session_id,
@@ -235,6 +276,52 @@ async function destroyRuntime(runtime: {
   } catch {
     return false;
   }
+}
+
+/**
+ * Hibernate a sandbox — snapshot + stop. Used for interactive sessions
+ * whose policy says "hibernate" instead of "destroy" after last claim.
+ * Falls back to destroy if hibernation fails.
+ */
+async function hibernateRuntime(runtime: {
+  runtime_id: string;
+  session_id: string;
+  sandbox_id: string;
+}): Promise<boolean> {
+  try {
+    const { snapshotAndHibernate } = await import(
+      "@/lib/orchestration/sandbox-lifecycle"
+    );
+    const { casSessionStatus } = await import("@/lib/sessions/actions");
+
+    // snapshotAndHibernate requires session to be in 'idle' status
+    // (it CASes idle → snapshotting internally)
+    const hibernated = await snapshotAndHibernate(runtime.session_id);
+    if (hibernated) return true;
+
+    // Fallback: snapshot failed — destroy instead of leaking
+    return destroyRuntime(runtime);
+  } catch {
+    // Fallback: destroy on any error
+    return destroyRuntime(runtime);
+  }
+}
+
+/**
+ * Resolve runtime policy from session context.
+ * Uses session created_by and most recent job type to determine the policy.
+ */
+function resolvePolicy(runtime: {
+  session_created_by: string | null;
+  job_type: string | null;
+}): (typeof RUNTIME_POLICIES)[RuntimePolicyName] {
+  // Interactive sessions (created by a user, not automation)
+  const isInteractive = runtime.session_created_by !== "automation";
+  const policyName = resolveRuntimePolicy({
+    sessionType: isInteractive ? "interactive" : undefined,
+    jobType: runtime.job_type ?? undefined,
+  });
+  return RUNTIME_POLICIES[policyName];
 }
 
 /**
@@ -265,12 +352,4 @@ async function buildGauge(): Promise<SandboxGauge> {
     maxAgeMs: Number(row.max_age_ms ?? 0),
     over1h: Number(row.over_1h ?? 0),
   };
-}
-
-function getPolicy(policyName: string | null): (typeof RUNTIME_POLICIES)[RuntimePolicyName] {
-  if (policyName && policyName in RUNTIME_POLICIES) {
-    return RUNTIME_POLICIES[policyName as RuntimePolicyName];
-  }
-  // Default: shortest-lived policy (fail safe)
-  return RUNTIME_POLICIES.ephemeral_review;
 }
