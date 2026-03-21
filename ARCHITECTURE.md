@@ -10,6 +10,10 @@ The v2 architecture replaces Trigger.dev with a `jobs` table, a cron-driven
 sweeper, and an in-sandbox REST proxy that manages the agent lifecycle and
 delivers HMAC-signed callbacks back to the Polaris API.
 
+**Start here for product intent:** `docs/architecture/00-what-is-polaris.md` defines
+what Polaris is in current-state and future-state terms. This file focuses on
+how the current implementation works.
+
 ---
 
 ## System Topology
