@@ -125,12 +125,31 @@ export async function dispatchPrReview(
     const { shouldReviewPR } = await import("@/lib/reviews/filters");
     const filterResult = shouldReviewPR(event, config);
     if (!filterResult.review) {
-      await cancelCheck(`Skipped: ${filterResult.reason}`);
+      const skipSummary = `Skipped: ${filterResult.reason}`;
+      await cancelCheck(skipSummary);
       await updateAutomationRun(automationRunId, {
         status: "completed",
-        summary: `Skipped: ${filterResult.reason}`,
+        summary: skipSummary,
         completedAt: new Date(),
       });
+
+      // Post a brief PR comment so the author knows why the review was skipped.
+      // Only on the first skip per PR (don't spam on every push).
+      if (sessionMetadata.reviewCount === 0 || !sessionMetadata.reviewCount) {
+        try {
+          const { postReviewComment } = await import("@/lib/reviews/github");
+          await postReviewComment({
+            installationId,
+            owner: event.owner,
+            repo: event.repo,
+            prNumber: event.prNumber,
+            body: `**Polaris Review** — ${skipSummary}\n\nNo review will be performed for this PR. If this is unexpected, check your automation's filter settings.`,
+          });
+        } catch {
+          // Best-effort — don't fail the skip flow
+        }
+      }
+
       await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
       handedOff = true; // lock explicitly released, skip finally cleanup
       return { jobId: "" };
