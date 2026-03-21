@@ -114,6 +114,7 @@ export async function dispatchPrReview(
   // `handedOff` tracks whether we successfully handed execution to the callback path
   // (sandbox accepted the prompt) or the sweeper (dispatch_unknown timeout).
   let handedOff = false;
+  let createdJobId: string | undefined;
   let targetSessionId = automationSession.interactiveSessionId;
 
   try {
@@ -308,6 +309,16 @@ export async function dispatchPrReview(
     if (!job) {
       throw new Error(`Job already exists for review request review-${automationRunId}`);
     }
+    createdJobId = job.id;
+
+    // Create compute claim — declares this review job needs the sandbox.
+    const { createClaim } = await import("@/lib/compute/claims");
+    await createClaim({
+      sessionId: targetSessionId,
+      claimant: job.id,
+      reason: "job_active",
+      ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
+    });
 
     // Resolve agent config
     const agentType = (automation.agentType ?? "claude") as AgentType;
@@ -320,6 +331,7 @@ export async function dispatchPrReview(
 
     // Shared primitives
     const { probeSandboxHealth, buildCallbackUrl } = await import("./prompt-dispatch");
+    const { getNextEventIndex } = await import("@/lib/sandbox-agent/queries");
     const { casAttemptStatus, casJobStatus } = await import("@/lib/jobs/actions");
     const callbackUrl = buildCallbackUrl();
 
@@ -370,6 +382,10 @@ export async function dispatchPrReview(
         sandboxId: currentSandboxId ?? undefined,
       });
 
+      // Compute resume fields so subsequent reviews in the same session
+      // continue the agent session instead of creating a fresh one.
+      const nextEventIndex = await getNextEventIndex(session.sdkSessionId);
+
       const promptBody = {
         jobId: job.id,
         attemptId: attempt.id,
@@ -383,6 +399,9 @@ export async function dispatchPrReview(
           model: resolved.model,
           thoughtLevel: resolved.thoughtLevel,
           cwd: "/vercel/sandbox",
+          sdkSessionId: session.sdkSessionId ?? undefined,
+          nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
+          nextEventIndex: nextEventIndex ?? undefined,
         },
         contextFiles: [
           {
@@ -449,6 +468,16 @@ export async function dispatchPrReview(
     log.set({ dispatch: { exhaustedAttempts: true, deferredToSweeper: true } });
     return { jobId: job.id, retryDeferred: true };
   } catch (err) {
+    // Rollback: terminalize orphaned job + release claim so the shared
+    // session isn't left with a dangling pending job that blocks future
+    // reviews and causes sweepTimedOutJobs to destroy the sandbox.
+    if (createdJobId) {
+      const { casJobStatus: casJ } = await import("@/lib/jobs/actions");
+      await casJ(createdJobId, ["pending"], "failed_terminal").catch(() => {});
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(targetSessionId, createdJobId).catch(() => {});
+    }
+
     // Mark run as failed (best-effort)
     await updateAutomationRun(automationRunId, {
       status: "failed",

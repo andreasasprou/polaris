@@ -20,7 +20,7 @@ CREATE TABLE "key_pools" (
 );
 --> statement-breakpoint
 ALTER TABLE "automations" ADD COLUMN "key_pool_id" uuid;--> statement-breakpoint
-ALTER TABLE "interactive_session_runtimes" ADD COLUMN "agent_server_url" text;--> statement-breakpoint
+ALTER TABLE "interactive_session_runtimes" ADD COLUMN IF NOT EXISTS "agent_server_url" text;--> statement-breakpoint
 ALTER TABLE "interactive_sessions" ADD COLUMN "key_pool_id" uuid;--> statement-breakpoint
 ALTER TABLE "job_attempts" ADD COLUMN "resolved_secret_id" uuid;--> statement-breakpoint
 ALTER TABLE "key_pool_members" ADD CONSTRAINT "key_pool_members_pool_id_key_pools_id_fk" FOREIGN KEY ("pool_id") REFERENCES "public"."key_pools"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

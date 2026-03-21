@@ -92,7 +92,12 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   const agentType = payload.agentType as string | undefined ?? "agent";
   const allowPush = payload.allowPush !== false;
   const allowPrCreate = payload.allowPrCreate !== false;
-  const sandboxId = payload.sandboxId as string | undefined;
+  // Resolve sandboxId: prefer session-based lookup, fall back to legacy payload
+  const { getInteractiveSession } = await import("@/lib/sessions/actions");
+  const sessionRecord = job.sessionId
+    ? await getInteractiveSession(job.sessionId)
+    : null;
+  const sandboxId = sessionRecord?.sandboxId ?? (payload.sandboxId as string | undefined);
 
   if (!sandboxId || !branchName || !baseSha || !owner || !repo) {
     const log = useLogger();
@@ -250,8 +255,21 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
       await markSideEffect(job.id, "run_updated");
     }
   } finally {
-    // Destroy sandbox
-    if (!sideEffects.sandbox_destroyed) {
+    // Destroy sandbox + release claim
+    if (job.sessionId && !sideEffects.sandbox_destroyed) {
+      try {
+        const { destroySandbox } = await import("./sandbox-lifecycle");
+        await destroySandbox(job.sessionId);
+        await markSideEffect(job.id, "sandbox_destroyed");
+      } catch {
+        // Best-effort — runtime controller will catch it next cycle
+      }
+      // Release both the job claim and the postprocess finalizer claim
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(job.sessionId, job.id).catch(() => {});
+      await releaseClaimsByClaimant(job.sessionId, `postprocess:${job.id}`).catch(() => {});
+    } else if (!job.sessionId && !sideEffects.sandbox_destroyed) {
+      // Legacy path: jobs created before session migration
       try {
         await sandbox.stop();
         await markSideEffect(job.id, "sandbox_destroyed");
@@ -304,8 +322,13 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const lastCommentId = payload.lastCommentId as string | undefined;
   const orgId = job.organizationId;
 
-  // Read persisted output from the result
-  const agentOutput = (result.lastMessage as string) ?? "";
+  // Read persisted output from the result.
+  // Prefer allOutput (full concatenated output) over lastMessage (only final
+  // segment after last tool call) — the agent may interleave tool calls with
+  // its review writing, splitting the comment across multiple text segments.
+  const allOutput = typeof result.allOutput === "string" ? result.allOutput : "";
+  const lastMessage = typeof result.lastMessage === "string" ? result.lastMessage : "";
+  const agentOutput = allOutput || lastMessage;
 
   try {
     // 1. Parse output
@@ -363,13 +386,19 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (!sideEffects.comment_posted) {
       try {
         if (parsed) {
-          // Comment body IS the agent's output, already stripped of metadata
+          // Comment body IS the agent's output, already stripped of metadata.
+          // Append collapsible pipeline latency section from proxy metrics.
+          const latencySection = formatLatencySection(result);
+          const fullBody = latencySection
+            ? `${parsed.commentBody}\n\n${latencySection}`
+            : parsed.commentBody;
+
           const commentResult = await postReviewComment({
             installationId,
             owner,
             repo,
             prNumber,
-            body: parsed.commentBody.slice(0, 60000),
+            body: fullBody.slice(0, 60000),
           });
           commentId = commentResult.commentId;
         } else {
@@ -452,7 +481,19 @@ async function postprocessReview(job: JobRow): Promise<void> {
       await markSideEffect(job.id, "run_updated");
     }
   } finally {
-    // 7. Release lock + dispatch queued review (always runs)
+    // 7. Destroy sandbox — review postprocess doesn't need the VM
+    // (all data is already persisted platform-side via callbacks).
+    if (job.sessionId && !sideEffects.sandbox_destroyed) {
+      try {
+        const { destroySandbox } = await import("./sandbox-lifecycle");
+        await destroySandbox(job.sessionId);
+        await markSideEffect(job.id, "sandbox_destroyed");
+      } catch {
+        // Best-effort — runtime controller will catch it next cycle
+      }
+    }
+
+    // 8. Release lock + dispatch queued review (always runs)
     if (automationSessionId) {
       const { finalizeReviewRun } = await import(
         "./review-lifecycle"
@@ -488,4 +529,57 @@ async function markSideEffect(
       sideEffectsCompleted: sql`COALESCE(${jobs.sideEffectsCompleted}, '{}'::jsonb) || ${JSON.stringify({ [effectName]: true })}::jsonb`,
     })
     .where(eq(jobs.id, jobId));
+}
+
+// ── Pipeline latency formatting ──
+
+function fmtMs(ms: number | undefined): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Build a collapsible GitHub markdown section showing pipeline latency
+ * breakdown from proxy metrics stored in the job result.
+ */
+function formatLatencySection(result: Record<string, unknown>): string | null {
+  const metrics = result.proxyMetrics as Record<string, unknown> | undefined;
+  if (!metrics) return null;
+
+  const connectMs = typeof metrics.connectMs === "number" ? metrics.connectMs : undefined;
+  const sessionCreateMs = typeof metrics.sessionCreateMs === "number" ? metrics.sessionCreateMs : undefined;
+  const promptExecutionMs = typeof metrics.promptExecutionMs === "number" ? metrics.promptExecutionMs : undefined;
+  const totalMs = typeof metrics.totalMs === "number" ? metrics.totalMs : undefined;
+  const resumeType = typeof metrics.resumeType === "string" ? metrics.resumeType : undefined;
+  const eventCount = typeof metrics.eventCount === "number" ? metrics.eventCount : undefined;
+
+  const lines: string[] = [];
+
+  if (connectMs != null) lines.push(`| Agent connect | ${fmtMs(connectMs)} |`);
+  if (sessionCreateMs != null) {
+    const label = resumeType && resumeType !== "fresh"
+      ? `Session resume (${resumeType})`
+      : "Session create";
+    lines.push(`| ${label} | ${fmtMs(sessionCreateMs)} |`);
+  }
+  if (promptExecutionMs != null) lines.push(`| Prompt execution | ${fmtMs(promptExecutionMs)} |`);
+  if (totalMs != null) lines.push(`| **Total** | **${fmtMs(totalMs)}** |`);
+
+  if (lines.length === 0) return null;
+
+  const extras: string[] = [];
+  if (eventCount != null) extras.push(`${eventCount} events`);
+  if (resumeType) extras.push(`resume: ${resumeType}`);
+
+  return [
+    `<details>`,
+    `<summary>Pipeline latency</summary>`,
+    ``,
+    `| Step | Duration |`,
+    `|------|----------|`,
+    ...lines,
+    ...(extras.length > 0 ? [``, extras.join(" · ")] : []),
+    `</details>`,
+  ].join("\n");
 }

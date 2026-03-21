@@ -7,13 +7,32 @@ import { ChatItemRenderer } from "./chat-item-renderer";
 import { TurnIndicator } from "./session-status";
 import { ScrollToBottomButton } from "./scroll-to-bottom";
 import { Spinner } from "./spinner";
+import { getStatusConfig } from "@/lib/sessions/status";
 import type { ChatItem } from "@/lib/sandbox-agent/event-types";
+
+export type EmptyState = "spinner" | "terminal" | "idle";
+
+/** Resolve what to show when the chat has no items. Exported for testing. */
+export function resolveEmptyState(sessionStatus: string | null | undefined): EmptyState {
+  if (!sessionStatus) return "spinner";
+  const config = getStatusConfig(sessionStatus);
+  if (config.isTerminal) return "terminal";
+  if (!config.canStop && config.canSend && config.pollIntervalMs === 0) return "idle";
+  return "spinner";
+}
 
 type SessionChatProps = {
   items: ChatItem[];
   turnInProgress: boolean;
   loading?: boolean;
   error?: Error | null;
+  sessionStatus?: string | null;
+};
+
+const EMPTY_STATE_MESSAGES: Record<EmptyState, string> = {
+  terminal: "No events recorded for this session.",
+  idle: "Session ready. Send a message to begin.",
+  spinner: "Waiting for agent...",
 };
 
 export function SessionChat({
@@ -21,6 +40,7 @@ export function SessionChat({
   turnInProgress,
   loading,
   error,
+  sessionStatus,
 }: SessionChatProps) {
   const { scrollRef, isAtBottom, scrollToBottom, handleScroll } = useAutoScroll({
     dependency: items.length,
@@ -45,10 +65,11 @@ export function SessionChat({
   }
 
   if (items.length === 0) {
+    const state = resolveEmptyState(sessionStatus);
     return (
       <div className="flex flex-col items-center gap-3 py-16">
-        <Spinner className="text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Waiting for agent...</p>
+        {state === "spinner" && <Spinner className="text-muted-foreground" />}
+        <p className="text-sm text-muted-foreground">{EMPTY_STATE_MESSAGES[state]}</p>
       </div>
     );
   }

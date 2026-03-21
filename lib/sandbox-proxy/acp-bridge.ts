@@ -26,7 +26,6 @@ const HEALTH_TIMEOUT_MS = 30_000;
 
 type PromptResult = {
   success: boolean;
-  lastMessage?: string;
   sdkSessionId?: string;
   nativeAgentSessionId?: string;
   cwd?: string;
@@ -37,6 +36,12 @@ type PromptResult = {
 
 type EventCallback = (event: AgentEvent) => void;
 
+/** Resolve the SDK session ID from an AgentSession. For native resume, uses
+ *  the original SDK session ID; for SDK sessions, uses the session's own ID. */
+export function resolveSdkSessionId(session: AgentSession): string {
+  return (session as NativeResumedSession).originalSdkSessionId ?? session.id;
+}
+
 /**
  * NativeResumedSession — adapter that makes a direct AcpHttpClient session
  * look like an SDK Session. Ported from SandboxAgentClient.ts.
@@ -44,14 +49,18 @@ type EventCallback = (event: AgentEvent) => void;
 class NativeResumedSession implements AgentSession {
   readonly id: string;
   readonly agentSessionId: string;
+  /** The original SDK session ID for event persistence lookup. */
+  readonly originalSdkSessionId: string | undefined;
 
   constructor(
     nativeSessionId: string,
     private readonly acp: AcpHttpClient,
     private readonly eventListeners: Set<EventCallback>,
+    originalSdkSessionId?: string,
   ) {
     this.id = nativeSessionId;
     this.agentSessionId = nativeSessionId;
+    this.originalSdkSessionId = originalSdkSessionId;
   }
 
   onEvent(listener: EventCallback): () => void {
@@ -154,6 +163,7 @@ export class AcpBridge {
         config.nativeAgentSessionId,
         config.agent,
         cwd,
+        config.sdkSessionId,
       );
       if (nativeSession) {
         this.lastResumeType = "native";
@@ -261,6 +271,7 @@ export class AcpBridge {
     nativeSessionId: string,
     agent: AgentType,
     cwd: string,
+    originalSdkSessionId?: string,
   ): Promise<NativeResumedSession | null> {
     try {
       const serverId = `native-${agent}-${Date.now()}`;
@@ -296,7 +307,7 @@ export class AcpBridge {
         mcpServers: [],
       });
 
-      return new NativeResumedSession(nativeSessionId, acp, eventListeners);
+      return new NativeResumedSession(nativeSessionId, acp, eventListeners, originalSdkSessionId);
     } catch {
       return null;
     }
@@ -378,102 +389,28 @@ export class AcpBridge {
           ? await Promise.race([session.prompt(promptContent), ...guards])
           : await session.prompt(promptContent);
 
-      // Read persisted events for output reconstruction (correct order guaranteed)
-      const { lastMessage } = await this.readPersistedOutput(session.id);
+      // For native resume, session.id is the native CLI session ID, not the SDK
+      // session ID used for event persistence. Use originalSdkSessionId if available.
+      const sdkId = resolveSdkSessionId(session);
 
       return {
         success: true,
-        lastMessage,
-        sdkSessionId: session.id,
+        sdkSessionId: sdkId,
         nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const sdkId = resolveSdkSessionId(session);
       return {
         success: false,
         error: message,
+        sdkSessionId: sdkId,
+        nativeAgentSessionId: session.agentSessionId,
         durationMs: Date.now() - startTime,
       };
     } finally {
       unsubscribe?.();
-    }
-  }
-
-  /**
-   * Read persisted events and reconstruct the last message.
-   * Events are stored in correct order by the persist driver.
-   */
-  private async readPersistedOutput(
-    sessionId: string,
-  ): Promise<{ lastMessage: string | undefined }> {
-    if (!this.sdk) return { lastMessage: undefined };
-
-    try {
-      type IndexedEntry =
-        | { type: "text"; text: string }
-        | { type: "boundary" };
-
-      const entries: IndexedEntry[] = [];
-      let cursor: string | undefined;
-
-      for (;;) {
-        const page = await this.sdk.getEvents({
-          sessionId,
-          cursor,
-          limit: 500,
-        });
-        for (const item of page.items) {
-          const payload = item.payload as Record<string, unknown>;
-          const params = payload?.params as
-            | Record<string, unknown>
-            | undefined;
-          const update = params?.update as
-            | Record<string, unknown>
-            | undefined;
-          const updateType = update?.sessionUpdate as string | undefined;
-
-          if (updateType === "agent_message_chunk") {
-            const content = update!.content as
-              | { text?: string }
-              | undefined;
-            if (content?.text) {
-              entries.push({ type: "text", text: content.text });
-            }
-          } else if (
-            updateType === "tool_call" ||
-            updateType === "turn_ended"
-          ) {
-            entries.push({ type: "boundary" });
-          }
-        }
-        if (!page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-
-      // Reconstruct: split on boundaries, take last message
-      const messages: string[] = [];
-      let current: string[] = [];
-
-      for (const entry of entries) {
-        if (entry.type === "text") {
-          current.push(entry.text);
-        } else {
-          if (current.length > 0) {
-            messages.push(current.join(""));
-            current = [];
-          }
-        }
-      }
-      if (current.length > 0) {
-        messages.push(current.join(""));
-      }
-
-      return {
-        lastMessage: messages.length > 0 ? messages[messages.length - 1] : undefined,
-      };
-    } catch {
-      return { lastMessage: undefined };
     }
   }
 

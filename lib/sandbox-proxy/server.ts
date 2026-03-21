@@ -17,8 +17,9 @@ import type {
   ProxyMetrics,
   CallbackDeliveryMetric,
 } from "./types";
-import { AcpBridge } from "./acp-bridge";
+import { AcpBridge, resolveSdkSessionId } from "./acp-bridge";
 import { AgentMonitor } from "./agent-monitor";
+import { SessionEventBatcher, reconstructOutput } from "./event-batcher";
 import { emitCallback, replayPendingCallbacks } from "./callback-delivery";
 import { readPendingEntries } from "./outbox";
 import { proxyLog } from "./logger";
@@ -275,13 +276,24 @@ export class ProxyServer {
       sessionCreateMs = Date.now() - sessionStart;
       proxyLog.info("session_ready", { sessionCreateMs, resumeType: this.bridge.lastResumeType });
 
-      // Emit prompt_accepted callback
+      // Resolve session IDs now (after createOrResumeSession) so they're
+      // available for prompt_accepted and the event batcher.
+      const currentSession = this.bridge.getSession();
+      const sdkSessionId = resolveSdkSessionId(currentSession);
+
+      // Emit prompt_accepted callback — includes sdkSessionId so the platform
+      // can persist it immediately, making events queryable from the first turn.
       const acceptedEntry = await emitCallback({
         jobId,
         attemptId,
         epoch,
         callbackType: "prompt_accepted",
-        payload: { startedAt: new Date().toISOString(), requestId },
+        payload: {
+          startedAt: new Date().toISOString(),
+          requestId,
+          sdkSessionId,
+          nativeAgentSessionId: currentSession.agentSessionId,
+        },
         callbackUrl,
         hmacKey,
       });
@@ -291,16 +303,33 @@ export class ProxyServer {
       this.monitor.reset();
       this.monitor.start();
 
-      // Set up event handler for HITL callbacks
+      // Session event batcher: assigns driver-compatible metadata to events
+      // and flushes incremental batches via session_events callbacks for
+      // platform-side persistence. No DATABASE_URL needed in sandbox.
+      const batcher = new SessionEventBatcher(
+        sdkSessionId,
+        attemptId,
+        async (sid, events) => {
+          await emitCallback({
+            jobId, attemptId, epoch,
+            callbackType: "session_events",
+            payload: { sessionId: sid, events },
+            callbackUrl, hmacKey,
+          });
+        },
+        { nextEventIndex: config.nextEventIndex },
+      );
+
       const onEvent = (event: AgentEvent) => {
         this.eventCount++;
+        batcher.push(event);
         this.handleAgentEvent(event, jobId, attemptId, epoch, callbackUrl, hmacKey);
       };
 
       // Execute prompt
       const execStart = Date.now();
       const result = await this.bridge.executePrompt(
-        this.bridge.getSession(),
+        currentSession,
         prompt,
         {
           onEvent,
@@ -314,15 +343,22 @@ export class ProxyServer {
       // Stop health monitor
       this.monitor.stop();
 
+      // Flush remaining events before terminal callback
+      await batcher.finalize();
+
+      // Reconstruct output from the batcher's in-memory event stream
+      // (replaces readPersistedOutput — no DB needed in sandbox).
+      const output = reconstructOutput(batcher.collected);
+
       if (result.success) {
         const metrics = buildMetrics();
         proxyLog.info("prompt_complete", {
           durationMs: result.durationMs,
-          eventCount: this.eventCount,
+          eventCount: batcher.eventCount,
           resumeType: this.bridge.lastResumeType,
         });
 
-        // Emit prompt_complete callback
+        // Emit prompt_complete callback (events already persisted via session_events)
         const completeEntry = await emitCallback({
           jobId,
           attemptId,
@@ -330,7 +366,8 @@ export class ProxyServer {
           callbackType: "prompt_complete",
           payload: {
             result: {
-              lastMessage: result.lastMessage,
+              lastMessage: output.lastMessage,
+              allOutput: output.allOutput,
               sdkSessionId: result.sdkSessionId,
               nativeAgentSessionId: result.nativeAgentSessionId,
               cwd: result.cwd,
@@ -367,6 +404,8 @@ export class ProxyServer {
             error: result.error ?? "Unknown error",
             reason,
             durationMs: result.durationMs,
+            sdkSessionId: result.sdkSessionId,
+            nativeAgentSessionId: result.nativeAgentSessionId,
             metrics,
             requestId,
           },
@@ -393,7 +432,16 @@ export class ProxyServer {
         attemptId,
         epoch,
         callbackType: "prompt_failed",
-        payload: { error, reason, metrics, requestId },
+        payload: {
+          error,
+          reason,
+          ...(this.bridge.hasSession ? {
+            sdkSessionId: this.bridge.getSession().id,
+            nativeAgentSessionId: this.bridge.getSession().agentSessionId,
+          } : {}),
+          metrics,
+          requestId,
+        },
         callbackUrl,
         hmacKey,
       });

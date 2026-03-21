@@ -1,10 +1,13 @@
 /**
- * Coding Task Dispatch — v2
+ * Coding Task Dispatch — v3
  *
- * Replaces trigger/coding-task.ts.
- * Creates a sandbox, bootstraps agent + proxy, creates a job,
- * and POSTs /prompt to the proxy. Post-processing (git push, PR creation)
- * is triggered by the prompt_complete callback via postprocess.ts.
+ * Creates an interactive session, provisions a sandbox via ensureSandboxReady,
+ * creates a compute claim, and POSTs /prompt to the proxy. Post-processing
+ * (git push, PR creation) is triggered by the prompt_complete callback.
+ *
+ * v3 change: uses session-based lifecycle instead of direct sandbox management.
+ * This means the runtime controller can track and clean up coding task sandboxes
+ * the same way it handles reviews and interactive sessions.
  */
 
 import { getCallbackUrl } from "@/lib/config/urls";
@@ -12,14 +15,10 @@ import type { AutomationCodingTaskPayload } from "./types";
 import { SandboxManager } from "@/lib/sandbox/SandboxManager";
 import { SandboxCommands } from "@/lib/sandbox/SandboxCommands";
 import { GitOperations } from "@/lib/sandbox/GitOperations";
-import { SandboxAgentBootstrap } from "@/lib/sandbox-agent/SandboxAgentBootstrap";
-import { buildSessionEnv } from "@/lib/sandbox-agent/credentials";
 import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { createJob, createJobAttempt } from "@/lib/jobs/actions";
 import { generateBranchName } from "./metadata";
 import { useLogger } from "@/lib/evlog";
-
-const sandboxManager = new SandboxManager();
 
 export async function dispatchCodingTask(
   payload: AutomationCodingTaskPayload,
@@ -36,80 +35,66 @@ export async function dispatchCodingTask(
   const log = useLogger();
   log.set({ codingTask: { automationRunId, automationId: payload.automationId, owner: ctx.owner, repo: ctx.repo, agentType: ctx.agentType } });
 
-  // Mint GitHub token
-  const { mintInstallationToken } = await import("@/lib/integrations/github");
-  const gitToken = await mintInstallationToken(
-    ctx.githubInstallationId,
-    [ctx.repo],
-    { contents: "write", pull_requests: "write" },
-  );
+  // Create interactive session — gives the sandbox a runtime record
+  // so the controller can track and clean it up.
+  const { createInteractiveSession } = await import("@/lib/sessions/actions");
+  const session = await createInteractiveSession({
+    organizationId: payload.orgId,
+    createdBy: "automation",
+    agentType: ctx.agentType,
+    agentSecretId: ctx.agentSecretId ?? undefined,
+    keyPoolId: ctx.keyPoolId ?? undefined,
+    repositoryId: ctx.repositoryId,
+    prompt: ctx.prompt,
+  });
 
-  const repoUrl = `https://github.com/${ctx.owner}/${ctx.repo}.git`;
+  await updateAutomationRun(automationRunId, {
+    interactiveSessionId: session.id,
+  });
 
-  // Start AI branch name concurrently — .catch ensures no unhandled rejection
-  // if sandboxManager.create() throws before we await this
+  log.set({ codingTask: { sessionId: session.id } });
+
+  // Start AI branch name concurrently
   const fallbackBranch = `agent/${Date.now()}`;
   const branchNamePromise = generateBranchName(ctx.title, ctx.prompt, {
     apiKey: ctx.agentApiKey,
     provider: ctx.provider,
   }).catch(() => fallbackBranch);
 
-  // Create sandbox
-  const { getActiveSnapshot } = await import("@/lib/sandbox/snapshots/queries");
-  const agentSnapshot = await getActiveSnapshot(ctx.agentType);
-
-  const sandbox = await sandboxManager.create({
-    source: agentSnapshot
-      ? { type: "snapshot", snapshotId: agentSnapshot }
-      : { type: "git" },
-    repoUrl,
-    gitToken,
-    baseBranch: ctx.baseBranch,
-    timeoutMs: ctx.maxDurationSeconds * 1000,
-    ports: [2468, 2469],
-  });
-  log.set({ codingTask: { sandboxId: sandbox.sandboxId, snapshotUsed: !!agentSnapshot } });
-
-  const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
-  const git = new GitOperations(commands);
-  const bootstrap = new SandboxAgentBootstrap(sandbox, commands);
-
+  let createdJobId: string | undefined;
+  let result: Awaited<ReturnType<typeof import("./sandbox-lifecycle").ensureSandboxReady>> | undefined;
   try {
-    // Configure git + create branch
-    await git.configure({ repoUrl });
+    // Provision sandbox via session lifecycle (creates runtime record + epoch).
+    // Inside the try block so provisioning failures trigger rollback
+    // (otherwise the session is left with a 'creating' runtime and the
+    // automation_run stays 'running' forever).
+    const { ensureSandboxReady } = await import("./sandbox-lifecycle");
+    result = await ensureSandboxReady(session.id, {
+      credentialRef: ctx.credentialRef,
+      agentType: ctx.agentType,
+      repositoryOwner: ctx.owner,
+      repositoryName: ctx.repo,
+      defaultBranch: ctx.baseBranch,
+      githubInstallationId: ctx.githubInstallationId,
+    });
+
+    log.set({ codingTask: { sandboxId: result.sandboxId } });
+    // Create branch — ensureSandboxReady handles bootstrap but not branch creation
+    const { Sandbox } = await import("@vercel/sandbox");
+    const sandbox = await Sandbox.get({
+      sandboxId: result.sandboxId,
+      token: process.env.VERCEL_TOKEN,
+      teamId: process.env.VERCEL_TEAM_ID,
+    });
+    const commands = new SandboxCommands(sandbox, SandboxManager.PROJECT_DIR);
+    const git = new GitOperations(commands);
+
     const branchName = await branchNamePromise;
     await git.createBranch(branchName, ctx.baseBranch);
     log.set({ codingTask: { branchName } });
     const baseSha = await git.resolveRef(`origin/${ctx.baseBranch}`);
 
-    // Bootstrap agent server
-    const sessionEnv = buildSessionEnv(ctx.agentType, ctx.agentApiKey);
-    if (!agentSnapshot) {
-      await bootstrap.install();
-      await bootstrap.installAgent(ctx.agentType, sessionEnv);
-    }
-    await bootstrap.start(2468, sessionEnv);
-
-    // Install + start REST proxy
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const currentDir = path.dirname(fileURLToPath(import.meta.url));
-    const proxyBundlePath = path.resolve(
-      currentDir,
-      "../sandbox-proxy/dist/proxy.js",
-    );
-    const proxyBundle = fs.readFileSync(proxyBundlePath, "utf-8");
-    await bootstrap.installProxy(proxyBundle);
-
-    const callbackBaseUrl = getCallbackUrl();
-
-    const proxyBaseUrl = await bootstrap.startProxy({
-      ...sessionEnv,
-      CALLBACK_URL: callbackBaseUrl,
-    });
-
-    // Create job
+    // Create job with session link
     const hmacKey = generateJobHmacKey();
     const prompt = buildAutomationPrompt({
       prompt: ctx.prompt,
@@ -120,6 +105,7 @@ export async function dispatchCodingTask(
     const job = await createJob({
       organizationId: payload.orgId,
       type: "coding_task",
+      sessionId: session.id,
       automationId: payload.automationId,
       automationRunId,
       hmacKey,
@@ -134,7 +120,7 @@ export async function dispatchCodingTask(
         agentType: ctx.agentType,
         allowPush: ctx.allowPush,
         allowPrCreate: ctx.allowPrCreate,
-        sandboxId: sandbox.sandboxId,
+        sandboxId: result.sandboxId, // kept for backward compat in postprocess
       },
       timeoutSeconds: ctx.maxDurationSeconds,
     });
@@ -142,26 +128,38 @@ export async function dispatchCodingTask(
     if (!job) {
       throw new Error("Failed to create job (idempotent conflict)");
     }
+    createdJobId = job.id;
+
+    // Create compute claim — the controller will destroy the sandbox
+    // when this claim expires or is released.
+    const { createClaim } = await import("@/lib/compute/claims");
+    await createClaim({
+      sessionId: session.id,
+      claimant: job.id,
+      reason: "job_active",
+      ttlMs: (ctx.maxDurationSeconds + 600) * 1000, // job timeout + 10 min postprocess grace
+    });
 
     const attempt = await createJobAttempt({
       jobId: job.id,
       attemptNumber: 1,
-      epoch: 1,
-      sandboxId: sandbox.sandboxId,
+      epoch: result.epoch,
+      sandboxId: result.sandboxId,
     });
 
-    log.set({ codingTask: { jobId: job.id, proxyBaseUrl } });
+    log.set({ codingTask: { jobId: job.id, proxyBaseUrl: result.proxyBaseUrl } });
 
     // POST /prompt to proxy
-    const response = await fetch(`${proxyBaseUrl}/prompt`, {
+    const callbackUrl = getCallbackUrl();
+    const response = await fetch(`${result.proxyBaseUrl}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jobId: job.id,
         attemptId: attempt.id,
-        epoch: 1,
+        epoch: result.epoch,
         prompt,
-        callbackUrl: callbackBaseUrl,
+        callbackUrl,
         hmacKey,
         config: {
           agent: ctx.agentType,
@@ -184,10 +182,21 @@ export async function dispatchCodingTask(
     return { jobId: job.id };
   } catch (error) {
     log.error(error instanceof Error ? error : new Error(String(error)));
-    log.set({ codingTask: { failed: true, sandboxId: sandbox.sandboxId } });
+    log.set({ codingTask: { failed: true, sandboxId: result?.sandboxId } });
 
-    // On failure, clean up sandbox and mark run as failed
-    await sandboxManager.destroy(sandbox);
+    // Centralized rollback: terminalize orphaned job, release claims, destroy sandbox, fail session
+    if (createdJobId) {
+      const { casJobStatus } = await import("@/lib/jobs/actions");
+      await casJobStatus(createdJobId, ["pending"], "failed_terminal").catch(() => {});
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(session.id, createdJobId).catch(() => {});
+    }
+
+    const { destroySandbox } = await import("./sandbox-lifecycle");
+    await destroySandbox(session.id).catch(() => {});
+
+    const { casSessionStatus } = await import("@/lib/sessions/actions");
+    await casSessionStatus(session.id, ["creating", "active", "idle"], "failed").catch(() => {});
 
     const message = error instanceof Error ? error.message : String(error);
     await updateAutomationRun(automationRunId, {
@@ -205,12 +214,25 @@ export async function dispatchCodingTask(
  */
 async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
   const { resolveCredentials } = await import("@/lib/orchestration/credential-resolver");
+  const { findAutomationById } = await import("@/lib/automations/queries");
+  const { credentialRefFromRow } = await import("@/lib/key-pools/types");
+
   const creds = await resolveCredentials(payload.automationId);
   if (!creds) {
     throw new Error(
       `Failed to resolve credentials for automation ${payload.automationId}`,
     );
   }
+
+  // Get raw automation for session creation fields (agentSecretId, keyPoolId)
+  const automation = await findAutomationById(payload.automationId);
+  if (!automation) throw new Error(`Automation not found: ${payload.automationId}`);
+
+  const credentialRef = credentialRefFromRow({
+    agentSecretId: automation.agentSecretId,
+    keyPoolId: automation.keyPoolId,
+  });
+  if (!credentialRef) throw new Error("No credential configured on automation");
 
   const event = payload.triggerEvent;
   let title = "Automation task";
@@ -230,6 +252,10 @@ async function resolveAutomationContext(payload: AutomationCodingTaskPayload) {
     prompt: creds.prompt,
     agentType: creds.agentType as import("@/lib/sandbox-agent/types").AgentType,
     agentApiKey: creds.agentApiKey,
+    credentialRef,
+    agentSecretId: automation.agentSecretId,
+    keyPoolId: automation.keyPoolId,
+    repositoryId: creds.repositoryId,
     provider: creds.provider,
     agentMode: creds.agentMode,
     model: creds.model,

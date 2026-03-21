@@ -11,6 +11,19 @@ import {
 import type { CallbackType } from "@/lib/jobs/status";
 import { useLogger } from "@/lib/evlog";
 
+/** Extract session identifiers from an untyped callback payload, narrowing at runtime. */
+function pickSessionIdentifiers(source: Record<string, unknown>): Partial<{
+  sdkSessionId: string;
+  nativeAgentSessionId: string;
+  cwd: string;
+}> {
+  const out: Record<string, string> = {};
+  if (typeof source.sdkSessionId === "string") out.sdkSessionId = source.sdkSessionId;
+  if (typeof source.nativeAgentSessionId === "string") out.nativeAgentSessionId = source.nativeAgentSessionId;
+  if (typeof source.cwd === "string") out.cwd = source.cwd;
+  return out;
+}
+
 type IngestResult =
   | { accepted: true }
   | { accepted: false; reason: string };
@@ -72,7 +85,7 @@ export async function ingestCallback(input: {
 
   // 3. Process inline by type
   try {
-    await processCallback(input);
+    await processCallback(input, job);
 
     // Mark as processed
     await db
@@ -96,12 +109,14 @@ export async function ingestCallback(input: {
 /**
  * Process a callback based on its type. Updates job/attempt status accordingly.
  */
+type JobRow = Awaited<ReturnType<typeof getJob>>;
+
 async function processCallback(input: {
   jobId: string;
   attemptId: string;
   callbackType: CallbackType;
   payload: Record<string, unknown>;
-}) {
+}, callerJob: NonNullable<JobRow>) {
   const { jobId, attemptId, callbackType, payload } = input;
 
   switch (callbackType) {
@@ -111,6 +126,17 @@ async function processCallback(input: {
       });
       await casJobStatus(jobId, ["pending"], "accepted");
       await appendJobEvent(jobId, "accepted", attemptId);
+
+      // Persist sdkSessionId early so events are queryable from the first turn
+      // (before prompt_complete). This is the first trusted callback after
+      // session creation — the proxy includes the session IDs.
+      if (callerJob.sessionId) {
+        const ids = pickSessionIdentifiers(payload);
+        if (ids.sdkSessionId) {
+          const { updateInteractiveSession } = await import("@/lib/sessions/actions");
+          await updateInteractiveSession(callerJob.sessionId!, ids);
+        }
+      }
       break;
     }
 
@@ -146,15 +172,31 @@ async function processCallback(input: {
       await appendJobEvent(jobId, "agent_completed", attemptId);
 
       if (completedJobRow?.sessionId) {
-        // We own the transition — safe to heal session and persist agent identifiers
-        const { casSessionStatus, updateInteractiveSession } = await import("@/lib/sessions/actions");
-        await casSessionStatus(completedJobRow.sessionId, ["active"], "idle");
+        // We own the transition — atomically heal session status AND persist
+        // agent identifiers in a single CAS (prevents race where client polls
+        // between status change and metadata write).
+        const { casSessionStatus } = await import("@/lib/sessions/actions");
+        await casSessionStatus(completedJobRow.sessionId, ["active"], "idle", {
+          ...pickSessionIdentifiers(result),
+          error: null, // clear stale errors on success
+        });
+      }
 
-        // Persist sdkSessionId so events can be fetched for the session detail page
-        if (result.sdkSessionId) {
-          await updateInteractiveSession(completedJobRow.sessionId, {
-            sdkSessionId: result.sdkSessionId as string,
-          });
+      if (completedJobRow?.sessionId) {
+        const { releaseClaimsByClaimant, createClaim } = await import("@/lib/compute/claims");
+        // Release the job_active claim — execution is done.
+        await releaseClaimsByClaimant(completedJobRow.sessionId, jobId).catch(() => {});
+
+        // Coding tasks need the sandbox during postprocess (git push, PR creation).
+        // Create a short-lived postprocess_finalizer claim so the controller doesn't
+        // destroy the sandbox while postprocess is running.
+        if (completedJobRow.type === "coding_task") {
+          await createClaim({
+            sessionId: completedJobRow.sessionId,
+            claimant: `postprocess:${jobId}`,
+            reason: "postprocess_finalizer",
+            ttlMs: 10 * 60 * 1000, // 10 min max for git push + PR creation
+          }).catch(() => {});
         }
       }
 
@@ -195,9 +237,6 @@ async function processCallback(input: {
       );
 
       // Decide: retryable or terminal?
-      const job = await getJob(jobId);
-      if (!job) break;
-
       const reason = payload.reason as string | undefined;
       const isRetryable = reason !== "user_stop";
 
@@ -222,11 +261,19 @@ async function processCallback(input: {
         reason,
       });
 
-      // Only heal session if we actually transitioned the job (not a stale callback)
-      if (jobCasSucceeded && job.sessionId) {
+      // Only heal session if we actually transitioned the job (not a stale callback).
+      // Persist session IDs even on failure so partial event history is accessible.
+      if (jobCasSucceeded && callerJob.sessionId) {
         const { casSessionStatus } = await import("@/lib/sessions/actions");
-        await casSessionStatus(job.sessionId, ["active"], "idle");
+        await casSessionStatus(callerJob.sessionId, ["active"], "idle", {
+          ...pickSessionIdentifiers(payload),
+        });
+
+        // Release compute claim — job failed, sandbox no longer needed.
+        const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+        await releaseClaimsByClaimant(callerJob.sessionId, jobId).catch(() => {});
       }
+
       break;
     }
 
@@ -256,6 +303,41 @@ async function processCallback(input: {
         lastProgressAt: new Date(),
       });
       await appendJobEvent(jobId, "resumed", attemptId);
+      break;
+    }
+
+    case "session_events": {
+      // Incremental event persistence — the proxy flushes batches during execution
+      // so the chat UI can show live progress via DB polling.
+      //
+      // SECURITY: The trustedSessionId comes ONLY from the platform DB's
+      // sdkSessionId field, which is set exclusively by the prompt_accepted
+      // callback. We NEVER hydrate sdkSessionId from session_events payloads —
+      // the sandbox is untrusted and could forge payload.sessionId to inject
+      // events into another session's stream. Events arriving before
+      // prompt_accepted are dropped; the proxy will re-send them.
+      if (!callerJob.sessionId) break;
+
+      const { getInteractiveSession } = await import("@/lib/sessions/actions");
+      const session = await getInteractiveSession(callerJob.sessionId);
+      const trustedSessionId = session?.sdkSessionId ?? null;
+      if (!trustedSessionId) break; // prompt_accepted hasn't arrived yet — drop
+
+      const events = Array.isArray(payload.events) ? payload.events as Array<Record<string, unknown>> : [];
+      if (events.length > 0) {
+        const { persistSessionEvents } = await import("@/lib/sandbox-agent/queries");
+        await persistSessionEvents(
+          events.map((e) => ({
+            id: typeof e.id === "string" ? e.id : `fallback-${Math.random().toString(36).slice(2)}`,
+            eventIndex: typeof e.eventIndex === "number" ? e.eventIndex : 0,
+            sessionId: trustedSessionId!,
+            createdAt: typeof e.createdAt === "number" ? e.createdAt : Date.now(),
+            connectionId: typeof e.connectionId === "string" ? e.connectionId : "platform",
+            sender: typeof e.sender === "string" ? e.sender : "agent",
+            payload: (typeof e.payload === "object" && e.payload != null ? e.payload : e) as Record<string, unknown>,
+          })),
+        );
+      }
       break;
     }
   }

@@ -5,7 +5,8 @@
  * to prevent concurrent sweeps.
  *
  * Responsibilities:
- * - Timed-out jobs → failed_terminal + heal session
+ * - Runtime controller: reconcile sandbox lifecycle via claims + policies
+ * - Timed-out jobs → failed_terminal + heal session + destroy sandbox
  * - dispatch_unknown attempts → probe sandbox GET /status, reconcile
  * - Stuck postprocess_pending → retry
  * - Stale active sessions (no nonterminal job) → idle
@@ -38,6 +39,8 @@ export async function runSweep(): Promise<{
   staleSessionsHealed: number;
   staleLocksReleased: number;
   retriedJobs: number;
+  runtimeController: { expiredClaims: number; destroyedOrphans: number; hibernatedOrphans: number; destroyedTtlExceeded: number; gauge: { liveRuntimes: number; maxAgeMs: number; over1h: number } };
+  providerJanitor: { vercelRunning: number; unknownStopped: number; withinGrace: number; errors: number };
 }> {
   const log = useLogger();
 
@@ -46,6 +49,9 @@ export async function runSweep(): Promise<{
     sql`SELECT pg_try_advisory_lock(${SWEEPER_LOCK_ID}) AS acquired`,
   );
   const lockResult = lockRows.rows?.[0] as { acquired: boolean } | undefined;
+
+  const emptyGauge = { liveRuntimes: 0, maxAgeMs: 0, over1h: 0 };
+  const emptyJanitor = { vercelRunning: 0, unknownStopped: 0, withinGrace: 0, errors: 0 };
 
   if (!lockResult?.acquired) {
     log.set({ sweep: { skipped: true, reason: "lock_held" } });
@@ -56,10 +62,35 @@ export async function runSweep(): Promise<{
       staleSessionsHealed: 0,
       staleLocksReleased: 0,
       retriedJobs: 0,
+      runtimeController: { expiredClaims: 0, destroyedOrphans: 0, hibernatedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge },
+      providerJanitor: emptyJanitor,
     };
   }
 
   try {
+    // Runtime controller: reconcile sandbox lifecycle via claims + policies.
+    // Runs first so orphaned sandboxes are cleaned before job retries
+    // try to re-provision (avoids creating new sandboxes alongside leaked ones).
+    const { reconcileRuntimes } = await import("@/lib/compute/controller");
+    let runtimeController: { expiredClaims: number; destroyedOrphans: number; hibernatedOrphans: number; destroyedTtlExceeded: number; gauge: typeof emptyGauge } = { expiredClaims: 0, destroyedOrphans: 0, hibernatedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge };
+    try {
+      runtimeController = await reconcileRuntimes();
+    } catch (err) {
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { runtimeControllerError: true } });
+    }
+
+    // Provider janitor: compare Vercel's actual running sandboxes against DB.
+    // Catches sandboxes created in Vercel but never recorded in our runtime table.
+    let providerJanitor = emptyJanitor;
+    try {
+      const { reconcileProvider } = await import("@/lib/compute/provider-janitor");
+      providerJanitor = await reconcileProvider();
+    } catch (err) {
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { providerJanitorError: true } });
+    }
+
     const timedOut = await sweepTimedOutJobs();
     const unknownReconciled = await sweepDispatchUnknown();
     const postprocessRetried = await sweepStuckPostprocess();
@@ -67,7 +98,7 @@ export async function runSweep(): Promise<{
     const staleLocksReleased = await sweepStaleReviewLocks();
     const retriedJobs = await sweepRetryableJobs();
 
-    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased } });
+    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, runtimeController, providerJanitor } });
 
     return {
       timedOut,
@@ -76,6 +107,8 @@ export async function runSweep(): Promise<{
       staleSessionsHealed,
       staleLocksReleased,
       retriedJobs,
+      runtimeController,
+      providerJanitor,
     };
   } finally {
     // Release advisory lock
@@ -111,6 +144,38 @@ async function sweepTimedOutJobs(): Promise<number> {
         try {
           const { casSessionStatus } = await import("@/lib/sessions/actions");
           await casSessionStatus(job.sessionId, ["active"], "idle");
+        } catch {
+          // Best-effort
+        }
+
+        // Release compute claim — job timed out, no more work
+        try {
+          const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+          await releaseClaimsByClaimant(job.sessionId, job.id);
+        } catch {
+          // Best-effort
+        }
+
+        // Destroy sandbox — timed-out work means the sandbox is likely dead or stuck
+        try {
+          const { destroySandbox } = await import("./sandbox-lifecycle");
+          await destroySandbox(job.sessionId);
+        } catch {
+          // Best-effort — controller will catch it next cycle
+        }
+      }
+
+      // Mark automation_run as failed so the UI shows the correct status.
+      // Without this, non-review timed-out jobs leave their automation_run
+      // stuck in 'running' forever.
+      if (job.automationRunId) {
+        try {
+          const { updateAutomationRun } = await import("@/lib/automations/actions");
+          await updateAutomationRun(job.automationRunId, {
+            status: "failed",
+            error: "Timed out",
+            completedAt: new Date(),
+          });
         } catch {
           // Best-effort
         }
@@ -234,22 +299,27 @@ async function sweepStaleReviewLocks(): Promise<number> {
   let count = 0;
 
   for (const lock of staleLocks) {
-    await forceReleaseAutomationSessionLock(lock.automation_session_id);
-
-    // Also mark the stale run as failed so it doesn't block future sweeps
+    // Per-item try/catch — one failure must not block other lock releases
     try {
-      const { updateAutomationRun } = await import("@/lib/automations/actions");
-      await updateAutomationRun(lock.review_lock_job_id, {
-        status: "failed",
-        error: "Sweeper: lock held too long without progress",
-        completedAt: new Date(),
-      });
-    } catch {
-      // Run may not exist or already terminal — best effort
-    }
+      await forceReleaseAutomationSessionLock(lock.automation_session_id);
 
-    count++;
-    log.set({ sweep: { [`releasedLock_${lock.automation_session_id}`]: lock.review_lock_job_id } });
+      // Mark the stale run as failed so it doesn't block future sweeps
+      try {
+        const { updateAutomationRun } = await import("@/lib/automations/actions");
+        await updateAutomationRun(lock.review_lock_job_id, {
+          status: "failed",
+          error: "Sweeper: lock held too long without progress",
+          completedAt: new Date(),
+        });
+      } catch {
+        // Run may not exist or already terminal — best effort
+      }
+
+      count++;
+      log.set({ sweep: { [`releasedLock_${lock.automation_session_id}`]: lock.review_lock_job_id } });
+    } catch (err) {
+      log.set({ sweep: { [`lockReleaseError_${lock.automation_session_id}`]: err instanceof Error ? err.message : String(err) } });
+    }
   }
 
   return count;
@@ -281,13 +351,16 @@ async function sweepRetryableJobs(): Promise<number> {
         });
         log.set({ sweep: { exhaustedRetries: job.id, attempts: attempts.length, maxAttempts: job.maxAttempts } });
 
-        // Heal session
+        // Heal session + release claim
         if (job.sessionId) {
           const { casSessionStatus } = await import("@/lib/sessions/actions");
           await casSessionStatus(job.sessionId, ["active"], "idle").catch(() => {});
+
+          const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+          await releaseClaimsByClaimant(job.sessionId, job.id).catch(() => {});
         }
 
-        // Review-specific cleanup: fail check, release lock, drain queue
+        // Review-specific cleanup: fail check, release lock, drain queue, destroy sandbox
         if (job.type === "review") {
           await finalizeFailedReviewJob(job);
         }
@@ -431,6 +504,10 @@ async function retryReviewDispatch(
     const callbackUrl = buildCallbackUrl();
     const prompt = payload.prompt as string;
 
+    // Compute next event index for monotonic indexes on resume
+    const { getNextEventIndex } = await import("@/lib/sandbox-agent/queries");
+    const nextEventIndex = await getNextEventIndex(session.sdkSessionId);
+
     log.set({ sweep: { retrying: job.id, attemptNumber, sandboxUrl } });
 
     const response = await fetch(`${sandboxUrl}/prompt`, {
@@ -449,17 +526,20 @@ async function retryReviewDispatch(
           model: resolved.model,
           thoughtLevel: resolved.thoughtLevel,
           cwd: "/vercel/sandbox",
+          sdkSessionId: session.sdkSessionId ?? undefined,
+          nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
+          nextEventIndex: nextEventIndex ?? undefined,
         },
       }),
       signal: AbortSignal.timeout(30_000),
     });
 
     if (response.status === 202) {
-      // Update run metadata
+      // Update run metadata — preserve original startedAt from first attempt
+      // so time-window event filtering doesn't miss earlier events.
       await updateAutomationRun(automationRunId, {
         interactiveSessionId: session.id,
         status: "running",
-        startedAt: new Date(),
       }).catch(() => {});
       log.set({ sweep: { retrySucceeded: job.id } });
       return;
@@ -481,7 +561,7 @@ async function retryReviewDispatch(
  * Fails the check, marks the run, releases the lock, drains the pending queue.
  */
 async function finalizeFailedReviewJob(
-  job: { id: string; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
+  job: { id: string; sessionId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
 ): Promise<void> {
   const payload = job.payload;
   const automationSessionId = payload.automationSessionId as string;
@@ -490,6 +570,16 @@ async function finalizeFailedReviewJob(
   const installationId = payload.installationId as number;
   const owner = payload.owner as string;
   const repo = payload.repo as string;
+
+  // Destroy sandbox — review exhausted retries, no more work for this session
+  if (job.sessionId) {
+    try {
+      const { destroySandbox } = await import("./sandbox-lifecycle");
+      await destroySandbox(job.sessionId);
+    } catch {
+      // Best-effort — controller will catch it next cycle
+    }
+  }
 
   // Mark automation run as failed
   if (automationRunId) {
