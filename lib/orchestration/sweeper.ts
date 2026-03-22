@@ -209,27 +209,50 @@ async function sweepStaleRunningJobs(): Promise<number> {
   let count = 0;
 
   for (const job of staleJobs) {
-    // Check if sandbox is still alive
-    let sandboxAlive = false;
+    // Probe sandbox health with three-state result:
+    // "alive" = sandbox responded OK, "dead" = sandbox URL missing or
+    // responded with non-OK, "inconclusive" = network/DNS/timeout error.
+    // Only kill on "dead" — inconclusive could be a transient hiccup.
+    let probeResult: "alive" | "dead" | "inconclusive" = "dead";
     if (job.sessionId) {
       try {
         const { getInteractiveSession } = await import("@/lib/sessions/actions");
         const session = await getInteractiveSession(job.sessionId);
         if (session?.sandboxBaseUrl) {
-          const { probeSandboxHealth } = await import("./prompt-dispatch");
-          sandboxAlive = await probeSandboxHealth(session.sandboxBaseUrl);
+          try {
+            const response = await fetch(`${session.sandboxBaseUrl}/health`, {
+              signal: AbortSignal.timeout(5_000),
+            });
+            if (response.ok) {
+              const body = await response.json().catch(() => null);
+              probeResult = body?.ok === true ? "alive" : "dead";
+            } else {
+              // Sandbox responded but not healthy — confirmed dead
+              probeResult = "dead";
+            }
+          } catch {
+            // Network error, DNS failure, timeout — inconclusive
+            probeResult = "inconclusive";
+          }
         }
+        // No sandboxBaseUrl → confirmed dead (never provisioned or already cleaned up)
       } catch {
-        // If we can't check, assume dead
+        probeResult = "inconclusive";
       }
     }
 
-    if (sandboxAlive) {
+    if (probeResult === "alive") {
       log.set({ sweep: { [`staleButAlive_${job.id}`]: true } });
       continue;
     }
 
-    // Sandbox is dead — fail the job
+    if (probeResult === "inconclusive") {
+      // Don't kill — log and retry on the next sweep cycle
+      log.set({ sweep: { [`staleProbeInconclusive_${job.id}`]: true } });
+      continue;
+    }
+
+    // Sandbox is confirmed dead — fail the job
     const updated = await casJobStatus(
       job.id,
       ["accepted", "running"],
