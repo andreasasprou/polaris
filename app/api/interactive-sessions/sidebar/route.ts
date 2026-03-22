@@ -39,6 +39,7 @@ export const GET = withEvlog(async () => {
     FROM interactive_sessions s
     LEFT JOIN repositories r ON r.id = s.repository_id
     WHERE s.organization_id = ${orgId}
+      AND s.source = 'user'
     ORDER BY s.created_at DESC
     LIMIT 100
   `);
