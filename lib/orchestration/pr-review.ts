@@ -355,17 +355,24 @@ export async function dispatchPrReview(
     // Model and effort are compared against metadata (not stored on interactive_sessions).
     const { getInteractiveSession: getSessionForDriftCheck } = await import("@/lib/sessions/actions");
     const currentSession = await getSessionForDriftCheck(targetSessionId);
-    const lastRuntime = sessionMetadata.lastRuntimeConfig;
+    const lastRuntime = sessionMetadata.lastRuntimeConfig as
+      | { model?: string | null; effort?: string | null }
+      | undefined;
     const runtimeDrifted = currentSession && (
       // Agent type / credential drift (compare against interactive session)
       currentSession.agentType !== effectiveAgentType ||
       (currentSession.agentSecretId ?? null) !== effectiveSecretId ||
       (currentSession.keyPoolId ?? null) !== effectivePoolId ||
-      // Model / effort drift (compare against last dispatched config in metadata)
-      (lastRuntime && (
-        (lastRuntime.model ?? null) !== effectiveModel ||
-        (lastRuntime.effort ?? null) !== effectiveEffort
-      ))
+      // Model / effort drift (compare against last dispatched config in metadata).
+      // If lastRuntime is absent (pre-existing session), only drift if YAML
+      // explicitly specifies a model/effort (resolvedRuntime exists).
+      (lastRuntime
+        ? (lastRuntime.model ?? null) !== effectiveModel ||
+          (lastRuntime.effort ?? null) !== effectiveEffort
+        : resolvedRuntime !== null && (
+            resolvedRuntime.model !== "" ||
+            resolvedRuntime.modelParams.effortLevel !== undefined
+          ))
     );
 
     if (reviewScope === "reset" || runtimeDrifted) {
@@ -578,9 +585,14 @@ export async function dispatchPrReview(
           updateAutomationRun(automationRunId, {
             interactiveSessionId: targetSessionId,
           }),
-          // Persist runtime config so future dispatches can detect model/effort drift
-          updateAutomationSession(automationSessionId, {
-            metadata: { ...sessionMetadata, lastRuntimeConfig: currentRuntimeConfig },
+          // Persist runtime config so future dispatches can detect model/effort drift.
+          // Re-read metadata to avoid clobbering concurrent pendingReviewRequest writes.
+          getAutomationSession(automationSessionId).then((fresh) => {
+            if (!fresh) return;
+            const freshMetadata = fresh.metadata as AutomationSessionMetadata;
+            return updateAutomationSession(automationSessionId, {
+              metadata: { ...freshMetadata, lastRuntimeConfig: currentRuntimeConfig },
+            });
           }),
         ]).catch(() => {});
         return { jobId: job.id };
