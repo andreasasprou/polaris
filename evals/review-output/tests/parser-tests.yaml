@@ -1,0 +1,364 @@
+# Deterministic parser tests — no LLM calls, just parseReviewOutput()
+# Each test provides raw agent output and asserts on the parsed result.
+
+- description: "Clean APPROVE output with no reasoning preamble"
+  vars:
+    raw_output: |
+      ## ✅ Polaris Review Pass 1: APPROVE
+
+      Clean implementation with good test coverage. No issues found.
+
+      <sub>Polaris Review Pass 1 · `abc1234` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "APPROVE",
+        "summary": "Clean implementation with good test coverage.",
+        "severityCounts": { "P0": 0, "P1": 0, "P2": 0 },
+        "resolvedIssueIds": [],
+        "inlineAnchors": [],
+        "reviewState": {
+          "lastReviewedSha": "abc1234",
+          "openIssues": [],
+          "resolvedIssues": [],
+          "reviewCount": 1
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "JSON.parse(output).metadata.verdict === 'APPROVE'"
+      metric: correct_verdict
+    - type: javascript
+      value: "JSON.parse(output).commentBody.startsWith('## ✅ Polaris Review Pass 1')"
+      metric: header_preserved
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('polaris:metadata')"
+      metric: metadata_stripped
+
+- description: "Codex reasoning paragraphs before ATTENTION header"
+  vars:
+    raw_output: |
+      Reviewing the scoped diff first to map what changed and what contracts it touches. After that I'll dispatch the required docs-only subagent.
+
+      The diff is small but I'm checking the rendered file carefully because the patch adds a duplicate line.
+
+      The dedicated `codex` CLI isn't installed in this sandbox, so I'm checking alternate tooling.
+
+      I've confirmed the PR head: the only change is a duplicate bullet at the end of the limitations list.
+
+      The surrounding docs already mention this in two other places.## ⚠️ Polaris Review Pass 1: ATTENTION
+
+      This PR adds a duplicate limitation entry instead of new information.
+
+      #### 🔵 [P2] Duplicate limitation bullet
+      **File:** `docs/features/config.md` · **Category:** Documentation
+
+      The limitations list now contains the same entry twice.
+
+      <sub>Polaris Review Pass 1 · `def5678` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "ATTENTION",
+        "summary": "PR duplicates an existing limitation entry.",
+        "severityCounts": { "P0": 0, "P1": 0, "P2": 1 },
+        "resolvedIssueIds": [],
+        "inlineAnchors": [],
+        "reviewState": {
+          "lastReviewedSha": "def5678",
+          "openIssues": [{ "id": "dup-bullet", "file": "docs/features/config.md", "severity": "P2", "summary": "Duplicate limitation" }],
+          "resolvedIssues": [],
+          "reviewCount": 1
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('Reviewing the scoped diff')"
+      metric: reasoning_stripped
+      weight: 3
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('codex CLI')"
+      metric: reasoning_stripped_codex_ref
+      weight: 3
+    - type: javascript
+      value: "JSON.parse(output).commentBody.startsWith('## ⚠️ Polaris Review Pass 1')"
+      metric: header_preserved
+    - type: javascript
+      value: "JSON.parse(output).commentBody.includes('Duplicate limitation bullet')"
+      metric: finding_preserved
+    - type: javascript
+      value: "JSON.parse(output).metadata.verdict === 'ATTENTION'"
+      metric: correct_verdict
+
+- description: "Single-chunk concatenation — reasoning.## without newline"
+  vars:
+    raw_output: |
+      The surrounding docs already mention exact matching in two other places.## ⚠️ Polaris Review Pass 1: ATTENTION
+
+      This PR has an issue with duplicate content.
+
+      <sub>Polaris Review Pass 1 · `aaa1111` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "ATTENTION",
+        "summary": "Duplicate content detected.",
+        "severityCounts": { "P0": 0, "P1": 0, "P2": 1 },
+        "resolvedIssueIds": [],
+        "inlineAnchors": [],
+        "reviewState": {
+          "lastReviewedSha": "aaa1111",
+          "openIssues": [],
+          "resolvedIssues": [],
+          "reviewCount": 1
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('surrounding docs')"
+      metric: reasoning_stripped_no_newline
+      weight: 3
+    - type: javascript
+      value: "JSON.parse(output).commentBody.startsWith('## ⚠️')"
+      metric: header_preserved
+
+- description: "Same-verdict quoted header in preamble — uses last match"
+  vars:
+    raw_output: |
+      I will write the review as: ## ⚠️ Polaris Review Pass 2: ATTENTION
+
+      Now analyzing the changes to determine if the issue persists.
+
+      ## ⚠️ Polaris Review Pass 2: ATTENTION
+
+      The fix correctly addresses the original finding. No new issues.
+
+      <sub>Polaris Review Pass 2 · `bbb2222` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "ATTENTION",
+        "summary": "Fix addresses original finding.",
+        "severityCounts": { "P0": 0, "P1": 0, "P2": 0 },
+        "resolvedIssueIds": ["old-finding-1"],
+        "inlineAnchors": [],
+        "reviewState": {
+          "lastReviewedSha": "bbb2222",
+          "openIssues": [],
+          "resolvedIssues": [{ "id": "old-finding-1", "file": "lib/parser.ts", "summary": "Fixed" }],
+          "reviewCount": 2
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('I will write')"
+      metric: preamble_stripped_last_match
+      weight: 3
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('Now analyzing')"
+      metric: reasoning_stripped_last_match
+      weight: 3
+    - type: javascript
+      value: "JSON.parse(output).commentBody.includes('correctly addresses')"
+      metric: real_content_preserved
+    - type: javascript
+      value: "JSON.parse(output).metadata.resolvedIssueIds.includes('old-finding-1')"
+      metric: resolved_ids_extracted
+
+- description: "Different-verdict quoted header in preamble — exact match wins"
+  vars:
+    raw_output: |
+      The prompt says to use `## ✅ Polaris Review Pass 1: APPROVE` as the header.
+
+      ## ⚠️ Polaris Review Pass 1: ATTENTION
+
+      Actual review content with a real finding.
+
+      <sub>Polaris Review Pass 1 · `ccc3333` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "ATTENTION",
+        "summary": "Found a real issue.",
+        "severityCounts": { "P0": 0, "P1": 1, "P2": 0 },
+        "resolvedIssueIds": [],
+        "inlineAnchors": [],
+        "reviewState": {
+          "lastReviewedSha": "ccc3333",
+          "openIssues": [{ "id": "real-issue", "file": "lib/auth.ts", "severity": "P1", "summary": "Auth gap" }],
+          "resolvedIssues": [],
+          "reviewCount": 1
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "!JSON.parse(output).commentBody.includes('The prompt says')"
+      metric: quoted_header_skipped
+      weight: 3
+    - type: javascript
+      value: "JSON.parse(output).commentBody.startsWith('## ⚠️')"
+      metric: correct_header_used
+    - type: javascript
+      value: "JSON.parse(output).metadata.verdict === 'ATTENTION'"
+      metric: correct_verdict
+
+- description: "BLOCK verdict with P0 findings and inline anchors"
+  vars:
+    raw_output: |
+      ## 🚫 Polaris Review Pass 3: BLOCK
+
+      Critical security issue found in the authentication module.
+
+      #### 🔴 [P0] SQL injection in user lookup
+      **File:** `lib/auth/lookup.ts` · **Category:** Security
+
+      The query interpolates user input directly without parameterization.
+
+      <sub>Polaris Review Pass 3 · `ddd4444` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "BLOCK",
+        "summary": "Critical SQL injection vulnerability.",
+        "severityCounts": { "P0": 1, "P1": 0, "P2": 0 },
+        "resolvedIssueIds": [],
+        "inlineAnchors": [
+          {
+            "issueId": "sql-injection",
+            "file": "lib/auth/lookup.ts",
+            "line": 42,
+            "startLine": 40,
+            "title": "SQL injection in user lookup",
+            "body": "User input interpolated directly into query string.",
+            "category": "Security"
+          }
+        ],
+        "reviewState": {
+          "lastReviewedSha": "ddd4444",
+          "openIssues": [{ "id": "sql-injection", "file": "lib/auth/lookup.ts", "severity": "P0", "summary": "SQL injection" }],
+          "resolvedIssues": [],
+          "reviewCount": 3
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "JSON.parse(output).metadata.verdict === 'BLOCK'"
+      metric: correct_verdict
+    - type: javascript
+      value: "JSON.parse(output).metadata.severityCounts.P0 === 1"
+      metric: severity_counts
+    - type: javascript
+      value: "JSON.parse(output).metadata.inlineAnchors.length === 1"
+      metric: inline_anchors_extracted
+    - type: javascript
+      value: "JSON.parse(output).metadata.inlineAnchors[0].issueId === 'sql-injection'"
+      metric: anchor_id_correct
+
+- description: "No metadata marker — returns null"
+  vars:
+    raw_output: |
+      ## ✅ Polaris Review Pass 1: APPROVE
+
+      Looks good, no issues found.
+  assert:
+    - type: javascript
+      value: "output === 'null'"
+      metric: null_on_missing_marker
+
+- description: "Malformed JSON after metadata marker — returns null"
+  vars:
+    raw_output: |
+      ## ✅ Review
+
+      <!-- polaris:metadata -->
+      ```json
+      {invalid json here}
+      ```
+  assert:
+    - type: javascript
+      value: "output === 'null'"
+      metric: null_on_malformed_json
+
+- description: "Empty string — returns null"
+  vars:
+    raw_output: ""
+  assert:
+    - type: javascript
+      value: "output === 'null'"
+      metric: null_on_empty
+
+- description: "Incremental review with resolved issues from previous pass"
+  vars:
+    raw_output: |
+      ## ✅ Polaris Review Pass 4: APPROVE
+
+      The previous P1 finding has been addressed. No new issues.
+
+      ### Resolved Issues
+
+      - ~~sql-injection: SQL injection in user lookup~~ ✅
+
+      <sub>Polaris Review Pass 4 · `eee5555` · Automated by Polaris</sub>
+
+      <!-- polaris:metadata -->
+      ```json
+      {
+        "verdict": "APPROVE",
+        "summary": "Previous P1 resolved, no new issues.",
+        "severityCounts": { "P0": 0, "P1": 0, "P2": 0 },
+        "resolvedIssueIds": ["sql-injection"],
+        "inlineAnchors": [],
+        "reviewState": {
+          "lastReviewedSha": "eee5555",
+          "openIssues": [],
+          "resolvedIssues": [{ "id": "sql-injection", "file": "lib/auth/lookup.ts", "summary": "SQL injection fixed", "resolvedInReview": 4 }],
+          "reviewCount": 4
+        }
+      }
+      ```
+  assert:
+    - type: javascript
+      value: "JSON.parse(output) !== null"
+      metric: parse_success
+    - type: javascript
+      value: "JSON.parse(output).metadata.resolvedIssueIds.includes('sql-injection')"
+      metric: resolved_ids_extracted
+    - type: javascript
+      value: "JSON.parse(output).metadata.reviewState.reviewCount === 4"
+      metric: review_count_correct
+    - type: javascript
+      value: "JSON.parse(output).metadata.reviewState.resolvedIssues[0].resolvedInReview === 4"
+      metric: resolved_in_review_tracked
+    - type: javascript
+      value: "JSON.parse(output).commentBody.includes('~~sql-injection')"
+      metric: resolved_section_preserved

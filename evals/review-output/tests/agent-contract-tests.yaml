@@ -1,0 +1,96 @@
+# Agent contract tests — verify Codex produces output that parseReviewOutput() can parse.
+# Uses the Codex SDK provider with a minimal review prompt and anonymized diff.
+
+- description: "Agent produces parseable APPROVE output for clean diff"
+  vars:
+    review_pass: 1
+    diff: |
+      diff --git a/lib/utils/format.ts b/lib/utils/format.ts
+      index abc1234..def5678 100644
+      --- a/lib/utils/format.ts
+      +++ b/lib/utils/format.ts
+      @@ -10,6 +10,10 @@ export function formatDate(date: Date): string {
+         return date.toISOString().split('T')[0];
+       }
+      +/** Format a number as currency with 2 decimal places. */
+      +export function formatCurrency(amount: number): string {
+      +  return `$${amount.toFixed(2)}`;
+      +}
+    changed_files: "lib/utils/format.ts"
+    pr_title: "feat: add formatCurrency utility"
+    head_sha: "abc1234"
+  assert:
+    - type: contains
+      value: "Polaris Review Pass 1"
+      metric: has_review_header
+    - type: contains
+      value: "<!-- polaris:metadata -->"
+      metric: has_metadata_marker
+    - type: regex
+      value: '"verdict":\s*"(APPROVE|ATTENTION|BLOCK)"'
+      metric: has_valid_verdict
+    - type: regex
+      value: '"reviewCount":\s*1'
+      metric: has_review_count
+    - type: regex
+      value: '"severityCounts"'
+      metric: has_severity_counts
+    - type: javascript
+      value: |
+        // Verify the full output is parseable by our parser
+        const markerIdx = output.lastIndexOf('<!-- polaris:metadata -->');
+        if (markerIdx === -1) return false;
+        const afterMarker = output.slice(markerIdx + '<!-- polaris:metadata -->'.length);
+        const jsonMatch = afterMarker.match(/```json\s*\n([\s\S]*?)```/);
+        if (!jsonMatch) return false;
+        try { JSON.parse(jsonMatch[1].trim()); return true; } catch { return false; }
+      metric: metadata_json_valid
+      weight: 3
+
+- description: "Agent produces ATTENTION output with findings for buggy diff"
+  vars:
+    review_pass: 1
+    diff: |
+      diff --git a/lib/api/users.ts b/lib/api/users.ts
+      index abc1234..def5678 100644
+      --- a/lib/api/users.ts
+      +++ b/lib/api/users.ts
+      @@ -15,8 +15,7 @@ export async function getUser(id: string) {
+       }
+
+       export async function searchUsers(query: string) {
+      -  const result = await db.query(`SELECT * FROM users WHERE name = $1`, [query]);
+      +  const result = await db.query(`SELECT * FROM users WHERE name = '${query}'`);
+         return result.rows;
+       }
+    changed_files: "lib/api/users.ts"
+    pr_title: "refactor: simplify user search query"
+    head_sha: "def5678"
+  assert:
+    - type: contains
+      value: "Polaris Review Pass 1"
+      metric: has_review_header
+    - type: contains
+      value: "<!-- polaris:metadata -->"
+      metric: has_metadata_marker
+    - type: regex
+      value: '"verdict":\s*"(ATTENTION|BLOCK)"'
+      metric: catches_security_issue
+      weight: 3
+    - type: javascript
+      value: |
+        const markerIdx = output.lastIndexOf('<!-- polaris:metadata -->');
+        if (markerIdx === -1) return false;
+        const afterMarker = output.slice(markerIdx + '<!-- polaris:metadata -->'.length);
+        const jsonMatch = afterMarker.match(/```json\s*\n([\s\S]*?)```/);
+        if (!jsonMatch) return false;
+        try {
+          const meta = JSON.parse(jsonMatch[1].trim());
+          return meta.severityCounts.P0 > 0 || meta.severityCounts.P1 > 0;
+        } catch { return false; }
+      metric: severity_reflects_finding
+      weight: 2
+    - type: icontains
+      value: "injection"
+      metric: identifies_injection
+      weight: 2

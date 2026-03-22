@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+#
+# Review Agent Contract — End-to-End Eval
+#
+# Tests that the Codex agent produces output conforming to the review contract:
+# - Correct header format (## emoji Polaris Review Pass N: VERDICT)
+# - Valid metadata JSON block after <!-- polaris:metadata --> marker
+# - Catches real issues (SQL injection in test diff)
+#
+# Uses Codex CLI auth (~/.codex/auth.json) — no OPENAI_API_KEY needed.
+# Run separately from parser tests:
+#   npx promptfoo@latest eval -c evals/review-output/promptfooconfig.agent.yaml --no-cache
+
+description: "Review agent contract: Codex produces parseable review output"
+
+prompts:
+  - file://prompts/review.txt
+
+providers:
+  - id: "openai:chat:gpt-4.1-mini"
+    label: "GPT-4.1 Mini"
+    config:
+      temperature: 0
+
+tests: file://tests/agent-contract-tests.yaml

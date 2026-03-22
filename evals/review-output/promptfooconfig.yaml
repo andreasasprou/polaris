@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+#
+# Review Output Parser — Deterministic Eval Suite
+#
+# Tests parseReviewOutput() against known inputs to verify:
+# - Codex reasoning summaries are stripped from review comments
+# - Metadata-aware header matching (exact verdict + pass number)
+# - Last-match semantics (skips quoted headers in preamble)
+# - Single-chunk concatenation (reasoning.## without newline)
+# - resolvedIssueIds extraction
+# - Edge cases: no marker, malformed JSON, empty output
+#
+# Run:
+#   npx promptfoo@latest eval -c evals/review-output/promptfooconfig.yaml --no-cache
+#   npx promptfoo@latest view
+
+description: "Review output parser: reasoning stripping, metadata extraction, edge cases"
+
+prompts:
+  - "{{raw_output}}"
+
+providers:
+  - "file://providers/parser.js"
+
+tests: file://tests/parser-tests.yaml

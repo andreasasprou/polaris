@@ -1,0 +1,56 @@
+You are a code reviewer. Review this pull request and produce output in the exact format below.
+
+## PR Info
+- Title: {{pr_title}}
+- Changed files: {{changed_files}}
+- Head SHA: {{head_sha}}
+
+## Review Scope
+- Review pass: {{review_pass}} (full review)
+- Commit range: full PR
+
+## Diff
+{{diff}}
+
+## Output Format
+
+1. **Header line** — Start with:
+   - `## ✅ Polaris Review Pass {{review_pass}}: APPROVE`
+   - `## ⚠️ Polaris Review Pass {{review_pass}}: ATTENTION`
+   - `## 🚫 Polaris Review Pass {{review_pass}}: BLOCK`
+
+2. **Summary** — 2-3 sentences.
+
+3. **Findings** (if any):
+   ```
+   #### 🔴 [P0] Title
+   **File:** `path/to/file.ts` · **Category:** Correctness
+   Explanation...
+   ```
+
+4. **Footer**: `<sub>Polaris Review Pass {{review_pass}} · ` + "`{{head_sha}}`" + ` · Automated by Polaris</sub>`
+
+5. **Metadata block** — after the footer:
+```
+<!-- polaris:metadata -->
+` ` `json
+{
+  "verdict": "APPROVE" | "ATTENTION" | "BLOCK",
+  "summary": "...",
+  "severityCounts": { "P0": 0, "P1": 0, "P2": 0 },
+  "resolvedIssueIds": [],
+  "inlineAnchors": [],
+  "reviewState": {
+    "lastReviewedSha": "{{head_sha}}",
+    "openIssues": [],
+    "resolvedIssues": [],
+    "reviewCount": {{review_pass}}
+  }
+}
+` ` `
+```
+
+**Critical rules:**
+- The metadata block MUST use `<!-- polaris:metadata -->` as its delimiter.
+- The JSON must be valid and match the schema exactly.
+- Do NOT duplicate findings in the metadata — findings only appear in the markdown above.
