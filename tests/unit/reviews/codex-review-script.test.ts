@@ -7,9 +7,11 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   buildIssueSeverityMap,
+  buildInlineReviewTrackingState,
   formatInlineBody,
   formatReviewLabel,
   MARKERS,
+  normalizeActiveInlineReviewIds,
   postResults,
   summarizePreviousState,
 } = require("../../../.github/scripts/codex-review/index.cjs");
@@ -135,6 +137,7 @@ describe("codex review script helpers", () => {
       reviewCommentId: 2,
       lastReviewedSha: "abc1234",
       reviewCount: 3,
+      activeInlineReviewIds: [99],
       lastInlineReviewId: 99,
     });
   });
@@ -150,6 +153,21 @@ describe("codex review script helpers", () => {
       }),
     ).toMatchObject({
       lastInlineReviewId: 77,
+    });
+  });
+
+  it("normalizes active inline review IDs from legacy state", () => {
+    expect(
+      normalizeActiveInlineReviewIds({
+        lastInlineReviewId: 77,
+      }),
+    ).toEqual([77]);
+  });
+
+  it("builds tracking state from active inline review IDs", () => {
+    expect(buildInlineReviewTrackingState([77, 88])).toEqual({
+      activeInlineReviewIds: [77, 88],
+      lastInlineReviewId: 88,
     });
   });
 
@@ -177,6 +195,7 @@ describe("codex review script helpers", () => {
       previousState: {
         reviewCount: 3,
         lastInlineReviewId: 77,
+        activeInlineReviewIds: [77],
         stateCommentId: 12,
       },
       outputDir,
@@ -185,13 +204,13 @@ describe("codex review script helpers", () => {
     expect(calls.dismissReview).toHaveLength(1);
     expect(calls.createReview).toHaveLength(0);
     expect(calls.updateComment).toHaveLength(1);
-    expect(
-      decodePersistedState(String(calls.updateComment[0].body))
-        .lastInlineReviewId,
-    ).toBeNull();
+    expect(decodePersistedState(String(calls.updateComment[0].body))).toMatchObject({
+      activeInlineReviewIds: [],
+      lastInlineReviewId: null,
+    });
   });
 
-  it("retains the previous inline review ID when dismissal fails", async () => {
+  it("retains old inline review IDs and still posts the replacement review when dismissal fails", async () => {
     const outputDir = writeReviewOutput({
       review_markdown: "## Codex Review Pass 4 — Verdict: ATTENTION",
       inline_comments: [
@@ -237,17 +256,18 @@ describe("codex review script helpers", () => {
       previousState: {
         reviewCount: 3,
         lastInlineReviewId: 77,
+        activeInlineReviewIds: [77],
         stateCommentId: 12,
       },
       outputDir,
     });
 
     expect(calls.dismissReview).toHaveLength(1);
-    expect(calls.createReview).toHaveLength(0);
-    expect(
-      decodePersistedState(String(calls.updateComment[0].body))
-        .lastInlineReviewId,
-    ).toBe(77);
+    expect(calls.createReview).toHaveLength(1);
+    expect(decodePersistedState(String(calls.updateComment[0].body))).toMatchObject({
+      activeInlineReviewIds: [77, 901],
+      lastInlineReviewId: 901,
+    });
   });
 
   it("documents nullable inline comment fields as required keys", () => {

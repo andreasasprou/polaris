@@ -112,6 +112,7 @@ export interface AutomationSessionMetadata {
   reviewState: ReviewState | null;
   reviewCount: number;
   lastCommentId: string | null;
+  activeInlineReviewIds?: number[] | null;
   lastInlineReviewId?: number | null;
   lastCheckRunId: string | null;
   lastCompletedRunId: string | null;

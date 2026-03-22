@@ -123,15 +123,44 @@ async function loadPreviousState({ github, owner, repo, prNumber, reset }) {
 }
 
 function summarizePreviousState(previousState) {
+  const activeInlineReviewIds =
+    previousState?.activeInlineReviewIds?.length
+      ? previousState.activeInlineReviewIds
+      : previousState?.state?.activeInlineReviewIds?.length
+        ? previousState.state.activeInlineReviewIds
+        : previousState?.lastInlineReviewId != null
+          ? [previousState.lastInlineReviewId]
+          : previousState?.state?.lastInlineReviewId != null
+            ? [previousState.state.lastInlineReviewId]
+            : [];
+
   return {
     stateCommentId: previousState?.stateCommentId ?? null,
     reviewCommentId: previousState?.reviewCommentId ?? null,
     lastReviewedSha: previousState?.lastReviewedSha ?? null,
     reviewCount: previousState?.reviewCount ?? 0,
+    activeInlineReviewIds,
     lastInlineReviewId:
-      previousState?.lastInlineReviewId ??
-      previousState?.state?.lastInlineReviewId ??
-      null,
+      activeInlineReviewIds[activeInlineReviewIds.length - 1] ?? null,
+  };
+}
+
+function normalizeActiveInlineReviewIds(previousState) {
+  const summary = summarizePreviousState(previousState);
+  return Array.from(
+    new Set(
+      (summary.activeInlineReviewIds || []).filter(
+        (reviewId) => Number.isInteger(reviewId) && reviewId > 0
+      )
+    )
+  );
+}
+
+function buildInlineReviewTrackingState(activeInlineReviewIds) {
+  return {
+    activeInlineReviewIds,
+    lastInlineReviewId:
+      activeInlineReviewIds[activeInlineReviewIds.length - 1] ?? null,
   };
 }
 
@@ -497,8 +526,7 @@ async function postResults({
   }
 
   const verdict = extractVerdict(reviewBody);
-  const previousInlineReviewId = previousState?.lastInlineReviewId ?? null;
-  let lastInlineReviewId = previousInlineReviewId;
+  let activeInlineReviewIds = normalizeActiveInlineReviewIds(previousState);
 
   // Step 1: Post new summary comment (most important — do first)
   let newCommentId = null;
@@ -516,39 +544,35 @@ async function postResults({
   }
 
   // Step 2: Reconcile inline review lifecycle (best-effort, after summary)
-  let previousInlineReviewCleared = previousInlineReviewId == null;
-  if (previousInlineReviewId != null) {
+  if (activeInlineReviewIds.length > 0) {
+    const remainingInlineReviewIds = [];
     try {
-      const dismissed = await dismissInlineReview({
-        github,
-        owner,
-        repo,
-        prNumber,
-        reviewId: previousInlineReviewId,
-        message: `Superseded by ${formatReviewLabel(reviewNumber)}`,
-      });
+      for (const reviewId of activeInlineReviewIds) {
+        const dismissed = await dismissInlineReview({
+          github,
+          owner,
+          repo,
+          prNumber,
+          reviewId,
+          message: `Superseded by ${formatReviewLabel(reviewNumber)}`,
+        });
 
-      if (dismissed) {
-        lastInlineReviewId = null;
-        previousInlineReviewCleared = true;
-        log(`Dismissed previous inline review ${previousInlineReviewId}`);
-      } else {
-        log(
-          `Could not dismiss previous inline review ${previousInlineReviewId}; keeping it active`
-        );
+        if (dismissed) {
+          log(`Dismissed previous inline review ${reviewId}`);
+        } else {
+          remainingInlineReviewIds.push(reviewId);
+          log(`Could not dismiss previous inline review ${reviewId}; keeping it active`);
+        }
       }
     } catch (e) {
       log(`Inline review dismissal failed (non-fatal): ${e.message}`);
     }
+    activeInlineReviewIds = remainingInlineReviewIds;
   }
 
   if (inlineComments.length > 0) {
     if (!headSha) {
       log('Skipping inline review post: missing head SHA');
-    } else if (!previousInlineReviewCleared) {
-      log(
-        `Skipping inline review post: previous inline review ${previousInlineReviewId} is still active`
-      );
     } else {
       try {
         const issueSeverityById = buildIssueSeverityMap(reviewState);
@@ -564,7 +588,7 @@ async function postResults({
         });
 
         if (result) {
-          lastInlineReviewId = result.reviewId;
+          activeInlineReviewIds = [...activeInlineReviewIds, result.reviewId];
           log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
         }
       } catch (e) {
@@ -583,7 +607,10 @@ async function postResults({
         owner,
         repo,
         prNumber,
-        state: { ...reviewState, lastInlineReviewId },
+        state: {
+          ...reviewState,
+          ...buildInlineReviewTrackingState(activeInlineReviewIds),
+        },
         stateCommentId: previousState?.stateCommentId,
       });
       log('State persisted');
@@ -642,6 +669,8 @@ module.exports = {
   parseCommand,
   postResults,
   summarizePreviousState,
+  normalizeActiveInlineReviewIds,
+  buildInlineReviewTrackingState,
   formatReviewLabel,
   formatSeverityBadge,
   formatInlineBody,

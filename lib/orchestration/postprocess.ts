@@ -311,6 +311,10 @@ async function postprocessReview(job: JobRow): Promise<void> {
     buildIssueSeverityMap,
   } = await import("@/lib/reviews/inline-comments");
   const {
+    normalizeActiveInlineReviewIds,
+    buildInlineReviewTrackingState,
+  } = await import("@/lib/reviews/inline-review-state");
+  const {
     formatReviewHeading,
     formatReviewLabel,
   } = await import("@/lib/reviews/formatting");
@@ -332,6 +336,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const reviewScope = (payload.reviewScope as string) ?? "full";
   const lastCommentId = payload.lastCommentId as string | undefined;
   const orgId = job.organizationId;
+  let activeInlineReviewIds: number[] = [];
 
   // Read persisted output from the result.
   // Prefer allOutput (full concatenated output) over lastMessage (only final
@@ -370,21 +375,39 @@ async function postprocessReview(job: JobRow): Promise<void> {
           "@/lib/automations/actions"
         );
         const sessionForDismiss = await getSessionForDismiss(automationSessionId);
-        const prevReviewId = sessionForDismiss?.metadata?.lastInlineReviewId;
-        if (prevReviewId) {
-          await dismissReview({
+        activeInlineReviewIds = normalizeActiveInlineReviewIds(
+          sessionForDismiss?.metadata ?? {},
+        );
+        const remainingInlineReviewIds: number[] = [];
+
+        for (const reviewId of activeInlineReviewIds) {
+          const dismissed = await dismissReview({
             installationId,
             owner,
             repo,
             prNumber,
-            reviewId: prevReviewId,
+            reviewId,
             message: `Superseded by ${formatReviewLabel(reviewSequence)}`,
           });
+
+          if (!dismissed) {
+            remainingInlineReviewIds.push(reviewId);
+          }
         }
+
+        activeInlineReviewIds = remainingInlineReviewIds;
       } catch {
         // Best-effort — COMMENT reviews may not be dismissible
       }
       await markSideEffect(job.id, "inline_review_dismissed");
+    } else if (automationSessionId) {
+      const { getAutomationSession: getSessionForInlineState } = await import(
+        "@/lib/automations/actions"
+      );
+      const sessionForInlineState = await getSessionForInlineState(automationSessionId);
+      activeInlineReviewIds = normalizeActiveInlineReviewIds(
+        sessionForInlineState?.metadata ?? {},
+      );
     }
 
     // 3. Update session metadata (survives comment post failure)
@@ -401,6 +424,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
           headSha: toSha,
           reviewCount: reviewSequence,
           lastCompletedRunId: automationRunId ?? null,
+          ...buildInlineReviewTrackingState(activeInlineReviewIds),
           ...(parsed
             ? {
                 lastReviewedSha: toSha,
@@ -488,13 +512,20 @@ async function postprocessReview(job: JobRow): Promise<void> {
               comments,
             });
             if (inlineResult && automationSessionId) {
+              activeInlineReviewIds = [
+                ...activeInlineReviewIds,
+                inlineResult.reviewId,
+              ];
               const { getAutomationSession: getSessionForInline } = await import(
                 "@/lib/automations/actions"
               );
               const sessionForInline = await getSessionForInline(automationSessionId);
               if (sessionForInline?.metadata) {
                 await updateAutomationSession(automationSessionId, {
-                  metadata: { ...sessionForInline.metadata, lastInlineReviewId: inlineResult.reviewId },
+                  metadata: {
+                    ...sessionForInline.metadata,
+                    ...buildInlineReviewTrackingState(activeInlineReviewIds),
+                  },
                 });
               }
             }

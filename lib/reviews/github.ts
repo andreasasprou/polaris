@@ -253,7 +253,7 @@ export async function dismissReview(input: {
   prNumber: number;
   reviewId: number;
   message: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const octokit = await getInstallationOctokitById(input.installationId);
   try {
     await octokit.rest.pulls.dismissReview({
@@ -263,8 +263,10 @@ export async function dismissReview(input: {
       review_id: input.reviewId,
       message: input.message,
     });
+    return true;
   } catch {
     // Best-effort — COMMENT reviews may not be dismissible
+    return false;
   }
 }
 
