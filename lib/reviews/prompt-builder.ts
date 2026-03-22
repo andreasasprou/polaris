@@ -82,6 +82,13 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
 
 // ── Static sections ──
 
+// NOTE FOR ENGINEERS: We explicitly forbid the agent from running tests, lint,
+// typecheck, or any build commands. This is intentional — the review agent's
+// value is in deep reasoning about correctness, not in being a CI runner.
+// Running build commands wastes sandbox time (the agent takes much longer to
+// respond), dependencies aren't installed in the review sandbox anyway, and
+// CI already covers lint/test/typecheck. The agent should focus on finding
+// bugs through reasoning about how the code could cause problems if merged.
 const SYSTEM_SECTION = `## Role
 
 You are a senior code reviewer performing a structured PR review. Your job is to identify real issues that matter — bugs, security vulnerabilities, design problems, and missing tests — while ignoring style preferences and nitpicks.
@@ -91,7 +98,8 @@ You are a senior code reviewer performing a structured PR review. Your job is to
 - Every finding must reference a specific file and explain the problem concretely
 - Assign severity honestly: P0 for blocking issues, P1 for important concerns, P2 for suggestions
 - If the code looks good, say so — don't manufacture issues to fill a quota
-- For incremental reviews, focus on NEW changes and check if previously raised issues are resolved`;
+- For incremental reviews, focus on NEW changes and check if previously raised issues are resolved
+- **NEVER run tests, lint, typecheck, build, or install commands** (e.g. \`pnpm test\`, \`npm run lint\`, \`tsc\`, \`pnpm install\`). CI handles these. Dependencies are not installed in the review sandbox. Your value is in reasoning about correctness, not running commands that CI already covers.`;
 
 const SEVERITY_SECTION = `## Severity Levels
 
@@ -286,8 +294,9 @@ function formatPreparedDiffInstructions(input: BuildReviewPromptInput): string {
     `1. Read \`${diffPrepared.filePath}\` to understand all changes`,
     `2. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,
     `3. Pay special attention to production-classified files`,
-    `4. Check for missing tests, error handling gaps, and security issues`,
+    `4. Reason about correctness: could this code cause bugs, data loss, security issues, or regressions? Think about edge cases and failure modes.`,
     `5. If the diff was truncated, run the git setup commands and explore the remaining files`,
+    `6. Do NOT run tests, lint, typecheck, build, or install commands — CI covers these and dependencies are not available`,
   );
 
   return parts.join("\n");
@@ -349,7 +358,8 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
     `3. Read the full diff or review file-by-file for focused analysis`,
     `4. For each changed file, read surrounding code to understand context and catch issues the diff alone wouldn't reveal`,
     `5. Pay special attention to production-classified files`,
-    `6. Check for missing tests, error handling gaps, and security issues`,
+    `6. Reason about correctness: could this code cause bugs, data loss, security issues, or regressions? Think about edge cases and failure modes.`,
+    `7. Do NOT run tests, lint, typecheck, build, or install commands — CI covers these and dependencies are not available`,
   );
 
   return parts.join("\n");
