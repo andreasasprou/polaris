@@ -369,9 +369,9 @@ export async function dispatchPrReview(
       (lastRuntime
         ? (lastRuntime.model ?? null) !== effectiveModel ||
           (lastRuntime.effort ?? null) !== effectiveEffort
-        : resolvedRuntime !== null && (
-            resolvedRuntime.model !== "" ||
-            resolvedRuntime.modelParams.effortLevel !== undefined
+        : resolvedRuntime !== null && repoConfigResult.status === "found" && (
+            repoConfigResult.definition.model !== undefined ||
+            repoConfigResult.definition.effort !== undefined
           ))
     );
 
