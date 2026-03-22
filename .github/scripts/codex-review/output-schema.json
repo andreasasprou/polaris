@@ -27,7 +27,8 @@
               "first_seen_head_sha": { "type": "string" },
               "last_seen_head_sha": { "type": "string" }
             },
-            "required": ["id", "severity", "title", "location", "status"]
+            "required": ["id", "severity", "title", "location", "status", "category", "first_seen_head_sha", "last_seen_head_sha"],
+            "additionalProperties": false
           }
         },
         "recently_resolved_issues": {
@@ -39,11 +40,13 @@
               "resolved_in_head_sha": { "type": "string" },
               "resolution": { "type": "string" }
             },
-            "required": ["id"]
+            "required": ["id", "resolved_in_head_sha", "resolution"],
+            "additionalProperties": false
           }
         }
       },
-      "required": ["schema_version", "last_reviewed_head_sha", "review_count", "open_issues"]
+      "required": ["schema_version", "last_reviewed_head_sha", "review_count", "updated_at", "open_issues", "recently_resolved_issues"],
+      "additionalProperties": false
     }
   },
   "required": ["review_markdown", "state"],
