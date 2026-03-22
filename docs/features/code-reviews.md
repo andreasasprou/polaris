@@ -155,17 +155,17 @@ The YAML file defines *what* to review and *how*; the connector provides the def
 
 ## Credentials
 
-YAML files reference credentials by **slug** — the name of a key pool or the label of an API key from Settings > API Keys. Actual secrets never appear in the YAML.
+YAML files reference credentials by **label** — the label of an API key or the name of a key pool from Settings > API Keys. Use the label only, not the `"provider — label"` format shown in the UI.
 
 ```yaml
-credential: "my-anthropic-pool"    # matches a key pool name in Polaris
+credential: "onboarding"    # matches the "Label" column in Settings > API Keys
 ```
 
 Resolution order:
 1. Key pools — matched by pool name within your organization
 2. Individual API keys — matched by key label within your organization
 
-If the slug doesn't match any credential, the review fails with a clear error in the GitHub check. If `credential` is omitted, the connector's default credential is used.
+If the label doesn't match any credential, the review fails with a clear error in the GitHub check. If `credential` is omitted, the connector's default credential is used.
 
 ## Current limitations
 
