@@ -4,7 +4,11 @@ export function processPayment(amount: number, cardNumber: string): string {
   return `receipt-${Date.now()}`;
 }
 
-export function hashPassword(password: string): string {
-  // Bug: not actually hashing — just returns the password
-  return password;
+export async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
