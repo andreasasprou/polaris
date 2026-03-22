@@ -369,15 +369,21 @@ async function postprocessReview(job: JobRow): Promise<void> {
     }
 
     // 2b. Dismiss previous inline review (best-effort)
+    //
+    // Load activeInlineReviewIds BEFORE the dismissal try/catch so that
+    // even if dismissal fails, step 3 has the correct pre-existing IDs
+    // and won't overwrite them with []. If the session load itself fails,
+    // it propagates to the outer catch — step 3 can't persist either.
     if (automationSessionId && !sideEffects.inline_review_dismissed) {
+      const { getAutomationSession: getSessionForDismiss } = await import(
+        "@/lib/automations/actions"
+      );
+      const sessionForDismiss = await getSessionForDismiss(automationSessionId);
+      activeInlineReviewIds = normalizeActiveInlineReviewIds(
+        sessionForDismiss?.metadata ?? {},
+      );
+
       try {
-        const { getAutomationSession: getSessionForDismiss } = await import(
-          "@/lib/automations/actions"
-        );
-        const sessionForDismiss = await getSessionForDismiss(automationSessionId);
-        activeInlineReviewIds = normalizeActiveInlineReviewIds(
-          sessionForDismiss?.metadata ?? {},
-        );
         const remainingInlineReviewIds: number[] = [];
 
         for (const reviewId of activeInlineReviewIds) {
@@ -399,10 +405,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
         await markSideEffect(job.id, "inline_review_dismissed");
       } catch {
         // Best-effort — COMMENT reviews may not be dismissible.
-        // Don't mark side effect: if loading the session failed, retrying
-        // must re-enter this block to properly load activeInlineReviewIds.
-        // Otherwise activeInlineReviewIds stays [] and step 3 wipes the
-        // tracked IDs, causing zombie reviews that can never be dismissed.
+        // activeInlineReviewIds retains the pre-dismissal list so step 3
+        // preserves existing tracked IDs instead of wiping them.
       }
     } else if (automationSessionId) {
       const { getAutomationSession: getSessionForInlineState } = await import(
