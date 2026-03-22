@@ -325,21 +325,19 @@ async function fetchInlineCommentMap({
         per_page: 100,
       });
 
-    // Match review comments back to our inline comments by file+line.
-    // Use original_line (at review creation time) and coerce types.
-    for (const rc of reviewComments) {
-      const rcLine = rc.original_line ?? rc.line;
-      const match = inlineComments.find(
-        (ic) => ic.file === rc.path && Number(ic.line) === Number(rcLine)
-      );
-      if (match?.issue_id) {
-        commentMap[match.issue_id] = rc.id;
+    // Match review comments back to inline comments by order.
+    // We create the review with comments in the same order as inlineComments,
+    // and the API returns them in creation order, so positional matching works.
+    // Also filter to only comments from this review to avoid cross-contamination.
+    const thisReviewComments = reviewComments.filter(
+      (rc) => rc.pull_request_review_id === reviewId
+    );
+    for (let i = 0; i < Math.min(thisReviewComments.length, inlineComments.length); i++) {
+      const rc = thisReviewComments[i];
+      const ic = inlineComments[i];
+      if (rc.path === ic.file && ic.issue_id) {
+        commentMap[ic.issue_id] = rc.id;
       }
-    }
-    if (Object.keys(commentMap).length === 0 && reviewComments.length > 0) {
-      console.log(`[codex-review] Debug: API comment keys: ${JSON.stringify(Object.keys(reviewComments[0] || {}))}`);
-      console.log(`[codex-review] Debug: API comment[0]: ${JSON.stringify({ id: reviewComments[0]?.id, path: reviewComments[0]?.path, line: reviewComments[0]?.line, original_line: reviewComments[0]?.original_line, position: reviewComments[0]?.position, original_position: reviewComments[0]?.original_position })}`);
-      console.log(`[codex-review] Debug: Expected: ${JSON.stringify(inlineComments.map(ic => ({ issue_id: ic.issue_id, file: ic.file, line: ic.line })))}`);
     }
     console.log(
       `[codex-review] Comment map: ${JSON.stringify(commentMap)} (from ${reviewComments.length} review comments)`
