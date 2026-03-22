@@ -79,6 +79,22 @@ export async function updateMcpServerAuth(
     );
 }
 
+export async function refreshMcpServerAuth(
+  id: string,
+  organizationId: string,
+  authConfig: AuthConfig,
+) {
+  await db
+    .update(mcpServers)
+    .set({
+      encryptedAuthConfig: encrypt(JSON.stringify(authConfig)),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(mcpServers.id, id), eq(mcpServers.organizationId, organizationId)),
+    );
+}
+
 export async function clearMcpServerAuth(
   id: string,
   organizationId: string,

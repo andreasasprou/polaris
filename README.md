@@ -75,7 +75,10 @@ All required variables are documented in **`.env.example`**. The key groups:
 | Auth | `BETTER_AUTH_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | GitHub OAuth for user login |
 | GitHub App | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_B64`, `GITHUB_APP_WEBHOOK_SECRET`, `GITHUB_APP_SLUG` | See [GitHub App setup](#github-app) below |
 | Vercel Sandbox | `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` | |
+| MCP Marketplace | `SENTRY_MCP_CLIENT_ID` | Required to enable the built-in Sentry marketplace install |
 | Agent API Keys | Managed via web UI (**Settings > Secrets**) | Per-org encrypted storage; env var fallbacks available |
+
+`NEXT_PUBLIC_SENTRY_MCP_CLIENT_ID` is also supported as a local-development fallback, but production deployments should prefer the server-side `SENTRY_MCP_CLIENT_ID`.
 
 #### GitHub App
 

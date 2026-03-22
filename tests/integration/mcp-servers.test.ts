@@ -22,6 +22,8 @@ describe("mcp-servers", async () => {
     updateMcpServerEnabled,
     updateMcpServerHeaders,
     updateMcpServerAuth,
+    refreshMcpServerAuth,
+    updateMcpServerTestResult,
     updateMcpServerOAuthMetadata,
     clearMcpServerAuth,
   } = await import("@/lib/mcp-servers/actions");
@@ -239,6 +241,41 @@ describe("mcp-servers", async () => {
       "https://oauth-provider.dev/token",
     );
     expect(updated!.oauthScopes).toBe("openid profile");
+  });
+
+  it("preserves cached tool state during token refresh", async () => {
+    const servers = await findMcpServersByOrg(TEST_ORG_ID);
+    const oauthServer = servers.find((s) => s.authType === "oauth")!;
+
+    await updateMcpServerTestResult(oauthServer.id, TEST_ORG_ID, {
+      status: "ok",
+      tools: [
+        {
+          name: "search_issues",
+          description: "Search issues",
+          inputSchema: null,
+        },
+      ],
+    });
+
+    await refreshMcpServerAuth(oauthServer.id, TEST_ORG_ID, {
+      accessToken: "eyJ-refreshed-access-token",
+      refreshToken: "test-refresh-token-2",
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+    });
+
+    const refreshed = await findMcpServerByIdAndOrg(
+      oauthServer.id,
+      TEST_ORG_ID,
+    );
+    expect(refreshed!.lastTestStatus).toBe("ok");
+    expect(refreshed!.lastDiscoveredTools).toEqual([
+      {
+        name: "search_issues",
+        description: "Search issues",
+        inputSchema: null,
+      },
+    ]);
   });
 
   it("clears auth config on clearMcpServerAuth", async () => {

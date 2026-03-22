@@ -2,7 +2,10 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/credentials/encryption";
 import { getCatalogTemplate, MCP_CATALOG } from "./catalog";
-import { clearMcpServerAuthIfStale, updateMcpServerAuth } from "./actions";
+import {
+  clearMcpServerAuthIfStale,
+  refreshMcpServerAuth,
+} from "./actions";
 import { mcpServers } from "./schema";
 import type {
   CatalogInstallationView,
@@ -288,7 +291,7 @@ async function resolveServer(row: McpRow): Promise<McpServerEntry | null> {
           const tokens = await refreshRes.json();
           accessToken = tokens.access_token ?? accessToken;
 
-          await updateMcpServerAuth(row.id, row.organizationId, {
+          await refreshMcpServerAuth(row.id, row.organizationId, {
             accessToken,
             refreshToken: tokens.refresh_token ?? oauthConfig.refreshToken,
             expiresAt: tokens.expires_in ? now + tokens.expires_in : now + 3600,

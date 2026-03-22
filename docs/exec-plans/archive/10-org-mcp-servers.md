@@ -1,6 +1,6 @@
 ---
 title: Org-Level MCP Server Configuration
-status: planned
+status: superseded
 created: 2026-03-20
 owner: andreas
 related_prs: []
@@ -8,6 +8,8 @@ domains: [lib/mcp-servers, lib/sandbox-proxy, lib/sandbox-agent, lib/orchestrati
 ---
 
 # 10 — Org-Level MCP Server Configuration
+
+Superseded by `docs/exec-plans/active/11-mcp-marketplace.md`. The shipped MCP product surface is `/{orgSlug}/integrations/mcp` and `/{orgSlug}/integrations/mcp/custom`, not the legacy `/settings/mcp` flow described here.
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries, Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds. This document must be maintained in accordance with docs/exec-plans/PLANS.md (if present) or the ExecPlan format described in the project's agent instructions.
 
