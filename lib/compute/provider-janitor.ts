@@ -55,8 +55,8 @@ export async function reconcileProvider(): Promise<JanitorResult> {
 
   if (allRunning.length === 0) return result;
 
-  // 2. Get all known sandbox IDs from our DB (any status — a recently-stopped
-  // runtime's sandbox might still show as "running" in Vercel briefly)
+  // 2. Get all known sandbox IDs from our DB (only live statuses — failed/stopped
+  // runtimes don't protect their sandbox from cleanup)
   const knownIds = await getKnownSandboxIds();
 
   // 3. Reconcile
