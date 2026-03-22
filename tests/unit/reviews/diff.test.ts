@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { buildChangedLineIndex } from "@/lib/reviews/diff";
 
 /**
  * Tests for lib/reviews/diff.ts
@@ -16,6 +17,57 @@ import { describe, it, expect } from "vitest";
  */
 
 describe("reviews/diff", () => {
+  describe("buildChangedLineIndex", () => {
+    it("parses right-side changed ranges across multiple files", () => {
+      const diff = [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -10,2 +10,4 @@",
+        " line 10",
+        "+line 11",
+        "+line 12",
+        "diff --git a/src/b.ts b/src/b.ts",
+        "@@ -30,3 +40,2 @@",
+        "-old 1",
+        "-old 2",
+        "+new 1",
+        "+new 2",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/a.ts")).toEqual([{ start: 10, end: 13 }]);
+      expect(index.get("src/b.ts")).toEqual([{ start: 40, end: 41 }]);
+    });
+
+    it("skips pure deletions with no right-side lines", () => {
+      const diff = [
+        "diff --git a/src/deleted.ts b/src/deleted.ts",
+        "@@ -8,2 +8,0 @@",
+        "-old 1",
+        "-old 2",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.has("src/deleted.ts")).toBe(false);
+    });
+
+    it("tracks renamed files by the new path", () => {
+      const diff = [
+        "diff --git a/src/old-name.ts b/src/new-name.ts",
+        "@@ -1 +1,2 @@",
+        "-old",
+        "+new",
+        "+added",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/new-name.ts")).toEqual([{ start: 1, end: 2 }]);
+      expect(index.has("src/old-name.ts")).toBe(false);
+    });
+  });
+
   describe("fetchPRDiff", () => {
     it.skip("fetches PR diff and file list via GitHub API (requires Octokit)", () => {
       // Expected behavior:

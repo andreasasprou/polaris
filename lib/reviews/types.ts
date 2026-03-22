@@ -116,6 +116,8 @@ export interface AutomationSessionMetadata {
   lastInlineReviewId?: number | null;
   /** Maps issue IDs to GitHub review comment database IDs for reply-on-resolve */
   inlineCommentMap?: Record<string, number> | null;
+  /** Durable inline thread state for platform-owned reconciliation */
+  inlineThreads?: TrackedInlineThread[] | null;
   lastCheckRunId: string | null;
   lastCompletedRunId: string | null;
   pendingReviewRequest: QueuedReviewRequest | null;
@@ -178,6 +180,17 @@ export interface InlineAnchor {
   body: string;
   category?: string;
   suggestion?: string;
+}
+
+export interface TrackedInlineThread {
+  threadId: string;
+  commentId: number;
+  reviewId?: number | null;
+  issueId: string;
+  file: string;
+  line: number;
+  startLine?: number;
+  postedInPass?: number | null;
 }
 
 // ── Parsed review output ──

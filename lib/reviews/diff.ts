@@ -10,6 +10,8 @@ export interface DiffResult {
   truncated: boolean;
 }
 
+export type ChangedLineIndex = Map<string, Array<{ start: number; end: number }>>;
+
 /**
  * Fetch the PR diff and file list via GitHub API.
  * Truncates the diff to `maxBytes` (default 200KB) for prompt budget.
@@ -190,4 +192,55 @@ export async function fetchCommitRangeDiff(
   }
 
   return { diff, files, truncated };
+}
+
+/**
+ * Fetch the full diff between two commits for reconciliation logic.
+ * Unlike prompt-oriented helpers, this never truncates silently.
+ */
+export async function fetchFullCommitRangeDiff(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string,
+): Promise<string> {
+  const { data } = await octokit.rest.repos.compareCommits({
+    owner,
+    repo,
+    base: baseSha,
+    head: headSha,
+    mediaType: { format: "diff" },
+  });
+
+  return data as unknown as string;
+}
+
+/**
+ * Build an index of changed right-side line ranges per file from a unified diff.
+ */
+export function buildChangedLineIndex(diff: string): ChangedLineIndex {
+  const index: ChangedLineIndex = new Map();
+  let currentFile: string | null = null;
+
+  for (const line of diff.split("\n")) {
+    const fileMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (fileMatch) {
+      currentFile = fileMatch[2] ?? null;
+      continue;
+    }
+
+    const hunkMatch = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!hunkMatch || !currentFile) continue;
+
+    const start = Number(hunkMatch[1]);
+    const count = hunkMatch[2] == null ? 1 : Number(hunkMatch[2]);
+    if (!Number.isFinite(start) || !Number.isFinite(count) || count <= 0) continue;
+
+    const ranges = index.get(currentFile) ?? [];
+    ranges.push({ start, end: start + count - 1 });
+    index.set(currentFile, ranges);
+  }
+
+  return index;
 }

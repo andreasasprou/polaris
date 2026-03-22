@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import https from "node:https";
+import { Readable } from "node:stream";
 
 /** Check if an IP address is private/internal. */
 function isPrivateIp(ip: string): boolean {
@@ -183,6 +184,55 @@ export async function safeFetch(
   throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
 }
 
+export async function safeStreamingFetch(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const MAX_REDIRECTS = 3;
+  let currentUrl = url;
+
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    if (!isValidUrl(currentUrl)) {
+      throw new Error(`SSRF blocked: ${currentUrl} failed URL validation`);
+    }
+
+    const parsed = new URL(currentUrl);
+    const originalHostname = parsed.hostname;
+    const resolvedIp = await resolveToPublicIp(originalHostname);
+    const port = parsed.port ? parseInt(parsed.port) : 443;
+
+    const res = await httpsRequestWithPinnedIpStream({
+      ip: resolvedIp,
+      port,
+      servername: originalHostname,
+      method: (init.method ?? "GET") as string,
+      path: parsed.pathname + parsed.search,
+      headers: {
+        ...Object.fromEntries(new Headers(init.headers).entries()),
+        Host: parsed.port ? `${originalHostname}:${parsed.port}` : originalHostname,
+      },
+      body: init.body ? await bodyToString(init.body) : undefined,
+      signal: init.signal as AbortSignal | undefined,
+    });
+
+    if (res.statusCode < 300 || res.statusCode >= 400) {
+      return new Response(Readable.toWeb(res.stream) as ReadableStream, {
+        status: res.statusCode,
+        headers: res.headers,
+      });
+    }
+
+    const location = res.headers["location"];
+    res.stream.destroy();
+    if (!location) {
+      throw new Error(`Redirect ${res.statusCode} without Location header`);
+    }
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
+}
+
 /** Convert RequestInit body to string for node:https. */
 async function bodyToString(body: BodyInit | null | undefined): Promise<string | undefined> {
   if (!body) return undefined;
@@ -231,6 +281,60 @@ function httpsRequestWithPinnedIp(opts: {
           resolve({ statusCode: res.statusCode ?? 500, headers, body });
         });
         res.on("error", reject);
+      },
+    );
+
+    req.on("error", reject);
+
+    if (opts.signal) {
+      const onAbort = () => {
+        req.destroy(new DOMException("The operation was aborted.", "AbortError"));
+      };
+      opts.signal.addEventListener("abort", onAbort, { once: true });
+      req.on("close", () => opts.signal!.removeEventListener("abort", onAbort));
+    }
+
+    if (opts.body) req.write(opts.body);
+    req.end();
+  });
+}
+
+function httpsRequestWithPinnedIpStream(opts: {
+  ip: string;
+  port: number;
+  servername: string;
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+}): Promise<{ statusCode: number; headers: Record<string, string>; stream: import("node:http").IncomingMessage }> {
+  return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+      return;
+    }
+
+    const req = https.request(
+      {
+        hostname: opts.ip,
+        port: opts.port,
+        path: opts.path,
+        method: opts.method,
+        headers: opts.headers,
+        servername: opts.servername,
+      },
+      (res) => {
+        const headers: Record<string, string> = {};
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (typeof value === "string") headers[key] = value;
+          else if (Array.isArray(value)) headers[key] = value[0];
+        }
+        resolve({
+          statusCode: res.statusCode ?? 500,
+          headers,
+          stream: res,
+        });
       },
     );
 

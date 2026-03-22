@@ -284,7 +284,7 @@ export async function dispatchPrReview(
       loadRepoGuidelines(octokit, event.owner, event.repo, event.baseRef, reviewedPaths, {
         maxBytes: config.maxGuidelinesBytes,
       }),
-      reviewScope === "incremental" && fromSha
+      (reviewScope === "incremental" || reviewScope === "since") && fromSha
         ? fetchCommitRangeDiff(octokit, event.owner, event.repo, fromSha, toSha, {
             maxBytes: config.maxPromptDiffBytes,
           })
@@ -437,6 +437,7 @@ export async function dispatchPrReview(
         repo: event.repo,
         prNumber: event.prNumber,
         checkRunId,
+        fromSha,
         toSha,
         reviewSequence,
         reviewScope,

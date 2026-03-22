@@ -4,47 +4,58 @@ MCP Servers let you connect external tools — like Sentry, Datadog, or custom i
 
 ## How it works
 
-1. **Add an MCP server** in Settings > MCP Servers
-2. **Choose an auth method** — either static headers (e.g., Bearer token) or OAuth for providers that require it
+1. **Open the MCP Marketplace** at `/{orgSlug}/integrations/mcp`
+2. **Install a catalog integration or add your own** on `/{orgSlug}/integrations/mcp/[provider]` or `/{orgSlug}/integrations/mcp/custom`
 3. **Every session gets it** — all interactive sessions, coding tasks, and PR reviews in the workspace will connect to the configured servers when they start
 
 The agent sees the MCP server's tools alongside its built-in tools and can call them during prompts. For example, an agent connected to a Sentry MCP server can search issues, view stack traces, and analyze error patterns without you pasting anything into the prompt.
 
-## Adding a static-header server
+## Marketplace integrations
+
+The marketplace currently ships with:
+
+- **Sentry** — installed from its dedicated marketplace page and connected through OAuth discovery
+- **Datadog** — installed from its dedicated marketplace page with region selection plus static API/application keys
+
+Each marketplace integration has its own detail page with status, connection actions, and cached tool discovery results.
+
+## Adding a custom static-header server
 
 Most MCP servers accept a Bearer token or API key passed via HTTP headers.
 
-1. Go to **Settings > MCP Servers**
+1. Go to `/{orgSlug}/integrations/mcp/custom`
 2. Select the **Static Headers** tab
 3. Fill in the server name, URL, and transport (Streamable HTTP or SSE)
 4. Add at least one header — typically `Authorization: Bearer <your-token>`
-5. Click **Add server**
+5. Click **Create static server**
 
 The server appears in the list immediately and is active for all new sessions.
 
-## Adding an OAuth server
+## Adding a custom OAuth server
 
 Some providers (Sentry, etc.) require OAuth 2.1 authorization instead of static tokens.
 
-1. Go to **Settings > MCP Servers**
+1. Go to `/{orgSlug}/integrations/mcp/custom`
 2. Select the **OAuth** tab
 3. Fill in the server name, URL, transport, and the OAuth details:
    - **Client ID** — from the provider's developer console
    - **Authorization URL** — the provider's OAuth authorize endpoint
    - **Token URL** — the provider's OAuth token endpoint
    - **Scopes** — space-separated list (optional)
-4. Click **Add OAuth server**
-5. Click **Connect** on the server card — this redirects you to the provider's authorization page
-6. Authorize access — you'll be redirected back to the settings page with a "Connected" status
+4. Optionally use **Auto-discover** to populate the authorization and token endpoints from the MCP server metadata
+5. Click **Create and connect**
+6. Click **Connect** on the server card — this redirects you to the provider's authorization page
+7. Authorize access — you'll be redirected back to the custom-server page with a "Connected" status
 
 Tokens are encrypted at rest and refreshed automatically when they expire. If a token is revoked, the server shows "Not connected" and you can click **Connect** again to re-authorize.
 
 ## Managing servers
 
-Each server in the list can be:
+Each installed server can be:
 
 - **Enabled/disabled** — disabled servers are skipped during session creation but keep their configuration
 - **Removed** — deletes the server and its credentials permanently
+- **Tested** — performs an MCP handshake, lists tools, and caches the result on the integration page
 
 Only workspace **owners and admins** can add, modify, or remove MCP servers.
 
@@ -76,6 +87,6 @@ MCP servers support two transport modes:
 ## Security notes
 
 - Auth credentials (headers, OAuth tokens) are encrypted at rest using AES-256-GCM
-- OAuth token endpoints are validated with DNS resolution to block private/internal addresses
+- OAuth token endpoints and MCP test handshakes are validated with pinned public-IP transports to block private/internal redirects
 - OAuth flows use PKCE (Proof Key for Code Exchange) for security
 - Only org owners and admins can manage MCP servers — regular members can use them but not configure them
