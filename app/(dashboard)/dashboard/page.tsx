@@ -33,6 +33,10 @@ type Run = {
   status: string;
   source: string;
   prUrl: string | null;
+  prNumber: number | null;
+  prTitle: string | null;
+  repoOwner: string | null;
+  repoName: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -182,7 +186,17 @@ export default function DashboardPage() {
                       <StatusBadge status={run.status} />
                     </TableCell>
                     <TableCell>
-                      {run.prUrl ? (
+                      {run.prNumber && run.repoOwner && run.repoName ? (
+                        <a
+                          href={`https://github.com/${run.repoOwner}/${run.repoName}/pull/${run.prNumber}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline"
+                          title={run.prTitle ?? undefined}
+                        >
+                          #{run.prNumber}
+                        </a>
+                      ) : run.prUrl ? (
                         <a
                           href={run.prUrl}
                           target="_blank"

@@ -29,6 +29,8 @@ type Run = {
   verdict: string | null;
   reviewScope: string | null;
   jobId: string | null;
+  prNumber: number | null;
+  prTitle: string | null;
   repoOwner: string | null;
   repoName: string | null;
   startedAt: string | null;
@@ -97,6 +99,7 @@ export default function RunsPage() {
               <TableRow>
                 <TableHead>Automation</TableHead>
                 <TableHead>Repository</TableHead>
+                <TableHead>PR</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Duration</TableHead>
                 <TableHead>Result</TableHead>
@@ -118,6 +121,21 @@ export default function RunsPage() {
                     {run.repoOwner && run.repoName
                       ? `${run.repoOwner}/${run.repoName}`
                       : run.source}
+                  </TableCell>
+                  <TableCell>
+                    {run.prNumber && run.repoOwner && run.repoName ? (
+                      <a
+                        href={`https://github.com/${run.repoOwner}/${run.repoName}/pull/${run.prNumber}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                        title={run.prTitle ?? undefined}
+                      >
+                        #{run.prNumber}
+                      </a>
+                    ) : (
+                      <span className="text-muted-foreground">{"\u2014"}</span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={run.status} />

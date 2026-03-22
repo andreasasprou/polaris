@@ -17,7 +17,7 @@ export const GET = withEvlog(async (req: Request) => {
     conditions.push(eq(automationRuns.automationId, automationId));
   }
 
-  const runs = await db
+  const rows = await db
     .select({
       id: automationRuns.id,
       automationId: automationRuns.automationId,
@@ -32,6 +32,7 @@ export const GET = withEvlog(async (req: Request) => {
       verdict: automationRuns.verdict,
       reviewScope: automationRuns.reviewScope,
       jobId: automationRuns.jobId,
+      triggerEvent: automationRuns.triggerEvent,
       repoOwner: repositories.owner,
       repoName: repositories.name,
       startedAt: automationRuns.startedAt,
@@ -44,6 +45,14 @@ export const GET = withEvlog(async (req: Request) => {
     .where(and(...conditions))
     .orderBy(desc(automationRuns.createdAt))
     .limit(limit);
+
+  // Extract PR number from trigger_event for display
+  const runs = rows.map(({ triggerEvent, ...rest }) => {
+    const pr = triggerEvent?.pull_request as Record<string, unknown> | undefined;
+    const prNumber = pr?.number as number | undefined ?? null;
+    const prTitle = typeof pr?.title === "string" ? pr.title : null;
+    return { ...rest, prNumber, prTitle };
+  });
 
   return NextResponse.json({ runs });
 });
