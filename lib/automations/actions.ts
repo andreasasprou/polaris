@@ -414,6 +414,52 @@ export async function clearPendingReviewRequest(
 }
 
 /**
+ * Find automation sessions with a pendingReviewRequest but no lock.
+ * Used by the sweeper to drain queued reviews that got stuck after a failed replay.
+ */
+export async function getAutomationSessionsWithStalePending() {
+  const all = await db
+    .select()
+    .from(automationSessions)
+    .where(
+      and(
+        isNull(automationSessions.reviewLockJobId),
+        eq(automationSessions.status, "active"),
+      ),
+    );
+
+  // Filter in-memory for sessions with pending requests (JSONB field)
+  return all.filter((s) => {
+    const metadata = s.metadata as AutomationSessionMetadata;
+    return metadata.pendingReviewRequest != null;
+  });
+}
+
+/**
+ * Re-queue a pending review request only if the slot is still empty.
+ * Prevents overwriting a newer request that arrived while the replay was failing.
+ * Returns true if re-queued, false if a newer request already occupies the slot.
+ */
+export async function requeuePendingReviewRequest(
+  automationSessionId: string,
+  request: QueuedReviewRequest,
+): Promise<boolean> {
+  const session = await getAutomationSession(automationSessionId);
+  if (!session) return false;
+
+  const metadata = session.metadata as AutomationSessionMetadata;
+  if (metadata.pendingReviewRequest) {
+    // Slot occupied by a newer request — don't overwrite
+    return false;
+  }
+
+  await updateAutomationSession(automationSessionId, {
+    metadata: { ...metadata, pendingReviewRequest: request },
+  });
+  return true;
+}
+
+/**
  * Check lock ownership for sweeper retry.
  * Returns:
  *   "owned"    — lock is held by the given jobId (we already own it)

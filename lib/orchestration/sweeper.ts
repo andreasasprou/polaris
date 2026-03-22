@@ -38,6 +38,7 @@ export async function runSweep(): Promise<{
   postprocessRetried: number;
   staleSessionsHealed: number;
   staleLocksReleased: number;
+  stalePendingReplayed: number;
   retriedJobs: number;
   runtimeController: { expiredClaims: number; destroyedOrphans: number; hibernatedOrphans: number; destroyedTtlExceeded: number; gauge: { liveRuntimes: number; maxAgeMs: number; over1h: number } };
   providerJanitor: { vercelRunning: number; unknownStopped: number; withinGrace: number; errors: number };
@@ -61,6 +62,7 @@ export async function runSweep(): Promise<{
       postprocessRetried: 0,
       staleSessionsHealed: 0,
       staleLocksReleased: 0,
+      stalePendingReplayed: 0,
       retriedJobs: 0,
       runtimeController: { expiredClaims: 0, destroyedOrphans: 0, hibernatedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge },
       providerJanitor: emptyJanitor,
@@ -96,9 +98,10 @@ export async function runSweep(): Promise<{
     const postprocessRetried = await sweepStuckPostprocess();
     const staleSessionsHealed = await sweepStaleActiveSessions();
     const staleLocksReleased = await sweepStaleReviewLocks();
+    const stalePendingReplayed = await sweepStalePendingRequests();
     const retriedJobs = await sweepRetryableJobs();
 
-    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, runtimeController, providerJanitor } });
+    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, stalePendingReplayed, runtimeController, providerJanitor } });
 
     return {
       timedOut,
@@ -106,6 +109,7 @@ export async function runSweep(): Promise<{
       postprocessRetried,
       staleSessionsHealed,
       staleLocksReleased,
+      stalePendingReplayed,
       retriedJobs,
       runtimeController,
       providerJanitor,
@@ -557,11 +561,92 @@ async function retryReviewDispatch(
 }
 
 /**
+ * Sweep automation sessions that have a pendingReviewRequest but no lock.
+ * This catches cases where finalizeReviewRun re-queued a request on failure
+ * but no subsequent webhook arrived to drain it.
+ */
+async function sweepStalePendingRequests(): Promise<number> {
+  const log = useLogger();
+  const { getAutomationSessionsWithStalePending, clearPendingReviewRequest, createAutomationRun } = await import("@/lib/automations/actions");
+  const { findAutomationById } = await import("@/lib/automations/queries");
+
+  const sessions = await getAutomationSessionsWithStalePending();
+  let count = 0;
+
+  for (const session of sessions) {
+    try {
+      const metadata = session.metadata as import("@/lib/reviews/types").AutomationSessionMetadata;
+      const pending = metadata.pendingReviewRequest;
+      if (!pending) continue;
+
+      // Look up the automation to get the installationId via repository
+      const automation = await findAutomationById(session.automationId);
+      if (!automation?.repositoryId) continue;
+
+      const { db: database } = await import("@/lib/db");
+      const { repositories } = await import("@/lib/integrations/schema");
+      const { githubInstallations } = await import("@/lib/integrations/schema");
+      const { eq } = await import("drizzle-orm");
+
+      const [repo] = await database
+        .select({ installationId: githubInstallations.installationId })
+        .from(repositories)
+        .innerJoin(githubInstallations, eq(githubInstallations.id, repositories.githubInstallationId))
+        .where(eq(repositories.id, automation.repositoryId))
+        .limit(1);
+
+      if (!repo) continue;
+
+      log.set({ sweep: { stalePendingReplay: session.id, headSha: pending.headSha } });
+
+      // Pop the pending request
+      const popped = await clearPendingReviewRequest(session.id);
+      if (!popped) continue;
+
+      // Create a run and dispatch
+      const run = await createAutomationRun({
+        automationId: session.automationId,
+        organizationId: session.organizationId,
+        source: "sweeper",
+        externalEventId: popped.deliveryId,
+        automationSessionId: session.id,
+        interactiveSessionId: session.interactiveSessionId,
+      });
+
+      const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
+      await dispatchPrReview({
+        orgId: session.organizationId,
+        automationId: session.automationId,
+        automationSessionId: session.id,
+        automationRunId: run.id,
+        installationId: repo.installationId,
+        deliveryId: popped.deliveryId ?? "",
+        normalizedEvent: {
+          headSha: popped.headSha,
+          action: popped.reason,
+          ...(popped.reason === "manual" ? {
+            manualCommand: { mode: popped.mode, ...(popped.sinceSha ? { sinceSha: popped.sinceSha } : {}) },
+            commentId: popped.commentId,
+          } : {}),
+        } as never,
+      });
+
+      count++;
+    } catch (err) {
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { stalePendingReplayFailed: session.id } });
+    }
+  }
+
+  return count;
+}
+
+/**
  * Terminal cleanup for a review job that exhausted retries.
  * Fails the check, marks the run, releases the lock, drains the pending queue.
  */
 async function finalizeFailedReviewJob(
-  job: { id: string; sessionId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
+  job: { id: string; sessionId: string | null; automationId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
 ): Promise<void> {
   const payload = job.payload;
   const automationSessionId = payload.automationSessionId as string;
@@ -613,7 +698,7 @@ async function finalizeFailedReviewJob(
         automationSessionId,
         automationRunId,
         orgId: job.organizationId,
-        automationId: payload.automationId as string | undefined,
+        automationId: job.automationId ?? payload.automationId as string | undefined,
         installationId,
         normalizedEvent: payload.normalizedEvent as Record<string, unknown>,
       });
