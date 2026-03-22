@@ -38,6 +38,7 @@ export async function runSweep(): Promise<{
   postprocessRetried: number;
   staleSessionsHealed: number;
   staleLocksReleased: number;
+  stalePendingReplayed: number;
   retriedJobs: number;
   runtimeController: { expiredClaims: number; destroyedOrphans: number; hibernatedOrphans: number; destroyedTtlExceeded: number; gauge: { liveRuntimes: number; maxAgeMs: number; over1h: number } };
   providerJanitor: { vercelRunning: number; unknownStopped: number; withinGrace: number; errors: number };
@@ -61,6 +62,7 @@ export async function runSweep(): Promise<{
       postprocessRetried: 0,
       staleSessionsHealed: 0,
       staleLocksReleased: 0,
+      stalePendingReplayed: 0,
       retriedJobs: 0,
       runtimeController: { expiredClaims: 0, destroyedOrphans: 0, hibernatedOrphans: 0, destroyedTtlExceeded: 0, gauge: emptyGauge },
       providerJanitor: emptyJanitor,
@@ -96,9 +98,10 @@ export async function runSweep(): Promise<{
     const postprocessRetried = await sweepStuckPostprocess();
     const staleSessionsHealed = await sweepStaleActiveSessions();
     const staleLocksReleased = await sweepStaleReviewLocks();
+    const stalePendingReplayed = await sweepStalePendingRequests();
     const retriedJobs = await sweepRetryableJobs();
 
-    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, runtimeController, providerJanitor } });
+    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, stalePendingReplayed, runtimeController, providerJanitor } });
 
     return {
       timedOut,
@@ -106,6 +109,7 @@ export async function runSweep(): Promise<{
       postprocessRetried,
       staleSessionsHealed,
       staleLocksReleased,
+      stalePendingReplayed,
       retriedJobs,
       runtimeController,
       providerJanitor,
@@ -562,11 +566,135 @@ async function retryReviewDispatch(
 }
 
 /**
+ * Sweep automation sessions that have a pendingReviewRequest but no lock.
+ * This catches cases where finalizeReviewRun re-queued a request on failure
+ * but no subsequent webhook arrived to drain it.
+ */
+async function sweepStalePendingRequests(): Promise<number> {
+  const log = useLogger();
+  const {
+    getAutomationSessionsWithStalePending,
+    clearPendingReviewRequest,
+    requeuePendingReviewRequest,
+    createAutomationRun,
+    updateAutomationRun,
+  } = await import("@/lib/automations/actions");
+  const { findAutomationById } = await import("@/lib/automations/queries");
+  const { db: database } = await import("@/lib/db");
+  const { repositories, githubInstallations } = await import("@/lib/integrations/schema");
+  const { eq } = await import("drizzle-orm");
+  const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
+
+  const sessions = await getAutomationSessionsWithStalePending();
+  let count = 0;
+
+  for (const session of sessions) {
+    let popped: import("@/lib/reviews/types").QueuedReviewRequest | null = null;
+    let replayRunId: string | undefined;
+
+    try {
+      const metadata = session.metadata as import("@/lib/reviews/types").AutomationSessionMetadata;
+      const pending = metadata.pendingReviewRequest;
+      if (!pending) continue;
+
+      // Look up the automation to get the installationId via repository
+      const automation = await findAutomationById(session.automationId);
+      if (!automation?.repositoryId) continue;
+
+      const [repo] = await database
+        .select({
+          installationId: githubInstallations.installationId,
+          owner: repositories.owner,
+          name: repositories.name,
+          defaultBranch: repositories.defaultBranch,
+        })
+        .from(repositories)
+        .innerJoin(githubInstallations, eq(githubInstallations.id, repositories.githubInstallationId))
+        .where(eq(repositories.id, automation.repositoryId))
+        .limit(1);
+
+      if (!repo) continue;
+
+      log.set({ sweep: { stalePendingReplay: session.id, headSha: pending.headSha } });
+
+      // Pop the pending request
+      popped = await clearPendingReviewRequest(session.id);
+      if (!popped) continue;
+
+      // Reconstruct full normalizedEvent from session metadata + repo data.
+      // dispatchPrReview needs owner, repo, prNumber, baseRef, etc.
+      // buildReplayEvent handles manualCommand/commentId reconstruction.
+      const { buildReplayEvent } = await import("./review-lifecycle");
+      const baseEvent = {
+        eventType: "pull_request" as const,
+        installationId: repo.installationId,
+        owner: metadata.repositoryOwner ?? repo.owner,
+        repo: metadata.repositoryName ?? repo.name,
+        prNumber: metadata.prNumber,
+        prUrl: `https://github.com/${metadata.repositoryOwner ?? repo.owner}/${metadata.repositoryName ?? repo.name}/pull/${metadata.prNumber}`,
+        isOpen: true,
+        isDraft: false,
+        senderLogin: popped.requestedBy ?? "sweeper",
+        senderType: "User",
+        senderIsBot: false,
+        labels: [],
+        baseRef: metadata.baseRef,
+        baseSha: metadata.baseSha,
+        headRef: metadata.headRef,
+        title: "",
+        body: null,
+      };
+      const replayEvent = buildReplayEvent(baseEvent, popped);
+
+      const run = await createAutomationRun({
+        automationId: session.automationId,
+        organizationId: session.organizationId,
+        source: "sweeper",
+        externalEventId: popped.deliveryId,
+        automationSessionId: session.id,
+        interactiveSessionId: session.interactiveSessionId,
+      });
+      replayRunId = run.id;
+
+      await dispatchPrReview({
+        orgId: session.organizationId,
+        automationId: session.automationId,
+        automationSessionId: session.id,
+        automationRunId: run.id,
+        installationId: repo.installationId,
+        deliveryId: popped.deliveryId ?? "",
+        normalizedEvent: replayEvent as never,
+      });
+
+      count++;
+    } catch (err) {
+      // Re-queue with CAS so we don't overwrite newer requests
+      if (popped) {
+        await requeuePendingReviewRequest(session.id, popped).catch(() => {});
+      }
+      // Mark orphaned run as failed
+      if (replayRunId) {
+        await updateAutomationRun(replayRunId, {
+          status: "failed",
+          summary: "Sweeper replay failed",
+          error: err instanceof Error ? err.message : String(err),
+          completedAt: new Date(),
+        }).catch(() => {});
+      }
+      log.error(err instanceof Error ? err : new Error(String(err)));
+      log.set({ sweep: { stalePendingReplayFailed: session.id } });
+    }
+  }
+
+  return count;
+}
+
+/**
  * Terminal cleanup for a review job that exhausted retries.
  * Fails the check, marks the run, releases the lock, drains the pending queue.
  */
 async function finalizeFailedReviewJob(
-  job: { id: string; sessionId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
+  job: { id: string; sessionId: string | null; automationId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
 ): Promise<void> {
   const payload = job.payload;
   const automationSessionId = payload.automationSessionId as string;
@@ -618,7 +746,7 @@ async function finalizeFailedReviewJob(
         automationSessionId,
         automationRunId,
         orgId: job.organizationId,
-        automationId: payload.automationId as string | undefined,
+        automationId: job.automationId ?? payload.automationId as string | undefined,
         installationId,
         normalizedEvent: payload.normalizedEvent as Record<string, unknown>,
       });

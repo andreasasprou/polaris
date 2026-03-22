@@ -120,6 +120,15 @@ export interface AutomationSessionMetadata {
   lastCompletedRunId: string | null;
   pendingReviewRequest: QueuedReviewRequest | null;
   historyRewrittenAt?: string | null;
+  /** Tracks the runtime config used for the last dispatch, enabling drift detection
+   *  when YAML changes model/effort without changing agent type or credentials. */
+  lastRuntimeConfig?: {
+    agentType: string;
+    model: string | null;
+    effort: string | null;
+    agentSecretId: string | null;
+    keyPoolId: string | null;
+  };
 }
 
 // ── Normalized GitHub PR event ──

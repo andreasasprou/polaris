@@ -1,4 +1,4 @@
-import { eq, and, or, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, isNull, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automations, automationRuns, automationSessions } from "./schema";
 import type { AutomationSessionMetadata, QueuedReviewRequest } from "@/lib/reviews/types";
@@ -411,6 +411,47 @@ export async function clearPendingReviewRequest(
     metadata: { ...metadata, pendingReviewRequest: null },
   });
   return pending;
+}
+
+/**
+ * Find automation sessions with a pendingReviewRequest but no lock.
+ * Used by the sweeper to drain queued reviews that got stuck after a failed replay.
+ */
+export async function getAutomationSessionsWithStalePending() {
+  return db
+    .select()
+    .from(automationSessions)
+    .where(
+      and(
+        isNull(automationSessions.reviewLockJobId),
+        eq(automationSessions.status, "active"),
+        sql`${automationSessions.metadata}->>'pendingReviewRequest' IS NOT NULL`,
+      ),
+    );
+}
+
+/**
+ * Re-queue a pending review request only if the slot is still empty.
+ * Prevents overwriting a newer request that arrived while the replay was failing.
+ * Returns true if re-queued, false if a newer request already occupies the slot.
+ */
+export async function requeuePendingReviewRequest(
+  automationSessionId: string,
+  request: QueuedReviewRequest,
+): Promise<boolean> {
+  const session = await getAutomationSession(automationSessionId);
+  if (!session) return false;
+
+  const metadata = session.metadata as AutomationSessionMetadata;
+  if (metadata.pendingReviewRequest) {
+    // Slot occupied by a newer request — don't overwrite
+    return false;
+  }
+
+  await updateAutomationSession(automationSessionId, {
+    metadata: { ...metadata, pendingReviewRequest: request },
+  });
+  return true;
 }
 
 /**

@@ -46,6 +46,7 @@ export async function dispatchPrReview(
   const {
     getAutomationSession,
     updateAutomationRun,
+    updateAutomationSession,
     tryAcquireAutomationSessionLock,
     releaseAutomationSessionLock,
     setPendingReviewRequest,
@@ -64,7 +65,7 @@ export async function dispatchPrReview(
   const automationSession = await getAutomationSession(automationSessionId);
   if (!automationSession) throw new Error(`AutomationSession ${automationSessionId} not found`);
 
-  const config = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
+  const connectorConfig = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
   const sessionMetadata = automationSession.metadata as AutomationSessionMetadata;
 
   let checkRunId: string | undefined = input.checkRunId;
@@ -121,9 +122,92 @@ export async function dispatchPrReview(
     const log = useLogger();
     log.set({ dispatch: { automationRunId, automationId, sessionId: automationSessionId, prNumber: event.prNumber } });
 
-    // 3. Apply filters
+    // 3. Ensure check exists (before config validation so error paths can fail it)
+    if (!checkRunId) {
+      try {
+        const check = await createPendingCheck({
+          installationId,
+          owner: event.owner,
+          repo: event.repo,
+          headSha: event.headSha,
+          checkName: connectorConfig.checkName,
+        });
+        checkRunId = check.checkRunId;
+      } catch {
+        // Continue without check — best effort
+      }
+    }
+
+    // 4. Load repo-level config from BASE branch
+    const octokit = await getReviewOctokit(installationId);
+    const { loadRepoReviewConfig, mergeWithConnector, formatConfigError } = await import("@/lib/reviews/repo-config");
+    const repoConfigResult = await loadRepoReviewConfig(octokit, event.owner, event.repo, event.baseRef);
+
+    let config = connectorConfig;
+    let resolvedRuntime: {
+      agentType: AgentType;
+      model: string;
+      modelParams: import("@/lib/sandbox-agent/types").ModelParams;
+      credentialOverride?: { agentSecretId: string | null; keyPoolId: string | null };
+    } | null = null;
+
+    // Helper: fail config validation and return early
+    const failConfig = async (errorMsg: string) => {
+      const { failCheck } = await import("@/lib/reviews/github");
+      if (checkRunId) {
+        await failCheck({ installationId, owner: event.owner, repo: event.repo, checkRunId, error: errorMsg });
+      }
+      await updateAutomationRun(automationRunId, { status: "failed", summary: errorMsg, error: errorMsg, completedAt: new Date() });
+      await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
+      handedOff = true;
+    };
+
+    if (repoConfigResult.status === "found") {
+      const resolved = mergeWithConnector(repoConfigResult.definition, automation);
+      config = resolved.reviewConfig;
+      resolvedRuntime = {
+        agentType: resolved.agentType,
+        model: resolved.model,
+        modelParams: resolved.modelParams,
+      };
+
+      // Validate agent/model/effort coherence before proceeding
+      const { validateRuntimeCoherence } = await import("@/lib/reviews/repo-config");
+      const coherenceError = await validateRuntimeCoherence(resolved);
+      if (coherenceError) {
+        await failConfig(`Review config error: .polaris/reviews/${repoConfigResult.file} — ${coherenceError}`);
+        return { jobId: "" };
+      }
+
+      // Resolve credential slug to actual ID (scoped by agent type)
+      if (repoConfigResult.definition.credential) {
+        const { resolveCredentialSlug } = await import("@/lib/reviews/repo-config");
+        const credRef = await resolveCredentialSlug(orgId, repoConfigResult.definition.credential, resolvedRuntime.agentType);
+        if (!credRef) {
+          await failConfig(`Review config error: credential "${repoConfigResult.definition.credential}" not found. Check that the key pool name or API key label exists in your organization settings.`);
+          return { jobId: "" };
+        }
+        resolvedRuntime.credentialOverride = {
+          agentSecretId: credRef.type === "secret" ? credRef.secretId : null,
+          keyPoolId: credRef.type === "pool" ? credRef.poolId : null,
+        };
+      }
+    } else if (
+      repoConfigResult.status === "invalid" ||
+      repoConfigResult.status === "multiple" ||
+      repoConfigResult.status === "error"
+    ) {
+      await failConfig(formatConfigError(repoConfigResult));
+      return { jobId: "" };
+    }
+
+    // 5. Fetch raw full file list for filters and guideline scoping
+    const { fetchFullFileList } = await import("@/lib/reviews/diff");
+    const allChangedFiles = await fetchFullFileList(octokit, event.owner, event.repo, event.prNumber);
+
+    // 6. Apply filters with the RAW full file list
     const { shouldReviewPR } = await import("@/lib/reviews/filters");
-    const filterResult = shouldReviewPR(event, config);
+    const filterResult = shouldReviewPR(event, config, allChangedFiles);
     if (!filterResult.review) {
       const skipSummary = `Skipped: ${filterResult.reason}`;
       await cancelCheck(skipSummary);
@@ -155,31 +239,13 @@ export async function dispatchPrReview(
       return { jobId: "" };
     }
 
-    // 4. Ensure check exists
-    if (!checkRunId) {
-      try {
-        const check = await createPendingCheck({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          headSha: event.headSha,
-          checkName: config.checkName,
-        });
-        checkRunId = check.checkRunId;
-      } catch {
-        // Continue without check
-      }
-    }
-
     await updateAutomationRun(automationRunId, {
       ...(checkRunId ? { githubCheckRunId: checkRunId } : {}),
       status: "running",
       startedAt: new Date(),
     });
 
-    // 5. Gather metadata
-    const octokit = await getReviewOctokit(installationId);
-    const { fetchPRFileList } = await import("@/lib/reviews/diff");
+    // 7. Gather metadata
     const { loadRepoGuidelines } = await import("@/lib/reviews/guidelines");
     const { classifyFiles, filterIgnoredPaths } = await import("@/lib/reviews/classification");
 
@@ -208,13 +274,14 @@ export async function dispatchPrReview(
 
     const reviewSequence = (sessionMetadata.reviewCount ?? 0) + 1;
 
+    // Compute reviewed paths (post-ignorePaths) for scoped guideline discovery
+    const reviewedPaths = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []);
+
     const { fetchPRDiff, fetchCommitRangeDiff } = await import("@/lib/reviews/diff");
 
-    const [allFiles, guidelines, diffResult] = await Promise.all([
-      fetchPRFileList(octokit, event.owner, event.repo, event.prNumber, {
-        maxFiles: config.maxPromptFiles,
-      }),
-      loadRepoGuidelines(octokit, event.owner, event.repo, toSha, [], {
+    const [guidelines, diffResult] = await Promise.all([
+      // Load guidelines from trusted base ref using reviewed paths
+      loadRepoGuidelines(octokit, event.owner, event.repo, event.baseRef, reviewedPaths, {
         maxBytes: config.maxGuidelinesBytes,
       }),
       reviewScope === "incremental" && fromSha
@@ -227,10 +294,12 @@ export async function dispatchPrReview(
           }),
     ]);
 
-    const filteredFiles = filterIgnoredPaths(allFiles, config.ignorePaths ?? []);
+    // Cap the file list for prompt rendering (separate from the uncapped list used for filters/guidelines)
+    const maxPromptFiles = config.maxPromptFiles ?? 150;
+    const filteredFiles = reviewedPaths.slice(0, maxPromptFiles);
     const fileClassifications = classifyFiles(filteredFiles, config);
 
-    // 6. Build prompt
+    // 8. Build prompt
     const { buildReviewPrompt } = await import("@/lib/reviews/prompt-builder");
     const reviewPrompt = buildReviewPrompt({
       event,
@@ -256,15 +325,64 @@ export async function dispatchPrReview(
       reviewToSha: toSha,
     });
 
-    // 7. Handle "reset" — create new interactive session
-    if (reviewScope === "reset") {
+    // 9. Handle session creation — explicit "reset" or YAML runtime drift
+    const effectiveAgentType = resolvedRuntime?.agentType ?? automation.agentType ?? "claude";
+    const effectiveModel = resolvedRuntime?.model || automation.model || null;
+    const effectiveEffort = resolvedRuntime?.modelParams?.effortLevel ?? automation.modelParams?.effortLevel ?? null;
+    // When YAML specifies a credential, use the entire override (not individual fields)
+    // to avoid mixing YAML's null agentSecretId with connector's agentSecretId,
+    // which violates the DB CHECK constraint (both cannot be set).
+    const effectiveSecretId = resolvedRuntime?.credentialOverride
+      ? resolvedRuntime.credentialOverride.agentSecretId
+      : automation.agentSecretId ?? null;
+    const effectivePoolId = resolvedRuntime?.credentialOverride
+      ? resolvedRuntime.credentialOverride.keyPoolId
+      : automation.keyPoolId ?? null;
+
+    // Build the full runtime config for drift comparison and metadata tracking
+    const currentRuntimeConfig = {
+      agentType: effectiveAgentType,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      agentSecretId: effectiveSecretId,
+      keyPoolId: effectivePoolId,
+    };
+
+    // Detect if YAML changed the agent, credential, model, or effort vs what the
+    // existing session was created with. If so, we need a fresh session — the old
+    // sandbox, agent session IDs, and credentials/model/effort are stale.
+    // Agent type and credentials are compared against the interactive session (DB source of truth).
+    // Model and effort are compared against metadata (not stored on interactive_sessions).
+    const { getInteractiveSession: getSessionForDriftCheck } = await import("@/lib/sessions/actions");
+    const currentSession = await getSessionForDriftCheck(targetSessionId);
+    const lastRuntime = sessionMetadata.lastRuntimeConfig as
+      | { model?: string | null; effort?: string | null }
+      | undefined;
+    const runtimeDrifted = currentSession && (
+      // Agent type / credential drift (compare against interactive session)
+      currentSession.agentType !== effectiveAgentType ||
+      (currentSession.agentSecretId ?? null) !== effectiveSecretId ||
+      (currentSession.keyPoolId ?? null) !== effectivePoolId ||
+      // Model / effort drift (compare against last dispatched config in metadata).
+      // If lastRuntime is absent (pre-existing session), only drift if YAML
+      // explicitly specifies a model/effort (resolvedRuntime exists).
+      (lastRuntime
+        ? (lastRuntime.model ?? null) !== effectiveModel ||
+          (lastRuntime.effort ?? null) !== effectiveEffort
+        : resolvedRuntime !== null && repoConfigResult.status === "found" && (
+            repoConfigResult.definition.model !== undefined ||
+            repoConfigResult.definition.effort !== undefined
+          ))
+    );
+
+    if (reviewScope === "reset" || runtimeDrifted) {
       const { createInteractiveSession } = await import("@/lib/sessions/actions");
       const newSession = await createInteractiveSession({
         organizationId: orgId,
         createdBy: "automation",
-        agentType: automation.agentType ?? "claude",
-        agentSecretId: automation.agentSecretId ?? undefined,
-        keyPoolId: automation.keyPoolId ?? undefined,
+        agentType: effectiveAgentType,
+        agentSecretId: effectiveSecretId ?? undefined,
+        keyPoolId: effectivePoolId ?? undefined,
         repositoryId: automation.repositoryId!,
         prompt: reviewPrompt,
       });
@@ -274,9 +392,12 @@ export async function dispatchPrReview(
       await swapAutomationSessionInteractiveSession(automationSessionId, newSession.id);
     }
 
-    // 8. Dispatch prompt to session sandbox
+    // 10. Dispatch prompt to session sandbox
     const { getInteractiveSession, casSessionStatus } = await import("@/lib/sessions/actions");
-    const session = await getInteractiveSession(targetSessionId);
+    // Reuse the drift-check fetch if targetSessionId didn't change (common path)
+    const session = (currentSession && currentSession.id === targetSessionId)
+      ? currentSession
+      : await getInteractiveSession(targetSessionId);
     if (!session) throw new Error(`Interactive session ${targetSessionId} not found`);
 
     // Heal stale active state before CAS — if sandbox died and session
@@ -298,7 +419,7 @@ export async function dispatchPrReview(
       throw new Error(`Cannot dispatch to session ${targetSessionId}: status is ${session.status}`);
     }
 
-    // 8. Create review job (before dispatch loop — job is the durable boundary)
+    // 11. Create review job (before dispatch loop — job is the durable boundary)
     const hmacKey = generateJobHmacKey();
     const job = await createJob({
       organizationId: orgId,
@@ -339,13 +460,12 @@ export async function dispatchPrReview(
       ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
     });
 
-    // Resolve agent config
-    const agentType = (automation.agentType ?? "claude") as AgentType;
+    // Resolve agent config (using effective values computed in step 9)
     const resolved = resolveAgentConfig({
-      agentType,
+      agentType: effectiveAgentType as AgentType,
       modeIntent: "read-only",
-      model: automation.model ?? undefined,
-      effortLevel: automation.modelParams?.effortLevel,
+      model: effectiveModel ?? undefined,
+      effortLevel: effectiveEffort ?? undefined,
     });
 
     // Resolve MCP servers for this org
@@ -360,7 +480,7 @@ export async function dispatchPrReview(
 
     log.set({ dispatch: { callbackUrl, jobId: job.id, agent: resolved.agent } });
 
-    // 9. Dispatch with inline retry — health check adjacent to POST
+    // 12. Dispatch with inline retry — health check adjacent to POST
     let currentSandboxUrl = session.sandboxBaseUrl;
     let currentEpoch = session.epoch;
     let currentSandboxId = session.sandboxId;
@@ -466,9 +586,20 @@ export async function dispatchPrReview(
       // Success
       if (response.status === 202) {
         handedOff = true;
-        await updateAutomationRun(automationRunId, {
-          interactiveSessionId: targetSessionId,
-        }).catch(() => {});
+        await Promise.all([
+          updateAutomationRun(automationRunId, {
+            interactiveSessionId: targetSessionId,
+          }),
+          // Persist runtime config so future dispatches can detect model/effort drift.
+          // Re-read metadata to avoid clobbering concurrent pendingReviewRequest writes.
+          getAutomationSession(automationSessionId).then((fresh) => {
+            if (!fresh) return;
+            const freshMetadata = fresh.metadata as AutomationSessionMetadata;
+            return updateAutomationSession(automationSessionId, {
+              metadata: { ...freshMetadata, lastRuntimeConfig: currentRuntimeConfig },
+            });
+          }),
+        ]).catch(() => {});
         return { jobId: job.id };
       }
 
