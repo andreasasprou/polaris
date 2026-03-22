@@ -187,6 +187,86 @@ async function postReviewComment({ github, owner, repo, prNumber, body }) {
   return comment.data.id;
 }
 
+// ─── Inline Review Comments ───────────────────────────────────────────────────
+
+/**
+ * Post inline review comments on the PR diff.
+ * Always uses COMMENT event (never REQUEST_CHANGES) to avoid stale blocking reviews.
+ * Returns the review ID, or null if posting failed (non-fatal).
+ */
+async function postInlineReview({
+  github,
+  owner,
+  repo,
+  prNumber,
+  headSha,
+  body,
+  comments,
+}) {
+  try {
+    const { data } = await github.rest.pulls.createReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      commit_id: headSha,
+      body,
+      event: 'COMMENT',
+      comments: comments.map((c) => ({
+        path: c.file,
+        line: c.line,
+        ...(c.start_line != null
+          ? { start_line: c.start_line, start_side: 'RIGHT' }
+          : {}),
+        side: 'RIGHT',
+        body: formatInlineBody(c),
+      })),
+    });
+    return { reviewId: data.id };
+  } catch (e) {
+    // 422 = invalid anchors, network errors, etc.
+    // Non-fatal — summary comment is already posted
+    console.log(`[codex-review] Inline review failed (non-fatal): ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Dismiss a previous inline review (best-effort).
+ */
+async function dismissInlineReview({
+  github,
+  owner,
+  repo,
+  prNumber,
+  reviewId,
+  message,
+}) {
+  try {
+    await github.rest.pulls.dismissReview({
+      owner,
+      repo,
+      pull_number: prNumber,
+      review_id: reviewId,
+      message,
+    });
+  } catch {
+    // Best-effort — COMMENT reviews may not be dismissible
+  }
+}
+
+/**
+ * Format an inline comment body with title, explanation, and optional suggestion.
+ */
+function formatInlineBody(comment) {
+  let body = `**${comment.title}**\n\n`;
+  if (comment.body) body += `${comment.body}\n\n`;
+  if (comment.category) body += `*Category: ${comment.category}*\n\n`;
+  if (comment.suggestion) {
+    body += '```suggestion\n' + comment.suggestion + '\n```\n';
+  }
+  return body;
+}
+
 // ─── Check Run ────────────────────────────────────────────────────────────────
 
 async function updateCheckRun({
@@ -260,14 +340,14 @@ function loadGuidelines(repoRoot) {
  * Parse the structured JSON output from Codex.
  *
  * Codex writes a JSON file via `--output-schema` + `-o` containing:
- *   { review_markdown: string, state: object }
+ *   { review_markdown: string, inline_comments: array, state: object }
  */
 function parseOutput(outputDir) {
   const outputPath = path.join(outputDir, 'codex-review-output.json');
 
   if (!fs.existsSync(outputPath)) {
     console.log(`[codex-review] Output file not found: ${outputPath}`);
-    return { reviewBody: null, reviewState: null };
+    return { reviewBody: null, reviewState: null, inlineComments: [] };
   }
 
   try {
@@ -276,15 +356,20 @@ function parseOutput(outputDir) {
 
     const reviewBody = output.review_markdown?.trim() || null;
     const reviewState = output.state || null;
+    const inlineComments = Array.isArray(output.inline_comments)
+      ? output.inline_comments.filter(
+          (c) => c.file && typeof c.line === 'number' && c.body
+        )
+      : [];
 
     console.log(
-      `[codex-review] Parsed output: body=${!!reviewBody} (${reviewBody?.length || 0} chars), state=${!!reviewState}, issues=${reviewState?.open_issues?.length || 0}`
+      `[codex-review] Parsed output: body=${!!reviewBody} (${reviewBody?.length || 0} chars), state=${!!reviewState}, issues=${reviewState?.open_issues?.length || 0}, inline=${inlineComments.length}`
     );
 
-    return { reviewBody, reviewState };
+    return { reviewBody, reviewState, inlineComments };
   } catch (e) {
     console.log(`[codex-review] Failed to parse output JSON: ${e.message}`);
-    return { reviewBody: null, reviewState: null };
+    return { reviewBody: null, reviewState: null, inlineComments: [] };
   }
 }
 
@@ -336,12 +421,13 @@ async function postResults({
   owner,
   repo,
   prNumber,
+  headSha,
   checkId,
   previousState,
   outputDir,
 }) {
   const log = (msg) => console.log(`[codex-review] ${msg}`);
-  const { reviewBody, reviewState } = parseOutput(outputDir);
+  const { reviewBody, reviewState, inlineComments } = parseOutput(outputDir);
   const reviewNumber = (previousState?.reviewCount || 0) + 1;
 
   if (!reviewBody) {
@@ -363,7 +449,7 @@ async function postResults({
 
   const verdict = extractVerdict(reviewBody);
 
-  // Step 1: Post new review comment (most important — do first)
+  // Step 1: Post new summary comment (most important — do first)
   let newCommentId = null;
   try {
     newCommentId = await postReviewComment({
@@ -378,16 +464,58 @@ async function postResults({
     log(`Failed to post comment: ${e.message}`);
   }
 
-  // Step 2: Persist state (important for continuity)
+  // Step 2: Post inline review comments (best-effort, after summary)
+  if (inlineComments.length > 0 && headSha) {
+    try {
+      // Dismiss previous inline review if one exists
+      if (previousState?.lastInlineReviewId) {
+        await dismissInlineReview({
+          github,
+          owner,
+          repo,
+          prNumber,
+          reviewId: previousState.lastInlineReviewId,
+          message: `Superseded by Review #${reviewNumber}`,
+        });
+        log(`Dismissed previous inline review ${previousState.lastInlineReviewId}`);
+      }
+
+      const result = await postInlineReview({
+        github,
+        owner,
+        repo,
+        prNumber,
+        headSha,
+        body: `See Review #${reviewNumber} above for the full summary.`,
+        comments: inlineComments,
+      });
+
+      if (result) {
+        // Store the inline review ID in state for future dismissal
+        if (reviewState) {
+          reviewState._lastInlineReviewId = result.reviewId;
+        }
+        log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
+      }
+    } catch (e) {
+      log(`Inline review failed (non-fatal): ${e.message}`);
+    }
+  }
+
+  // Step 3: Persist state (important for continuity)
   if (reviewState) {
     reviewState.review_count = reviewNumber;
+    // Carry over inline review ID for dismissal on next review
+    const lastInlineReviewId = reviewState._lastInlineReviewId;
+    delete reviewState._lastInlineReviewId;
+
     try {
       await persistState({
         github,
         owner,
         repo,
         prNumber,
-        state: reviewState,
+        state: { ...reviewState, lastInlineReviewId: lastInlineReviewId || null },
         stateCommentId: previousState?.stateCommentId,
       });
       log('State persisted');
@@ -396,7 +524,7 @@ async function postResults({
     }
   }
 
-  // Step 3: Mark previous review as stale (cosmetic)
+  // Step 4: Mark previous review as stale (cosmetic)
   if (previousState?.reviewCommentId && newCommentId) {
     try {
       await markCommentStale({
@@ -412,7 +540,7 @@ async function postResults({
     }
   }
 
-  // Step 4: Update check run (least critical)
+  // Step 5: Update check run (least critical)
   if (checkId) {
     try {
       await updateCheckRun({

@@ -5,6 +5,25 @@
       "type": "string",
       "description": "The full code review in markdown format"
     },
+    "inline_comments": {
+      "type": "array",
+      "description": "Inline comments anchored to specific diff lines. Only include when confident the line is in the diff.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "issue_id": { "type": "string", "description": "Must match an id in state.open_issues" },
+          "file": { "type": "string", "description": "Exact file path as it appears in the diff" },
+          "line": { "type": "integer", "description": "End line number in the new file version" },
+          "start_line": { "type": "integer", "description": "Start line for multi-line range (must be < line)" },
+          "title": { "type": "string" },
+          "body": { "type": "string", "description": "Detailed explanation for the inline comment" },
+          "category": { "type": "string" },
+          "suggestion": { "type": "string", "description": "Optional replacement code for GitHub suggestion block" }
+        },
+        "required": ["issue_id", "file", "line", "title", "body", "category"],
+        "additionalProperties": false
+      }
+    },
     "state": {
       "type": "object",
       "description": "Machine-readable state for review continuity across runs",
@@ -49,6 +68,6 @@
       "additionalProperties": false
     }
   },
-  "required": ["review_markdown", "state"],
+  "required": ["review_markdown", "inline_comments", "state"],
   "additionalProperties": false
 }

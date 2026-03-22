@@ -73,7 +73,7 @@ Review **the changes in scope** for issues that materially risk correctness, arc
 
 ## Output
 
-Your response is structured via `--output-schema`. Fill in the two fields:
+Your response is structured via `--output-schema`. Fill in the three fields:
 
 ### `review_markdown` field
 
@@ -117,6 +117,25 @@ Per issue: severity, category (Correctness/Design/Security/Performance/Tests), `
 - No concrete failure scenario → not P0/P1. Demote or drop.
 - Do NOT comment on: formatting, lint, naming preferences, missing docs, missing tests without specific bug risk.
 - When deciding verdict, include still-open P0/P1 from prior state.
+
+### `inline_comments` field
+
+For findings you can **confidently anchor to specific lines in the diff**, provide inline comments. These will appear directly on the PR diff in GitHub.
+
+Each inline comment needs:
+- `issue_id`: must match an `id` in `state.open_issues`
+- `file`: exact file path as it appears in the diff
+- `line`: the ending line number in the NEW file version (right side of diff)
+- `start_line`: optional start line for multi-line ranges (must be < `line`)
+- `title`: short finding title
+- `body`: detailed explanation
+- `category`: finding category
+- `suggestion`: optional replacement code (renders as a GitHub suggestion block)
+
+**Rules:**
+- Do NOT invent line numbers. Only provide anchors for lines you can see in the diff.
+- An empty `inline_comments: []` is fine — findings always appear in the summary regardless.
+- All findings should appear in BOTH the `review_markdown` summary AND as inline comments when possible.
 
 ### `state` field
 

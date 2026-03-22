@@ -480,7 +480,7 @@ jobs:
               fs.copyFileSync(schemaPath, '.codex-ci/output-schema.json');
             } else {
               // Fallback: write schema inline if not on checkout branch
-              const schema = {"type":"object","properties":{"review_markdown":{"type":"string"},"state":{"type":"object","properties":{"schema_version":{"type":"integer"},"last_reviewed_head_sha":{"type":"string"},"review_count":{"type":"integer"},"updated_at":{"type":"string"},"open_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["P0","P1","P2"]},"category":{"type":"string"},"title":{"type":"string"},"location":{"type":"string"},"status":{"type":"string"},"first_seen_head_sha":{"type":"string"},"last_seen_head_sha":{"type":"string"}},"required":["id","severity","title","location","status","category","first_seen_head_sha","last_seen_head_sha"],"additionalProperties":false}},"recently_resolved_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"resolved_in_head_sha":{"type":"string"},"resolution":{"type":"string"}},"required":["id","resolved_in_head_sha","resolution"],"additionalProperties":false}}},"required":["schema_version","last_reviewed_head_sha","review_count","updated_at","open_issues","recently_resolved_issues"],"additionalProperties":false}},"required":["review_markdown","state"],"additionalProperties":false};
+              const schema = {"type":"object","properties":{"review_markdown":{"type":"string"},"inline_comments":{"type":"array","items":{"type":"object","properties":{"issue_id":{"type":"string"},"file":{"type":"string"},"line":{"type":"integer"},"start_line":{"type":"integer"},"title":{"type":"string"},"body":{"type":"string"},"category":{"type":"string"},"suggestion":{"type":"string"}},"required":["issue_id","file","line","title","body","category"],"additionalProperties":false}},"state":{"type":"object","properties":{"schema_version":{"type":"integer"},"last_reviewed_head_sha":{"type":"string"},"review_count":{"type":"integer"},"updated_at":{"type":"string"},"open_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["P0","P1","P2"]},"category":{"type":"string"},"title":{"type":"string"},"location":{"type":"string"},"status":{"type":"string"},"first_seen_head_sha":{"type":"string"},"last_seen_head_sha":{"type":"string"}},"required":["id","severity","title","location","status","category","first_seen_head_sha","last_seen_head_sha"],"additionalProperties":false}},"recently_resolved_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"resolved_in_head_sha":{"type":"string"},"resolution":{"type":"string"}},"required":["id","resolved_in_head_sha","resolution"],"additionalProperties":false}}},"required":["schema_version","last_reviewed_head_sha","review_count","updated_at","open_issues","recently_resolved_issues"],"additionalProperties":false}},"required":["review_markdown","inline_comments","state"],"additionalProperties":false};
               fs.writeFileSync('.codex-ci/output-schema.json', JSON.stringify(schema, null, 2));
             }
 
@@ -545,6 +545,7 @@ jobs:
           REVIEW_GENERATED: ${{ steps.codex.outputs.review_generated }}
           JOB_STATUS: ${{ job.status }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -601,6 +602,7 @@ jobs:
 
               await postResults({
                 github, owner, repo, prNumber, checkId,
+                headSha: process.env.HEAD_SHA,
                 previousState,
                 outputDir: '.codex-ci',
               });
