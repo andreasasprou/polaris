@@ -12,12 +12,12 @@ ${PR_BODY}
 - **Diff base**: ${DIFF_BASE_SHA}
 - **Head**: ${HEAD_SHA}
 
-Commit list: `/tmp/review-commits.txt`
+Commit list: `.codex-ci/review-commits.txt`
 
 ## Continuity (Previous Reviews)
 
-Previous structured state (may be empty): `/tmp/codex-review-state.prev.json`
-Previous review text (may be empty): `/tmp/codex-review.prev.md`
+Previous structured state (may be empty): `.codex-ci/state-prev.json`
+Previous review text (may be empty): `.codex-ci/review-prev.md`
 
 If previous state exists, treat it as source of truth for what has already been raised:
 - Do **not** duplicate issues already in `open_issues` unless you have materially new evidence.
@@ -39,8 +39,8 @@ Review **the changes in scope** for issues that materially risk correctness, arc
 
 ## Process
 
-1. **Read the diff** at `/tmp/pr-diff.patch` (scoped to this review) and file list at `/tmp/changed-files.txt`.
-   In incremental mode, the full PR diff is at `/tmp/pr-diff-full.patch` for cross-commit context.
+1. **Read the diff** at `.codex-ci/pr-diff.patch` (scoped to this review) and file list at `.codex-ci/changed-files.txt`.
+   In incremental mode, the full PR diff is at `.codex-ci/pr-diff-full.patch` for cross-commit context.
    Read actual source files to understand context beyond the diff.
 
 2. **Correctness & edge cases**:

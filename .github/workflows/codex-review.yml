@@ -20,10 +20,14 @@
 #      for where auth.json is stored on your platform.
 #   3. Customize paths and model below
 #
-# Security: Uses pull_request_target for secret access.
-#   - Only same-repo PRs are reviewed (fork PRs are ignored)
+# Security:
+#   - Uses pull_request_target for secret access (only same-repo PRs)
 #   - GITHUB_TOKEN is NOT passed to Codex
-#   - Checkout uses the PR head SHA directly
+#   - Checkout uses the PR head SHA directly, with persist-credentials: false
+#   - Codex runs in workspace-write sandbox (default) with network disabled
+#   - Dirty-tree check fails the job if Codex modifies tracked files
+#   - AppArmor workaround for Ubuntu 24.04 matches openai/codex-action@v1
+#   - Sandbox gate hard-fails if bwrap can't create user namespaces
 # ============================================================
 name: Codex Code Review
 
@@ -84,9 +88,11 @@ jobs:
       issues: write
 
     env:
-      # ── Customize: model and reasoning effort ──
+      # ── Customize: model, sandbox, and reasoning ──
       CODEX_MODEL: gpt-5.4
       CODEX_REASONING: xhigh
+      CODEX_SANDBOX_MODE: workspace-write    # workspace-write | read-only
+      CODEX_WEB_SEARCH_MODE: disabled        # disabled | cached | live
 
     steps:
       # ── PR Context ───────────────────────────────────────────
@@ -222,6 +228,7 @@ jobs:
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch base for diff
         if: steps.skip.outputs.skip != 'true'
@@ -238,6 +245,9 @@ jobs:
             const fs = require('fs');
             const { loadPreviousState } = require('/tmp/codex-review-scripts/index.cjs');
 
+            // Create .codex-ci/ directory for review artifacts
+            fs.mkdirSync('.codex-ci', { recursive: true });
+
             const reset = '${{ steps.pr.outputs.reset_state }}' === 'true';
             const prev = await loadPreviousState({
               github,
@@ -247,13 +257,13 @@ jobs:
               reset,
             });
 
-            // Write state files for the prompt to reference
+            // Write state files into workspace so Codex can read them
             fs.writeFileSync(
-              '/tmp/codex-review-state.prev.json',
+              '.codex-ci/state-prev.json',
               prev.state ? JSON.stringify(prev.state, null, 2) : ''
             );
             fs.writeFileSync(
-              '/tmp/codex-review.prev.md',
+              '.codex-ci/review-prev.md',
               prev.previousReviewBody || ''
             );
 
@@ -342,27 +352,29 @@ jobs:
           MERGE_BASE_SHA: ${{ steps.scope.outputs.merge_base_sha }}
           REVIEW_MODE: ${{ steps.scope.outputs.review_mode }}
         run: |
+          mkdir -p .codex-ci
+
           # Scoped diff (what the model reviews)
-          git diff "$DIFF_BASE_SHA" "$HEAD_SHA" > /tmp/pr-diff.patch
-          git diff --name-only "$DIFF_BASE_SHA" "$HEAD_SHA" > /tmp/changed-files.txt
+          git diff "$DIFF_BASE_SHA" "$HEAD_SHA" > .codex-ci/pr-diff.patch
+          git diff --name-only "$DIFF_BASE_SHA" "$HEAD_SHA" > .codex-ci/changed-files.txt
 
           # Full PR diff (for cross-commit context in incremental mode)
           if [ "$REVIEW_MODE" = "incremental" ]; then
-            git diff "$MERGE_BASE_SHA" "$HEAD_SHA" > /tmp/pr-diff-full.patch
-            git diff --name-only "$MERGE_BASE_SHA" "$HEAD_SHA" > /tmp/changed-files-full.txt
+            git diff "$MERGE_BASE_SHA" "$HEAD_SHA" > .codex-ci/pr-diff-full.patch
+            git diff --name-only "$MERGE_BASE_SHA" "$HEAD_SHA" > .codex-ci/changed-files-full.txt
           else
-            cp /tmp/pr-diff.patch /tmp/pr-diff-full.patch
-            cp /tmp/changed-files.txt /tmp/changed-files-full.txt
+            cp .codex-ci/pr-diff.patch .codex-ci/pr-diff-full.patch
+            cp .codex-ci/changed-files.txt .codex-ci/changed-files-full.txt
           fi
 
           # Commit list (most recent first)
-          git log --oneline "$DIFF_BASE_SHA".."$HEAD_SHA" > /tmp/review-commits.txt
+          git log --oneline "$DIFF_BASE_SHA".."$HEAD_SHA" > .codex-ci/review-commits.txt
 
           echo "Changed files (scoped):"
-          cat /tmp/changed-files.txt
+          cat .codex-ci/changed-files.txt
           echo ""
           echo "Commits in scope:"
-          cat /tmp/review-commits.txt
+          cat .codex-ci/review-commits.txt
 
       # ── Codex Setup & Execution ──────────────────────────────
       - name: Setup Node.js
@@ -387,6 +399,35 @@ jobs:
           mkdir -p "$HOME/.codex"
           echo "$CODEX_AUTH_JSON_B64" | base64 -d > "$HOME/.codex/auth.json"
           chmod 600 "$HOME/.codex/auth.json"
+
+      - name: Enable Codex sandbox (GitHub-hosted runner workaround)
+        # Ubuntu 24.04+ blocks unprivileged user namespaces via AppArmor,
+        # which prevents Codex's bubblewrap sandbox from creating network
+        # namespaces (bwrap: loopback: Failed RTM_NEWADDR).
+        # This matches the fix in openai/codex-action@v1 (action.yml:262-286).
+        # Acceptable on ephemeral GitHub-hosted runners. Self-hosted runners
+        # need equivalent kernel support configured ahead of time.
+        if: runner.os == 'Linux' && steps.skip.outputs.skip != 'true' && steps.scope.outputs.review_mode != 'skip'
+        run: |
+          current="$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)"
+          if [ -n "$current" ] && [ "$current" != "0" ]; then
+            echo "Disabling kernel.apparmor_restrict_unprivileged_userns for bubblewrap."
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          current_clone="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || true)"
+          if [ -n "$current_clone" ] && [ "$current_clone" != "1" ]; then
+            echo "Enabling kernel.unprivileged_userns_clone for bubblewrap."
+            sudo sysctl -w kernel.unprivileged_userns_clone=1
+          fi
+
+      - name: Verify Codex sandbox
+        if: steps.skip.outputs.skip != 'true' && steps.scope.outputs.review_mode != 'skip'
+        run: |
+          if ! codex sandbox linux /bin/true 2>&1; then
+            echo "::error::Codex sandbox probe failed — bwrap cannot create user namespaces. See https://github.com/openai/codex/issues/12572"
+            exit 1
+          fi
+          echo "Sandbox probe passed"
 
       - name: Build review prompt
         if: steps.skip.outputs.skip != 'true' && steps.scope.outputs.review_mode != 'skip'
@@ -430,16 +471,17 @@ jobs:
               GUIDELINES_SECTION: guidelines,
             });
 
-            fs.writeFileSync('/tmp/review-prompt.md', prompt);
+            fs.mkdirSync('.codex-ci', { recursive: true });
+            fs.writeFileSync('.codex-ci/review-prompt.md', prompt);
 
-            // Copy output schema to /tmp so it's available regardless of checkout branch
+            // Copy output schema into workspace
             const schemaPath = '/tmp/codex-review-scripts/output-schema.json';
             if (fs.existsSync(schemaPath)) {
-              fs.copyFileSync(schemaPath, '/tmp/output-schema.json');
+              fs.copyFileSync(schemaPath, '.codex-ci/output-schema.json');
             } else {
               // Fallback: write schema inline if not on checkout branch
               const schema = {"type":"object","properties":{"review_markdown":{"type":"string"},"state":{"type":"object","properties":{"schema_version":{"type":"integer"},"last_reviewed_head_sha":{"type":"string"},"review_count":{"type":"integer"},"updated_at":{"type":"string"},"open_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["P0","P1","P2"]},"category":{"type":"string"},"title":{"type":"string"},"location":{"type":"string"},"status":{"type":"string"},"first_seen_head_sha":{"type":"string"},"last_seen_head_sha":{"type":"string"}},"required":["id","severity","title","location","status","category","first_seen_head_sha","last_seen_head_sha"],"additionalProperties":false}},"recently_resolved_issues":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"resolved_in_head_sha":{"type":"string"},"resolution":{"type":"string"}},"required":["id","resolved_in_head_sha","resolution"],"additionalProperties":false}}},"required":["schema_version","last_reviewed_head_sha","review_count","updated_at","open_issues","recently_resolved_issues"],"additionalProperties":false}},"required":["review_markdown","state"],"additionalProperties":false};
-              fs.writeFileSync('/tmp/output-schema.json', JSON.stringify(schema, null, 2));
+              fs.writeFileSync('.codex-ci/output-schema.json', JSON.stringify(schema, null, 2));
             }
 
             console.log(`Prompt built (${prompt.length} chars, review #${reviewNumber})`);
@@ -448,16 +490,22 @@ jobs:
         id: codex
         if: steps.skip.outputs.skip != 'true' && steps.scope.outputs.review_mode != 'skip'
         run: |
-          echo "Model: $CODEX_MODEL | Reasoning: $CODEX_REASONING"
+          echo "Model: $CODEX_MODEL | Sandbox: $CODEX_SANDBOX_MODE | Reasoning: $CODEX_REASONING"
           START_TIME=$(date +%s)
 
           if codex exec \
+            --ephemeral \
+            --skip-git-repo-check \
             --model "$CODEX_MODEL" \
-            --full-auto \
+            --sandbox "$CODEX_SANDBOX_MODE" \
+            --ask-for-approval never \
+            -c "allow_login_shell=false" \
+            -c "web_search=\"$CODEX_WEB_SEARCH_MODE\"" \
             -c "model_reasoning_effort=\"$CODEX_REASONING\"" \
-            --output-schema /tmp/output-schema.json \
-            -o /tmp/codex-review-output.json \
-            - < /tmp/review-prompt.md; then
+            -c "sandbox_workspace_write.network_access=false" \
+            --output-schema .codex-ci/output-schema.json \
+            -o .codex-ci/codex-review-output.json \
+            - < .codex-ci/review-prompt.md; then
             EXIT_CODE=0
           else
             EXIT_CODE=$?
@@ -465,11 +513,10 @@ jobs:
 
           DURATION=$(( $(date +%s) - START_TIME ))
 
-          if [ "$EXIT_CODE" -eq 0 ] && [ -s /tmp/codex-review-output.json ]; then
+          if [ "$EXIT_CODE" -eq 0 ] && [ -s .codex-ci/codex-review-output.json ]; then
             echo "review_generated=true" >> "$GITHUB_OUTPUT"
             echo "Review completed in ${DURATION}s"
-            # Preview the review markdown
-            jq -r '.review_markdown' /tmp/codex-review-output.json | head -20
+            jq -r '.review_markdown' .codex-ci/codex-review-output.json | head -20
           else
             echo "review_generated=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Codex exited with code $EXIT_CODE or produced no output"
@@ -477,6 +524,15 @@ jobs:
 
           echo "duration=$DURATION" >> "$GITHUB_OUTPUT"
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Verify checkout not modified
+        if: steps.codex.outputs.review_generated == 'true'
+        run: |
+          if ! git diff --quiet -- ':!.codex-ci' || ! git diff --cached --quiet -- ':!.codex-ci'; then
+            echo "::error::Codex modified tracked files during review"
+            git diff --stat -- ':!.codex-ci'
+            exit 1
+          fi
 
       # ── Post-Processing ──────────────────────────────────────
       - name: Post results
@@ -547,7 +603,7 @@ jobs:
               await postResults({
                 github, owner, repo, prNumber, checkId,
                 previousState,
-                outputDir: '/tmp',
+                outputDir: '.codex-ci',
               });
             } catch (e) {
               console.log(`Post-processing error: ${e.message}`);
