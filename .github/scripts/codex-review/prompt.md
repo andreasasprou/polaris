@@ -6,7 +6,7 @@ You are a staff-level engineer performing a PR code review. The PR is checked ou
 - **Description**:
 ${PR_BODY}
 
-## Review Scope (Review #${REVIEW_NUMBER})
+## Review Scope (Review Pass ${REVIEW_NUMBER})
 - **Mode**: ${REVIEW_MODE} — ${REVIEW_SCOPE_REASON}
 - **Commits**: ${COMMIT_RANGE} (${COMMIT_COUNT} commits)
 - **Diff base**: ${DIFF_BASE_SHA}
@@ -80,7 +80,7 @@ Your response is structured via `--output-schema`. Fill in the three fields:
 Use this exact markdown structure:
 
 ```
-## Codex Review #${REVIEW_NUMBER} — Verdict: [BLOCK | ATTENTION | OK]
+## Codex Review Pass ${REVIEW_NUMBER} — Verdict: [BLOCK | ATTENTION | OK]
 
 ### Scope
 - [1 bullet: what commits/area you reviewed]
