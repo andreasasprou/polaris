@@ -18,7 +18,7 @@ import { buildChangedLineIndex } from "@/lib/reviews/diff";
 
 describe("reviews/diff", () => {
   describe("buildChangedLineIndex", () => {
-    it("parses right-side changed ranges across multiple files", () => {
+    it("tracks only actual changed right-side lines across multiple files", () => {
       const diff = [
         "diff --git a/src/a.ts b/src/a.ts",
         "@@ -10,2 +10,4 @@",
@@ -35,8 +35,23 @@ describe("reviews/diff", () => {
 
       const index = buildChangedLineIndex(diff);
 
-      expect(index.get("src/a.ts")).toEqual([{ start: 10, end: 13 }]);
+      expect(index.get("src/a.ts")).toEqual([{ start: 11, end: 12 }]);
       expect(index.get("src/b.ts")).toEqual([{ start: 40, end: 41 }]);
+    });
+
+    it("excludes unchanged context lines within a changed hunk", () => {
+      const diff = [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -6,3 +6,3 @@",
+        " line 6",
+        "-line 7",
+        "+updated line 7",
+        " line 8",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/a.ts")).toEqual([{ start: 7, end: 7 }]);
     });
 
     it("skips pure deletions with no right-side lines", () => {
@@ -65,6 +80,32 @@ describe("reviews/diff", () => {
 
       expect(index.get("src/new-name.ts")).toEqual([{ start: 1, end: 2 }]);
       expect(index.has("src/old-name.ts")).toBe(false);
+    });
+
+    it("keeps disjoint changed regions separate within one file", () => {
+      const diff = [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -1,3 +1,3 @@",
+        " line 1",
+        "-line 2",
+        "+updated line 2",
+        " line 3",
+        "@@ -10,4 +10,5 @@",
+        " line 10",
+        "+inserted line 11",
+        " line 11",
+        "-line 12",
+        "+updated line 12",
+        " line 13",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/a.ts")).toEqual([
+        { start: 2, end: 2 },
+        { start: 11, end: 11 },
+        { start: 13, end: 13 },
+      ]);
     });
   });
 

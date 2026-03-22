@@ -53,6 +53,28 @@ describe("inline thread reconciliation", () => {
     expect(result.overlapBlocked.map((thread) => thread.threadId)).toEqual(["thread-3"]);
   });
 
+  it("keeps threads open when they sit in unchanged hunk context", () => {
+    const result = reconcileInlineThreads({
+      priorThreads: [
+        {
+          threadId: "thread-1",
+          commentId: 101,
+          issueId: "issue-1",
+          file: "src/a.ts",
+          line: 14,
+        },
+      ],
+      changedLineIndex: new Map([
+        ["src/a.ts", [{ start: 10, end: 10 }]],
+      ]),
+      currentInlineAnchors: [],
+    });
+
+    expect(result.autoResolve).toEqual([]);
+    expect(result.overlapBlocked).toEqual([]);
+    expect(result.carryForward.map((thread) => thread.threadId)).toEqual(["thread-1"]);
+  });
+
   it("dedupes tracked threads by thread id and derives the comment map", () => {
     const threads = dedupeTrackedInlineThreads([
       {

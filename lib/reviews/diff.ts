@@ -12,6 +12,28 @@ export interface DiffResult {
 
 export type ChangedLineIndex = Map<string, Array<{ start: number; end: number }>>;
 
+interface ParsedHunkState {
+  oldLine: number;
+  newLine: number;
+}
+
+function appendChangedLine(
+  index: ChangedLineIndex,
+  file: string,
+  line: number,
+) {
+  const ranges = index.get(file) ?? [];
+  const lastRange = ranges.at(-1);
+
+  if (lastRange && lastRange.end + 1 === line) {
+    lastRange.end = line;
+  } else {
+    ranges.push({ start: line, end: line });
+  }
+
+  index.set(file, ranges);
+}
+
 /**
  * Fetch the PR diff and file list via GitHub API.
  * Truncates the diff to `maxBytes` (default 200KB) for prompt budget.
@@ -222,24 +244,59 @@ export async function fetchFullCommitRangeDiff(
 export function buildChangedLineIndex(diff: string): ChangedLineIndex {
   const index: ChangedLineIndex = new Map();
   let currentFile: string | null = null;
+  let hunkState: ParsedHunkState | null = null;
 
   for (const line of diff.split("\n")) {
     const fileMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
     if (fileMatch) {
       currentFile = fileMatch[2] ?? null;
+      hunkState = null;
       continue;
     }
 
-    const hunkMatch = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (!hunkMatch || !currentFile) continue;
+    const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunkMatch) {
+      if (!currentFile) {
+        hunkState = null;
+        continue;
+      }
 
-    const start = Number(hunkMatch[1]);
-    const count = hunkMatch[2] == null ? 1 : Number(hunkMatch[2]);
-    if (!Number.isFinite(start) || !Number.isFinite(count) || count <= 0) continue;
+      const oldLine = Number(hunkMatch[1]);
+      const newLine = Number(hunkMatch[2]);
 
-    const ranges = index.get(currentFile) ?? [];
-    ranges.push({ start, end: start + count - 1 });
-    index.set(currentFile, ranges);
+      if (!Number.isFinite(oldLine) || !Number.isFinite(newLine)) {
+        hunkState = null;
+        continue;
+      }
+
+      hunkState = { oldLine, newLine };
+      continue;
+    }
+
+    if (!currentFile || !hunkState) continue;
+
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      appendChangedLine(index, currentFile, hunkState.newLine);
+      hunkState.newLine += 1;
+      continue;
+    }
+
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      hunkState.oldLine += 1;
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      hunkState.oldLine += 1;
+      hunkState.newLine += 1;
+      continue;
+    }
+
+    if (line.startsWith("\\")) {
+      continue;
+    }
+
+    hunkState = null;
   }
 
   return index;
