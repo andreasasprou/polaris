@@ -185,6 +185,40 @@ describe("GET /api/mcp-servers/oauth/start", () => {
     expect(updateMcpServerOAuthMetadataMock).not.toHaveBeenCalled();
   });
 
+  it("persists only discovered OAuth endpoints", async () => {
+    findMcpServerByIdAndOrgMock.mockResolvedValue({
+      id: "server-1",
+      serverUrl: "https://mcp.example.com/sse",
+      authType: "oauth",
+      oauthClientId: "client-123",
+      oauthAuthorizationEndpoint: null,
+      oauthTokenEndpoint: null,
+      oauthScopes: "scope-a",
+    });
+    discoverOAuthConfigMock.mockResolvedValue({
+      authorizationEndpoint: "https://example.com/authorize",
+      tokenEndpoint: "https://example.com/token",
+      codeChallengeMethodsSupported: ["S256"],
+    });
+    signMcpOAuthStateMock.mockReturnValue("signed-state");
+
+    const response = await GET(
+      new Request(
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1&orgSlug=acme",
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    expect(updateMcpServerOAuthMetadataMock).toHaveBeenCalledWith(
+      "server-1",
+      "org-1",
+      {
+        oauthAuthorizationEndpoint: "https://example.com/authorize",
+        oauthTokenEndpoint: "https://example.com/token",
+      },
+    );
+  });
+
   it("requires an explicit orgSlug", async () => {
     const response = await GET(
       new Request(

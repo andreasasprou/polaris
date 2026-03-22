@@ -103,10 +103,8 @@ export const GET = withEvlog(async (req: Request) => {
       }
 
       await updateMcpServerOAuthMetadata(server.id, orgId, {
-        oauthClientId: server.oauthClientId,
         oauthAuthorizationEndpoint: authorizationEndpoint,
         oauthTokenEndpoint: tokenEndpoint,
-        oauthScopes: server.oauthScopes,
       });
     }
   }

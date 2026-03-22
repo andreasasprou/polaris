@@ -4,7 +4,6 @@ import {
   text,
   timestamp,
   boolean,
-  unique,
   uniqueIndex,
   jsonb,
 } from "drizzle-orm/pg-core";
@@ -52,7 +51,9 @@ export const mcpServers = pgTable(
       .notNull(),
   },
   (t) => [
-    unique().on(t.organizationId, t.name),
+    uniqueIndex("idx_mcp_servers_custom_name")
+      .on(t.organizationId, t.name)
+      .where(sql`${t.catalogSlug} IS NULL`),
     uniqueIndex("idx_mcp_servers_catalog_slug")
       .on(t.organizationId, t.catalogSlug)
       .where(sql`${t.catalogSlug} IS NOT NULL`),

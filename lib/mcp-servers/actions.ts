@@ -18,6 +18,8 @@ export async function createMcpServer(input: {
   oauthScopes?: string | null;
   createdBy?: string;
 }) {
+  const catalogSlug = input.catalogSlug?.trim() ? input.catalogSlug : null;
+
   const [row] = await db
     .insert(mcpServers)
     .values({
@@ -29,7 +31,7 @@ export async function createMcpServer(input: {
       encryptedAuthConfig: input.authConfig
         ? encrypt(JSON.stringify(input.authConfig))
         : null,
-      catalogSlug: input.catalogSlug ?? null,
+      catalogSlug,
       oauthClientId: input.oauthClientId ?? null,
       oauthAuthorizationEndpoint: input.oauthAuthorizationEndpoint ?? null,
       oauthTokenEndpoint: input.oauthTokenEndpoint ?? null,
