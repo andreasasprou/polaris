@@ -351,7 +351,6 @@ function AgentTrace({
   runCompletedAt: string | null;
   interactiveSessionId: string | null;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const terminal = TERMINAL_RUN_STATUSES.has(runStatus);
 
   const chat = useSessionChat({
@@ -365,10 +364,7 @@ function AgentTrace({
   const eventCount = chat.items.length;
 
   return (
-    <details
-      open={expanded}
-      onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}
-    >
+    <details>
       <summary className="flex cursor-pointer items-center gap-3 text-lg font-medium">
         <span>Agent Trace</span>
         {eventCount > 0 && (
@@ -386,17 +382,15 @@ function AgentTrace({
           </Link>
         )}
       </summary>
-      {expanded && (
-        <div className="mt-3">
-          <SessionChat
-            items={chat.items}
-            turnInProgress={chat.turnInProgress}
-            loading={chat.loading}
-            error={chat.error}
-            sessionStatus={terminal ? "completed" : "active"}
-          />
-        </div>
-      )}
+      <div className="mt-3">
+        <SessionChat
+          items={chat.items}
+          turnInProgress={chat.turnInProgress}
+          loading={chat.loading}
+          error={chat.error}
+          sessionStatus={terminal ? "completed" : "active"}
+        />
+      </div>
     </details>
   );
 }
