@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdminBySlug } from "@/lib/auth/session";
 import { updateMcpServerTestResult } from "@/lib/mcp-servers/actions";
 import {
   findMcpServerByIdAndOrg,
@@ -33,10 +33,15 @@ function getAuthResolutionError(server: {
 
 export const POST = withEvlog(
   async (
-    _req: Request,
+    req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const admin = await getSessionWithOrgAdmin();
+    const orgSlug = new URL(req.url).searchParams.get("orgSlug")?.trim() ?? "";
+    if (!orgSlug) {
+      return NextResponse.json({ error: "orgSlug required" }, { status: 400 });
+    }
+
+    const admin = await getSessionWithOrgAdminBySlug(orgSlug);
     if (!admin) {
       return NextResponse.json(
         { error: "Only organization owners and admins can manage MCP servers" },

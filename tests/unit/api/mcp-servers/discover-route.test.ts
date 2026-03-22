@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSessionWithOrgAdminMock, discoverOAuthConfigMock } = vi.hoisted(
+const { getSessionWithOrgAdminBySlugMock, discoverOAuthConfigMock } = vi.hoisted(
   () => ({
-    getSessionWithOrgAdminMock: vi.fn(),
+    getSessionWithOrgAdminBySlugMock: vi.fn(),
     discoverOAuthConfigMock: vi.fn(),
   }),
 );
 
 vi.mock("@/lib/auth/session", () => ({
-  getSessionWithOrgAdmin: getSessionWithOrgAdminMock,
+  getSessionWithOrgAdminBySlug: getSessionWithOrgAdminBySlugMock,
 }));
 
 vi.mock("@/lib/mcp-servers/discovery", () => ({
@@ -26,7 +26,7 @@ const { POST } = await import("@/app/api/mcp-servers/discover/route");
 describe("POST /api/mcp-servers/discover", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getSessionWithOrgAdminMock.mockResolvedValue({
+    getSessionWithOrgAdminBySlugMock.mockResolvedValue({
       orgId: "org-1",
       session: { user: { id: "user-1" } },
     });
@@ -46,5 +46,21 @@ describe("POST /api/mcp-servers/discover", () => {
       error: "Invalid JSON body",
     });
     expect(discoverOAuthConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit orgSlug", async () => {
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers/discover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverUrl: "https://mcp.example.com" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "orgSlug is required",
+    });
+    expect(getSessionWithOrgAdminBySlugMock).not.toHaveBeenCalled();
   });
 });

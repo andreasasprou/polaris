@@ -85,6 +85,42 @@ export async function getSessionWithOrgAdmin() {
 }
 
 /**
+ * Authenticate the current user and validate admin access against an explicit
+ * org slug instead of the session's mutable active org.
+ */
+export async function getSessionWithOrgAdminBySlug(orgSlug: string) {
+  const session = await auth.api
+    .getSession({ headers: await headers() })
+    .catch(() => null);
+
+  if (!session) {
+    return null;
+  }
+
+  const orgId = await getOrgIdBySlug(orgSlug);
+  if (!orgId) {
+    return null;
+  }
+
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, session.user.id),
+        eq(member.organizationId, orgId),
+      ),
+    )
+    .limit(1);
+
+  if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
+    return null;
+  }
+
+  return { session, orgId };
+}
+
+/**
  * Resolve org ID from slug. Use in server pages under [orgSlug] instead of
  * getSessionWithOrg() to avoid race conditions with the layout's org switch.
  * The layout already validates the slug and membership — this is a fast lookup.

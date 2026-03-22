@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdminBySlug } from "@/lib/auth/session";
 import { updateMcpServerOAuthMetadata } from "@/lib/mcp-servers/actions";
 import { discoverOAuthConfig } from "@/lib/mcp-servers/discovery";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
@@ -10,11 +10,26 @@ import { withEvlog } from "@/lib/evlog";
 import { validateOAuthEndpoints } from "@/lib/mcp-servers/url-validation";
 
 export const GET = withEvlog(async (req: Request) => {
-  const admin = await getSessionWithOrgAdmin();
-  if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
-  const { session, orgId } = admin;
   const url = new URL(req.url);
+  const orgSlug = url.searchParams.get("orgSlug")?.trim() ?? "";
   const serverId = url.searchParams.get("serverId");
+
+  if (!orgSlug) {
+    return NextResponse.json(
+      { error: "orgSlug required" },
+      { status: 400 },
+    );
+  }
+
+  const admin = await getSessionWithOrgAdminBySlug(orgSlug);
+  if (!admin) {
+    return NextResponse.json(
+      { error: "Only organization owners and admins can manage MCP servers" },
+      { status: 403 },
+    );
+  }
+
+  const { session, orgId } = admin;
 
   if (!serverId) {
     return NextResponse.json(

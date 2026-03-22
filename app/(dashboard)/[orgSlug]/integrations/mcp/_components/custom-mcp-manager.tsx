@@ -64,10 +64,12 @@ function toHeaderObject(rows: HeaderRow[]) {
 }
 
 export function CustomMcpManager({
+  orgSlug,
   servers,
   initialError,
   initialSuccess,
 }: {
+  orgSlug: string;
   servers: CustomServer[];
   initialError: string | null;
   initialSuccess: string | null;
@@ -110,6 +112,7 @@ export function CustomMcpManager({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          orgSlug,
           name: staticName,
           serverUrl: staticUrl,
           transport: staticTransport,
@@ -150,6 +153,7 @@ export function CustomMcpManager({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          orgSlug,
           name: oauthName,
           serverUrl: oauthUrl,
           transport: oauthTransport,
@@ -166,7 +170,7 @@ export function CustomMcpManager({
       }
 
       const payload = (await response.json()) as { server: { id: string } };
-      window.location.href = `/api/mcp-servers/oauth/start?serverId=${payload.server.id}`;
+      window.location.href = `/api/mcp-servers/oauth/start?serverId=${payload.server.id}&orgSlug=${encodeURIComponent(orgSlug)}`;
     } catch (error) {
       setBanner({
         kind: "error",
@@ -184,7 +188,7 @@ export function CustomMcpManager({
       const response = await fetch("/api/mcp-servers/discover", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverUrl: oauthUrl }),
+        body: JSON.stringify({ orgSlug, serverUrl: oauthUrl }),
       });
 
       if (!response.ok) {
@@ -219,11 +223,14 @@ export function CustomMcpManager({
     setBanner(null);
 
     try {
-      const response = await fetch(`/api/mcp-servers/${server.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !server.enabled }),
-      });
+      const response = await fetch(
+        `/api/mcp-servers/${server.id}?orgSlug=${encodeURIComponent(orgSlug)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !server.enabled }),
+        },
+      );
 
       if (!response.ok) {
         throw new Error(await readApiError(response));
@@ -253,9 +260,12 @@ export function CustomMcpManager({
     setBanner(null);
 
     try {
-      const response = await fetch(`/api/mcp-servers/${server.id}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/mcp-servers/${server.id}?orgSlug=${encodeURIComponent(orgSlug)}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
         throw new Error(await readApiError(response));
@@ -281,9 +291,12 @@ export function CustomMcpManager({
     setBanner(null);
 
     try {
-      const response = await fetch(`/api/mcp-servers/${server.id}/test`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        `/api/mcp-servers/${server.id}/test?orgSlug=${encodeURIComponent(orgSlug)}`,
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
         throw new Error(await readApiError(response));
@@ -310,7 +323,7 @@ export function CustomMcpManager({
   }
 
   async function handleConnect(server: CustomServer) {
-    window.location.href = `/api/mcp-servers/oauth/start?serverId=${server.id}`;
+    window.location.href = `/api/mcp-servers/oauth/start?serverId=${server.id}&orgSlug=${encodeURIComponent(orgSlug)}`;
   }
 
   return (

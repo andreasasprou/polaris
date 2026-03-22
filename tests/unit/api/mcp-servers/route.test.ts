@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSessionWithOrgAdminMock } = vi.hoisted(() => ({
-  getSessionWithOrgAdminMock: vi.fn(),
+const {
+  getSessionWithOrgAdminBySlugMock,
+  getSessionWithOrgMock,
+} = vi.hoisted(() => ({
+  getSessionWithOrgAdminBySlugMock: vi.fn(),
+  getSessionWithOrgMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
-  getSessionWithOrgAdmin: getSessionWithOrgAdminMock,
-  getSessionWithOrg: vi.fn(),
+  getSessionWithOrgAdmin: vi.fn(),
+  getSessionWithOrgAdminBySlug: getSessionWithOrgAdminBySlugMock,
+  getSessionWithOrg: getSessionWithOrgMock,
 }));
 
 vi.mock("@/lib/mcp-servers/queries", () => ({
@@ -33,7 +38,7 @@ const { POST } = await import("@/app/api/mcp-servers/route");
 describe("POST /api/mcp-servers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getSessionWithOrgAdminMock.mockResolvedValue({
+    getSessionWithOrgAdminBySlugMock.mockResolvedValue({
       orgId: "org-1",
       session: { user: { id: "user-1" } },
     });
@@ -67,5 +72,21 @@ describe("POST /api/mcp-servers", () => {
     await expect(response.json()).resolves.toEqual({
       error: "JSON body must be an object",
     });
+  });
+
+  it("requires an explicit orgSlug in mutation requests", async () => {
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Example" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "orgSlug is required",
+    });
+    expect(getSessionWithOrgAdminBySlugMock).not.toHaveBeenCalled();
   });
 });

@@ -112,12 +112,14 @@ async function readApiError(response: Response) {
 }
 
 export function CatalogInstallPanel({
+  orgSlug,
   template,
   server,
   status,
   initialError,
   initialSuccess,
 }: {
+  orgSlug: string;
   template: CatalogTemplate;
   server: InstalledServer | null;
   status: "not_installed" | "needs_auth" | "misconfigured" | "connected";
@@ -156,7 +158,7 @@ export function CatalogInstallPanel({
       const response = await fetch("/api/mcp-servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ catalogSlug: template.slug }),
+        body: JSON.stringify({ orgSlug, catalogSlug: template.slug }),
       });
 
       if (!response.ok) {
@@ -164,7 +166,7 @@ export function CatalogInstallPanel({
       }
 
       const payload = (await response.json()) as { server: { id: string } };
-      window.location.href = `/api/mcp-servers/oauth/start?serverId=${payload.server.id}`;
+      window.location.href = `/api/mcp-servers/oauth/start?serverId=${payload.server.id}&orgSlug=${encodeURIComponent(orgSlug)}`;
     } catch (error) {
       setBanner({
         kind: "error",
@@ -176,7 +178,7 @@ export function CatalogInstallPanel({
 
   async function handleConnect() {
     if (!server) return;
-    window.location.href = `/api/mcp-servers/oauth/start?serverId=${server.id}`;
+    window.location.href = `/api/mcp-servers/oauth/start?serverId=${server.id}&orgSlug=${encodeURIComponent(orgSlug)}`;
   }
 
   async function handleStaticInstall() {
@@ -188,6 +190,7 @@ export function CatalogInstallPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          orgSlug,
           catalogSlug: template.slug,
           region: selectedRegion,
           headers: headerValues,
@@ -220,9 +223,12 @@ export function CatalogInstallPanel({
     setBanner(null);
 
     try {
-      const response = await fetch(`/api/mcp-servers/${server.id}/test`, {
+      const response = await fetch(
+        `/api/mcp-servers/${server.id}/test?orgSlug=${encodeURIComponent(orgSlug)}`,
+        {
         method: "POST",
-      });
+        },
+      );
 
       if (!response.ok) {
         throw new Error(await readApiError(response));
@@ -255,11 +261,14 @@ export function CatalogInstallPanel({
     setBanner(null);
 
     try {
-      const response = await fetch(`/api/mcp-servers/${server.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !server.enabled }),
-      });
+      const response = await fetch(
+        `/api/mcp-servers/${server.id}?orgSlug=${encodeURIComponent(orgSlug)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !server.enabled }),
+        },
+      );
 
       if (!response.ok) {
         throw new Error(await readApiError(response));
@@ -289,9 +298,12 @@ export function CatalogInstallPanel({
     setBanner(null);
 
     try {
-      const response = await fetch(`/api/mcp-servers/${server.id}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/mcp-servers/${server.id}?orgSlug=${encodeURIComponent(orgSlug)}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
         throw new Error(await readApiError(response));

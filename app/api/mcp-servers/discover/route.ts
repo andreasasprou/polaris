@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdminBySlug } from "@/lib/auth/session";
 import { discoverOAuthConfig } from "@/lib/mcp-servers/discovery";
 import { isValidUrl } from "@/lib/mcp-servers/url-validation";
 import { withEvlog } from "@/lib/evlog";
@@ -17,17 +17,23 @@ async function readJsonObject(req: Request): Promise<Record<string, unknown> | n
 }
 
 export const POST = withEvlog(async (req: Request) => {
-  const admin = await getSessionWithOrgAdmin();
+  const body = await readJsonObject(req);
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const orgSlug =
+    typeof body.orgSlug === "string" ? body.orgSlug.trim() : "";
+  if (!orgSlug) {
+    return NextResponse.json({ error: "orgSlug is required" }, { status: 400 });
+  }
+
+  const admin = await getSessionWithOrgAdminBySlug(orgSlug);
   if (!admin) {
     return NextResponse.json(
       { error: "Only organization owners and admins can manage MCP servers" },
       { status: 403 },
     );
-  }
-
-  const body = await readJsonObject(req);
-  if (!body) {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const serverUrl =

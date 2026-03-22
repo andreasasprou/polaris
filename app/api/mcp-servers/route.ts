@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrg, getSessionWithOrgAdmin } from "@/lib/auth/session";
+import {
+  getSessionWithOrg,
+  getSessionWithOrgAdminBySlug,
+} from "@/lib/auth/session";
 import { findMcpServersByOrg } from "@/lib/mcp-servers/queries";
 import { createMcpServer } from "@/lib/mcp-servers/actions";
 import {
@@ -73,14 +76,29 @@ async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>;
 }
 
+function readRequiredOrgSlug(body: Record<string, unknown>): string {
+  const orgSlug = readTrimmedString(body.orgSlug);
+  if (!orgSlug) {
+    throw new ApiError("orgSlug is required", 400);
+  }
+  return orgSlug;
+}
+
 export const POST = withEvlog(async (req: Request) => {
-  const admin = await getSessionWithOrgAdmin();
-  if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
-  const { session, orgId } = admin;
   let requestedName: string | null = null;
 
   try {
     const body = await readJsonObject(req);
+    const orgSlug = readRequiredOrgSlug(body);
+    const admin = await getSessionWithOrgAdminBySlug(orgSlug);
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Only organization owners and admins can manage MCP servers" },
+        { status: 403 },
+      );
+    }
+
+    const { session, orgId } = admin;
     requestedName = readTrimmedString(body.name);
 
     const catalogSlug =

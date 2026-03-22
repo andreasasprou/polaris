@@ -48,6 +48,7 @@ export default async function CatalogIntegrationPage({
       </div>
 
       <CatalogInstallPanel
+        orgSlug={orgSlug}
         template={installation.template}
         status={installation.status}
         server={

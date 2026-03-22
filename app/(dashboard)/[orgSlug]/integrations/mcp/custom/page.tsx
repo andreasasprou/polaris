@@ -46,6 +46,7 @@ export default async function CustomMcpPage({
       </div>
 
       <CustomMcpManager
+        orgSlug={orgSlug}
         servers={servers.map((server) => ({
           id: server.id,
           name: server.name,

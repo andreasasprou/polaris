@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  getSessionWithOrgAdminMock,
+  getSessionWithOrgAdminBySlugMock,
   updateMcpServerOAuthMetadataMock,
   discoverOAuthConfigMock,
   findMcpServerByIdAndOrgMock,
   signMcpOAuthStateMock,
 } = vi.hoisted(() => ({
-  getSessionWithOrgAdminMock: vi.fn(),
+  getSessionWithOrgAdminBySlugMock: vi.fn(),
   updateMcpServerOAuthMetadataMock: vi.fn(),
   discoverOAuthConfigMock: vi.fn(),
   findMcpServerByIdAndOrgMock: vi.fn(),
@@ -15,7 +15,7 @@ const {
 }));
 
 vi.mock("@/lib/auth/session", () => ({
-  getSessionWithOrgAdmin: getSessionWithOrgAdminMock,
+  getSessionWithOrgAdminBySlug: getSessionWithOrgAdminBySlugMock,
 }));
 
 vi.mock("@/lib/mcp-servers/actions", () => ({
@@ -50,7 +50,7 @@ describe("GET /api/mcp-servers/oauth/start", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    getSessionWithOrgAdminMock.mockResolvedValue({
+    getSessionWithOrgAdminBySlugMock.mockResolvedValue({
       orgId: "org-1",
       session: {
         user: { id: "user-1" },
@@ -76,7 +76,7 @@ describe("GET /api/mcp-servers/oauth/start", () => {
 
     const response = await GET(
       new Request(
-        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1&orgSlug=acme",
       ),
     );
 
@@ -102,7 +102,7 @@ describe("GET /api/mcp-servers/oauth/start", () => {
 
     const response = await GET(
       new Request(
-        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1&orgSlug=acme",
       ),
     );
 
@@ -133,7 +133,7 @@ describe("GET /api/mcp-servers/oauth/start", () => {
 
     const response = await GET(
       new Request(
-        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1&orgSlug=acme",
       ),
     );
 
@@ -174,7 +174,7 @@ describe("GET /api/mcp-servers/oauth/start", () => {
 
     const response = await GET(
       new Request(
-        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1&orgSlug=acme",
       ),
     );
 
@@ -183,5 +183,19 @@ describe("GET /api/mcp-servers/oauth/start", () => {
       "https://example.com/authorize",
     );
     expect(updateMcpServerOAuthMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit orgSlug", async () => {
+    const response = await GET(
+      new Request(
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "orgSlug required",
+    });
+    expect(getSessionWithOrgAdminBySlugMock).not.toHaveBeenCalled();
   });
 });
