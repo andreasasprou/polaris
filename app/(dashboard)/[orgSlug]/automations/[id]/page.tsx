@@ -13,6 +13,7 @@ export default async function EditAutomationPage({
 }) {
   const { orgSlug, id } = await params;
   const orgId = await getOrgIdBySlug(orgSlug);
+  if (!orgId) notFound();
   const automation = await findAutomationById(id);
 
   if (!automation || automation.organizationId !== orgId) {

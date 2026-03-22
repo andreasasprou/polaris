@@ -89,14 +89,13 @@ export async function getSessionWithOrgAdmin() {
  * getSessionWithOrg() to avoid race conditions with the layout's org switch.
  * The layout already validates the slug and membership — this is a fast lookup.
  */
-export async function getOrgIdBySlug(slug: string): Promise<string> {
+export async function getOrgIdBySlug(slug: string): Promise<string | null> {
   const [org] = await db
     .select({ id: organization.id })
     .from(organization)
     .where(eq(organization.slug, slug))
     .limit(1);
-  if (!org) throw new Error(`Organization not found for slug: ${slug}`);
-  return org.id;
+  return org?.id ?? null;
 }
 
 export async function getOrgSlugById(orgId: string): Promise<string> {

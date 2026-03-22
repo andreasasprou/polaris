@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { getOrgIdBySlug } from "@/lib/auth/session";
 import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
 import { GitHubInstallCard } from "./_components/github-install-card";
@@ -9,6 +10,7 @@ export default async function IntegrationsPage({
 }) {
   const { orgSlug } = await params;
   const orgId = await getOrgIdBySlug(orgSlug);
+  if (!orgId) notFound();
   const installations = await findGithubInstallationsByOrg(orgId);
 
   return (

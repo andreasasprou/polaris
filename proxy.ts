@@ -47,7 +47,9 @@ export function proxy(request: NextRequest) {
   );
   if (legacyMatch) {
     if (!sessionCookie) {
-      return NextResponse.redirect(new URL("/login", request.url));
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("returnTo", pathname);
+      return NextResponse.redirect(loginUrl);
     }
     // Only use cookie fast-path for collection routes (e.g. /dashboard, /sessions).
     // Resource routes (e.g. /sessions/:id, /runs/:id) must fall through to the
@@ -70,17 +72,13 @@ export function proxy(request: NextRequest) {
   if (firstSegment && !RESERVED_SLUGS.has(firstSegment)) {
     // Protect org-scoped dashboard routes
     if (!sessionCookie) {
-      return NextResponse.redirect(new URL("/login", request.url));
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("returnTo", pathname);
+      return NextResponse.redirect(loginUrl);
     }
-    // Set/update polaris_org_slug cookie on response
-    const response = NextResponse.next();
-    response.cookies.set("polaris_org_slug", firstSegment, {
-      path: "/",
-      httpOnly: false,
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 365, // 1 year
-    });
-    return response;
+    // Cookie is set in the [orgSlug] layout after org validation — not here,
+    // to avoid poisoning the cookie with non-existent slugs.
+    return NextResponse.next();
   }
 
   return NextResponse.next();

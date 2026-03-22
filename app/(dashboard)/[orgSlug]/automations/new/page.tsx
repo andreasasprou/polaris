@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { getOrgIdBySlug } from "@/lib/auth/session";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
@@ -11,6 +12,7 @@ export default async function NewAutomationPage({
 }) {
   const { orgSlug } = await params;
   const orgId = await getOrgIdBySlug(orgSlug);
+  if (!orgId) notFound();
 
   const [repos, secrets, pools] = await Promise.all([
     syncReposForOrg(orgId),

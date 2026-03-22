@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { getOrgIdBySlug } from "@/lib/auth/session";
 import { findAutomationsWithRepoByOrg } from "@/lib/automations/queries";
 import { orgPath } from "@/lib/config/urls";
@@ -20,6 +21,7 @@ export default async function AutomationsPage({
 }) {
   const { orgSlug } = await params;
   const orgId = await getOrgIdBySlug(orgSlug);
+  if (!orgId) notFound();
   const rows = await findAutomationsWithRepoByOrg(orgId);
   const op = (path: string) => orgPath(orgSlug, path);
 
