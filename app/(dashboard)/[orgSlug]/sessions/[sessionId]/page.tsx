@@ -14,6 +14,10 @@ import { ChatInput, type Attachment } from "@/components/sessions/chat-input";
 import { UserMessage } from "@/components/sessions/user-message";
 import { useSessionChat } from "@/hooks/use-session-chat";
 import { getStatusConfig } from "@/lib/sessions/status";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { DiffReviewPane } from "@/components/sessions/diff-review/diff-review-pane";
+import { useDiffReview } from "@/hooks/use-diff-review";
+import { Badge } from "@/components/ui/badge";
 
 type InteractiveSession = {
   id: string;
@@ -227,6 +231,62 @@ function SessionChatInput({
   );
 }
 
+// ── Session Tabs ──
+
+function SessionTabs({
+  items,
+  turnInProgress,
+  loading,
+  error,
+  sessionStatus,
+  pendingPrompt,
+}: {
+  items: import("@/lib/sandbox-agent/event-types").ChatItem[];
+  turnInProgress: boolean;
+  loading?: boolean;
+  error?: Error | null;
+  sessionStatus?: string | null;
+  pendingPrompt: string | null;
+}) {
+  const { summary, prUrl } = useDiffReview(items);
+
+  return (
+    <Tabs defaultValue="chat" className="min-h-0 flex flex-1 flex-col">
+      <TabsList className="shrink-0">
+        <TabsTrigger value="chat">Chat</TabsTrigger>
+        <TabsTrigger value="review" className="gap-1.5">
+          Review
+          {summary.totalFiles > 0 && (
+            <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px]">
+              {summary.totalFiles}
+            </Badge>
+          )}
+        </TabsTrigger>
+      </TabsList>
+
+      {/* forceMount keeps chat mounted when Review tab is active,
+          preserving scroll position and useAutoScroll state.
+          data-[state=inactive] hides it visually without unmounting. */}
+      <TabsContent value="chat" forceMount className="min-h-0 flex flex-col data-[state=inactive]:hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <SessionChat
+            items={items}
+            turnInProgress={turnInProgress}
+            loading={loading}
+            error={error}
+            sessionStatus={sessionStatus}
+          />
+          {pendingPrompt && <UserMessage text={pendingPrompt} />}
+        </div>
+      </TabsContent>
+
+      <TabsContent value="review" className="min-h-0 flex flex-col">
+        <DiffReviewPane summary={summary} prUrl={prUrl} />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
 // ── Page ──
 
 export default function SessionDetailPage() {
@@ -358,16 +418,14 @@ export default function SessionDetailPage() {
         onPendingPrompt={setPendingPrompt}
         onStop={handleStop}
       >
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <SessionChat
-            items={chat.items}
-            turnInProgress={chat.turnInProgress}
-            loading={chat.loading}
-            error={chat.error}
-            sessionStatus={session.status}
-          />
-          {pendingPrompt && <UserMessage text={pendingPrompt} />}
-        </div>
+        <SessionTabs
+          items={chat.items}
+          turnInProgress={chat.turnInProgress}
+          loading={chat.loading}
+          error={chat.error}
+          sessionStatus={session.status}
+          pendingPrompt={pendingPrompt}
+        />
       </SessionChatInput>
     </div>
   );
