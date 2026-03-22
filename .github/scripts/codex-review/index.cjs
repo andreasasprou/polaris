@@ -365,6 +365,7 @@ async function replyToResolvedComments({
 }) {
   const log = (msg) => console.log(`[codex-review] ${msg}`);
   let repliedCount = 0;
+  const commentIdsToResolve = [];
 
   for (const resolved of resolvedIssues) {
     const commentId = inlineCommentMap[resolved.id];
@@ -380,6 +381,7 @@ async function replyToResolvedComments({
         comment_id: commentId,
         body: `> **Resolved** in \`${shortSha}\`\n>\n> ${resolution}`,
       });
+      commentIdsToResolve.push(commentId);
       repliedCount++;
     } catch (e) {
       log(`Failed to reply to resolved comment ${commentId}: ${e.message}`);
@@ -388,6 +390,77 @@ async function replyToResolvedComments({
 
   if (repliedCount > 0) {
     log(`Replied to ${repliedCount} resolved inline comment(s)`);
+  }
+
+  // Auto-resolve the threads via GraphQL
+  if (commentIdsToResolve.length > 0) {
+    await resolveCommentThreads({ github, owner, repo, prNumber, commentIdsToResolve, log });
+  }
+}
+
+/**
+ * Resolve review comment threads using the GraphQL resolveReviewThread mutation.
+ * Finds threads by matching comment IDs, then resolves them.
+ */
+async function resolveCommentThreads({
+  github,
+  owner,
+  repo,
+  prNumber,
+  commentIdsToResolve,
+  log,
+}) {
+  try {
+    // Query all review threads to find the ones containing our comments
+    const { repository } = await github.graphql(`
+      query($owner: String!, $repo: String!, $pr: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $pr) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                comments(first: 1) {
+                  nodes {
+                    databaseId
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `, { owner, repo, pr: prNumber });
+
+    const threads = repository.pullRequest.reviewThreads.nodes;
+    const commentIdSet = new Set(commentIdsToResolve);
+    let resolvedCount = 0;
+
+    for (const thread of threads) {
+      if (thread.isResolved) continue;
+
+      const firstCommentId = thread.comments.nodes[0]?.databaseId;
+      if (!firstCommentId || !commentIdSet.has(firstCommentId)) continue;
+
+      try {
+        await github.graphql(`
+          mutation($threadId: ID!) {
+            resolveReviewThread(input: { threadId: $threadId }) {
+              thread { isResolved }
+            }
+          }
+        `, { threadId: thread.id });
+        resolvedCount++;
+      } catch (e) {
+        log(`Failed to resolve thread ${thread.id}: ${e.message}`);
+      }
+    }
+
+    if (resolvedCount > 0) {
+      log(`Auto-resolved ${resolvedCount} review thread(s)`);
+    }
+  } catch (e) {
+    log(`Failed to query/resolve threads (non-fatal): ${e.message}`);
   }
 }
 

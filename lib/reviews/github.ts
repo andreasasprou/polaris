@@ -271,6 +271,80 @@ export async function dismissReview(input: {
 }
 
 /**
+ * Resolve review comment threads via GraphQL.
+ * Finds threads by matching comment database IDs, then resolves them.
+ */
+export async function resolveReviewThreads(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  commentIds: number[];
+}): Promise<number> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  let resolvedCount = 0;
+
+  try {
+    const { repository } = await octokit.graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              comments: { nodes: Array<{ databaseId: number }> };
+            }>;
+          };
+        };
+      };
+    }>(`
+      query($owner: String!, $repo: String!, $pr: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $pr) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                comments(first: 1) {
+                  nodes {
+                    databaseId
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `, { owner: input.owner, repo: input.repo, pr: input.prNumber });
+
+    const commentIdSet = new Set(input.commentIds);
+
+    for (const thread of repository.pullRequest.reviewThreads.nodes) {
+      if (thread.isResolved) continue;
+      const firstCommentId = thread.comments.nodes[0]?.databaseId;
+      if (!firstCommentId || !commentIdSet.has(firstCommentId)) continue;
+
+      try {
+        await octokit.graphql(`
+          mutation($threadId: ID!) {
+            resolveReviewThread(input: { threadId: $threadId }) {
+              thread { isResolved }
+            }
+          }
+        `, { threadId: thread.id });
+        resolvedCount++;
+      } catch {
+        // Best-effort per thread
+      }
+    }
+  } catch {
+    // Non-fatal — thread resolution is a UX enhancement
+  }
+
+  return resolvedCount;
+}
+
+/**
  * Get an Octokit instance for use by other review modules.
  */
 export async function getReviewOctokit(installationId: number) {
