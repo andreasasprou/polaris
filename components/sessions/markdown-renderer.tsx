@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useRef, type ReactNode, type ComponentType } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import remarkFileRefs from "@/lib/markdown/remark-file-refs";
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./copy-button";
+import { FileRefPill } from "./file-ref-pill";
 
 interface MarkdownRendererProps {
   children: string;
@@ -53,9 +55,21 @@ export function MarkdownRenderer({ children, className }: MarkdownRendererProps)
   return (
     <div className={cn("min-w-0 text-sm leading-relaxed [overflow-wrap:anywhere]", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkFileRefs]}
         rehypePlugins={[rehypeHighlight]}
         components={{
+          ...(({
+            "file-ref": (props: Record<string, unknown>) => (
+              <FileRefPill
+                path={props.path as string}
+                fileName={props.fileName as string}
+                line={props.line as string | undefined}
+                lineEnd={props.lineEnd as string | undefined}
+              >
+                {props.children as ReactNode}
+              </FileRefPill>
+            ),
+          }) as Record<string, ComponentType<Record<string, unknown>>>),
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           code: ({ className, children, ...props }) => {
             const isInline = !className;
