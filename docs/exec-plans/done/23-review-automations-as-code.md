@@ -70,7 +70,7 @@ This is a load-bearing decision. If config were read from the PR head, a PR auth
 - A PR that modifies `.polaris/reviews/` is reviewed under the *current* rules, not the proposed ones
 - This matches how CI workflows work (`.github/workflows/` changes don't affect the current run)
 
-The same trust boundary applies to `AGENTS.md` and `REVIEW_GUIDELINES.md` — these are already loaded from the base ref via `loadRepoGuidelines()`.
+The same trust boundary must apply to `AGENTS.md` and `REVIEW_GUIDELINES.md`. **Current code does not do this yet** — `dispatchPrReview()` currently passes the PR head SHA into `loadRepoGuidelines()`. Phase 1 must move guideline loading to `event.baseRef` at the same time as repo-config loading so all repo-owned instructions are read from the same trusted ref.
 
 **Which ref exactly:** Use `event.baseRef` (the branch name, e.g. `"main"`), NOT `event.baseSha` (the commit SHA). The branch name gives the latest merged state of the config, which is what we want — if someone merges a config change between the PR being opened and a new push, the latest config should apply. `octokit.rest.repos.getContent({ ref: "main" })` resolves to the branch tip.
 
@@ -117,7 +117,10 @@ Fields NOT in Phase 1: `agent`, `model`, `effort`, `credential`, `check-name`, `
 | 2026-03-22 | Read config from base branch, not PR head | PR author must not be able to weaken their own review. Config changes take effect after merge. Matches `.github/workflows/` convention. |
 | 2026-03-22 | Present-but-invalid YAML fails the check (no silent fallback) | Only fall back when directory is missing. Any broken config must surface as a clear check failure, not a silent connector fallback. |
 | 2026-03-22 | Separate full file list from prompt-budgeted file list | `pathFilter` and scoped AGENTS.md need the complete file list; diff rendering uses the capped list. |
+| 2026-03-22 | Use one shared paginated PR file-list primitive under `diff.ts` | Avoid a third divergent `pulls.listFiles()` loop for filters/guidelines. Prompt-budgeted and uncapped callers should share the same underlying pagination path. |
 | 2026-03-22 | Normalize YAML keys to camelCase at parse boundary | Hyphenated YAML keys (`ignore-paths`) → camelCase TS (`ignorePaths`). Simplifies merge code and tests. |
+| 2026-03-22 | Scoped guideline discovery uses reviewed paths, not raw changed paths | `ignorePaths` removes files from the review surface, so scoped repo guidance should match the files the agent will actually review. |
+| 2026-03-22 | Config loading failures mark the automation run as failed | The run state should match the failed GitHub check; this is an execution failure, not a completed review. |
 | 2026-03-22 | Use `event.baseRef` (branch name) not `event.baseSha` (commit SHA) | Branch name resolves to tip, so config changes merged after PR opened still take effect. |
 
 ## Merge Semantics
@@ -198,20 +201,21 @@ Surfaced by the Codex review — not part of the IaC feature, but must be fixed 
 
 1. **`pr-review.ts:124`** — `shouldReviewPR()` called without `changedFiles`, making `pathFilter` a no-op.
 2. **`pr-review.ts:217`** — `loadRepoGuidelines()` receives `[]` for changed paths, so scoped `AGENTS.md` discovery never runs.
+3. **`pr-review.ts:217`** — `loadRepoGuidelines()` is called with `toSha` / PR head SHA instead of `event.baseRef`, so repo-owned guidance is read from the untrusted ref.
 
-### Fix: add `fetchFullFileList()` to `lib/reviews/diff.ts`
+### Fix: refactor PR file listing around one uncapped primitive
 
-The existing `fetchPRDiff()` in `lib/reviews/diff.ts:17` already calls `octokit.rest.pulls.listFiles()` but caps at `maxFiles` (150) and couples the file list to diff fetching. We need a separate lightweight function that returns the **full** file list for gating/filters without fetching diff content.
+The existing `fetchPRDiff()` in `lib/reviews/diff.ts:17` and `fetchPRFileList()` in `lib/reviews/diff.ts:110` both paginate `octokit.rest.pulls.listFiles()`. Phase 1 should not add a third hand-rolled pagination loop. Instead, refactor `lib/reviews/diff.ts` around one shared primitive for paginated PR files, then expose an uncapped helper for filters/guidelines and keep the prompt-budgeted path as a wrapper.
 
 ```typescript
-// Add to lib/reviews/diff.ts
+// Refactor lib/reviews/diff.ts
 
 /**
  * Fetch the complete list of changed file paths for a PR.
  * Paginates through all pages — no cap. Used for filter evaluation
  * and scoped guidelines, NOT for prompt rendering.
  *
- * Uses the same GitHub API as fetchPRDiff (pulls.listFiles) but:
+ * Uses the same underlying pagination primitive as fetchPRFileList/fetchPRDiff:
  * - No maxFiles cap
  * - Returns only file paths (no patch content)
  * - Paginated to completion
@@ -245,11 +249,18 @@ const { fetchFullFileList } = await import("@/lib/reviews/diff");
 const octokit = await getReviewOctokit(installationId);
 const allChangedFiles = await fetchFullFileList(octokit, event.owner, event.repo, event.prNumber);
 
-// Step 3: apply filters with full file list
+// Step 3: apply filters with the RAW full file list
 const filterResult = shouldReviewPR(event, config, allChangedFiles);
 
 // Later, when loading guidelines:
-const guidelines = await loadRepoGuidelines(octokit, event.owner, event.repo, event.baseRef, allChangedFiles);
+const reviewedPaths = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []);
+const guidelines = await loadRepoGuidelines(
+  octokit,
+  event.owner,
+  event.repo,
+  event.baseRef,
+  reviewedPaths,
+);
 ```
 
 The existing `fetchPRDiff()` call (used for prompt assembly) stays as-is with its `maxFiles` cap.
@@ -258,10 +269,13 @@ The existing `fetchPRDiff()` call (used for prompt assembly) stays as-is with it
 
 ### Phase 1: Repo-Defined Instructions + Filters
 
-- [ ] Add `fetchFullFileList()` to `lib/reviews/diff.ts`
-- [ ] Fix bug: call `fetchFullFileList()` before filters in `pr-review.ts`
-- [ ] Fix bug: pass full file list to `shouldReviewPR()` and `loadRepoGuidelines()`
-- [ ] Extract `fetchFileContent()` from `lib/reviews/guidelines.ts` as shared utility
+- [ ] Refactor `lib/reviews/diff.ts` around one shared paginated PR file-list primitive
+- [ ] Add/expose an uncapped PR file-list helper for review gating and guideline discovery
+- [ ] Fix bug: call the uncapped file-list helper before filters in `pr-review.ts`
+- [ ] Fix bug: pass raw full file list to `shouldReviewPR()`
+- [ ] Fix bug: pass post-`ignorePaths` reviewed paths to `loadRepoGuidelines()`
+- [ ] Fix bug: read repo guidelines from `event.baseRef`, not `event.headSha`
+- [ ] Create `lib/reviews/repo-content.ts` for shared GitHub content fetch helpers
 - [ ] Create `lib/reviews/repo-config.ts`:
   - `RepoReviewDefinitionSchema` (Zod schema — YAML keys normalized to camelCase at parse)
   - `RepoReviewDefinition` and `ResolvedReviewConfig` types
@@ -273,12 +287,14 @@ The existing `fetchPRDiff()` call (used for prompt assembly) stays as-is with it
 - [ ] Modify `lib/orchestration/pr-review.ts`:
   - Call `loadRepoReviewConfig()` with `event.baseRef` (branch name, not `headSha`)
   - Handle all `RepoConfigResult` statuses via switch (see integration snippet below)
-  - For `invalid`/`multiple`/`error`: call `failCheck()` from `lib/reviews/github.ts:66` with specific error message, then release lock and return early
+  - For `invalid`/`multiple`/`error`: call `failCheck()` from `lib/reviews/github.ts:66` with specific error message, mark the automation run `failed`, then release lock and return early
   - For `found`: merge with connector via `mergeWithConnector()`
-  - Use `effectiveConfig.reviewConfig` for filters, prompt, and classification
+  - Use raw full changed files for filters and post-`ignorePaths` reviewed paths for guideline loading
+  - Use `effectiveConfig.reviewConfig` for prompt and classification
 - [ ] Ensure config errors surface in GitHub check (see error propagation section below)
 - [ ] Write `docs/features/code-reviews.md` (user-facing feature doc)
 - [ ] Write unit tests for `repo-config.ts` (parse, validate, merge, all outcome matrix scenarios)
+- [ ] Add a focused orchestration test for `dispatchPrReview()` wiring (`baseRef`, raw changed files, reviewed guideline paths)
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes
 
@@ -320,17 +336,19 @@ Schema change: add `definitionSlug` (nullable) to `automationRuns` via `drizzle-
 
 | File | Purpose |
 |------|---------|
+| `lib/reviews/repo-content.ts` | Shared GitHub repo-content helpers (`fetchFileContent`, future shared content fetches) |
 | `lib/reviews/repo-config.ts` | Zod schema, discriminated result type, GitHub fetch, YAML parse, key normalization, merge with connector |
 | `docs/features/code-reviews.md` | User-facing feature doc |
 | `tests/unit/reviews/repo-config.test.ts` | Unit tests for parse/validate/merge/all outcome matrix scenarios |
+| `tests/unit/orchestration/pr-review.test.ts` | Focused wiring test for `dispatchPrReview()` (`baseRef`, changed-file propagation, guideline inputs) |
 
 ### Modified files
 
 | File | Changes |
 |------|---------|
-| `lib/reviews/diff.ts` | Add `fetchFullFileList()` — full paginated file list for filters/guidelines |
-| `lib/reviews/guidelines.ts` | Extract `fetchFileContent()` as named export (currently private, line 72) |
-| `lib/orchestration/pr-review.ts` | Bug fixes (full file list before filters, scoped guidelines), repo config discovery from `event.baseRef`, discriminated result handling, config error → `failCheck()` |
+| `lib/reviews/diff.ts` | Refactor around one shared paginated PR file-list primitive; expose uncapped file list for filters/guidelines |
+| `lib/reviews/guidelines.ts` | Use shared `repo-content.ts` helper; load scoped guidelines from `event.baseRef` using reviewed paths |
+| `lib/orchestration/pr-review.ts` | Bug fixes (raw full file list before filters, reviewed-path guideline loading, base-ref guideline trust boundary), repo config discovery from `event.baseRef`, discriminated result handling, config error → `failCheck()` + failed run |
 | `package.json` | Add `js-yaml`, `@types/js-yaml` |
 
 ### Files NOT modified
@@ -430,6 +448,25 @@ export function mergeWithConnector(
 ): ResolvedReviewConfig
 ```
 
+### Shared repo-content helper (`lib/reviews/repo-content.ts`)
+
+```typescript
+/**
+ * Fetch a single text file from a repo/ref via GitHub Contents API.
+ * Returns `null` for 404/not-a-file and throws for unexpected transport/API failures.
+ *
+ * Used by both guideline loading and `.polaris/reviews/*.yaml` loading so
+ * the content-fetching behavior stays consistent.
+ */
+export async function fetchFileContent(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  ref: string,
+  path: string,
+): Promise<string | null>
+```
+
 ### YAML key normalization
 
 YAML uses kebab-case for readability (`ignore-paths`, `skip-drafts`, `file-classification`). At the parse boundary, before Zod validation, keys are normalized to camelCase:
@@ -463,7 +500,7 @@ function normalizeKeys(obj: unknown): unknown {
 4. Filter entries for `.yaml`/`.yml` extension
 5. If 0 matching files → return `{ status: "not_found" }`
 6. If >1 matching files → return `{ status: "multiple", files: [...names] }`
-7. Fetch the single file content via `fetchFileContent()` (extracted from `guidelines.ts`)
+7. Fetch the single file content via `fetchFileContent()` from `repo-content.ts`
 8. Parse YAML with `yaml.load()` from `js-yaml`
 9. Run `normalizeKeys()` on the parsed object
 10. Validate against `RepoReviewDefinitionSchema` via `.safeParse()`
@@ -508,8 +545,9 @@ if (repoConfigResult.status === "invalid" ||
 
   // Update the automation run
   await updateAutomationRun(automationRunId, {
-    status: "completed",
+    status: "failed",
     summary: errorMsg,
+    error: errorMsg,
     completedAt: new Date(),
   });
 
@@ -533,10 +571,7 @@ Where `formatConfigError()` produces messages like:
 ```typescript
 // After loading automation (existing line ~67):
 const connectorConfig = (automation.prReviewConfig ?? {}) as PRReviewConfig;
-
-// NEW: fetch full file list for filters + guidelines (before step 3)
-const { fetchFullFileList } = await import("@/lib/reviews/diff");
-const allChangedFiles = await fetchFullFileList(octokit, event.owner, event.repo, event.prNumber);
+const octokit = await getReviewOctokit(installationId);
 
 // NEW: load repo-level config from BASE branch
 const { loadRepoReviewConfig, mergeWithConnector } = await import("@/lib/reviews/repo-config");
@@ -552,11 +587,22 @@ if (repoConfigResult.status === "found") {
   // (see error propagation section above)
 }
 
-// Step 3: apply filters with FULL file list (bug fix)
+// NEW: fetch raw full file list for filters
+const { fetchFullFileList } = await import("@/lib/reviews/diff");
+const allChangedFiles = await fetchFullFileList(octokit, event.owner, event.repo, event.prNumber);
+
+// Step 3: apply filters with the RAW full file list (bug fix)
 const filterResult = shouldReviewPR(event, effectiveConfig, allChangedFiles);
 
-// Later: load guidelines with full file list (bug fix)
-const guidelines = await loadRepoGuidelines(octokit, event.owner, event.repo, event.baseRef, allChangedFiles);
+// Later: load guidelines from the trusted base ref using the REVIEWED path set
+const reviewedPaths = filterIgnoredPaths(allChangedFiles, effectiveConfig.ignorePaths ?? []);
+const guidelines = await loadRepoGuidelines(
+  octokit,
+  event.owner,
+  event.repo,
+  event.baseRef,
+  reviewedPaths,
+);
 
 // Build prompt — effectiveConfig.customPrompt now contains YAML instructions if present
 const prompt = buildReviewPrompt({
@@ -576,9 +622,11 @@ const prompt = buildReviewPrompt({
 - [ ] Missing `.polaris/reviews/` → connector config used unchanged (backward compat)
 - [ ] Invalid YAML → GitHub check fails with parse error diagnostics (NOT silent fallback)
 - [ ] Config read from base branch (`event.baseRef`), not PR head — PR modifying `.polaris/reviews/` is reviewed under current rules
-- [ ] Changed-file bug fixed: full file list used for `pathFilter` and scoped `AGENTS.md`
+- [ ] Changed-file/guideline bugs fixed: raw full changed-file list used for `pathFilter`; post-`ignorePaths` reviewed paths used for scoped `AGENTS.md` / `REVIEW_GUIDELINES.md`
+- [ ] Repo-owned guidance is read from `event.baseRef`, not `headSha`
 - [ ] Merge semantics work: YAML `instructions` replaces `customPrompt`, YAML `filters.skipBots: false` overrides connector, omitted fields inherit
 - [ ] Unit tests cover: valid YAML parse, invalid YAML, multiple files, merge semantics (see merge example above), empty instructions, all outcome matrix scenarios, `normalizeKeys()` edge cases
+- [ ] Orchestration test covers `dispatchPrReview()` wiring for `baseRef`, raw changed files, and reviewed guideline paths
 - [ ] `docs/features/code-reviews.md` written and accurate
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes

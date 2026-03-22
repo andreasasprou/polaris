@@ -136,6 +136,35 @@ export async function fetchPRFileList(
 }
 
 /**
+ * Fetch the complete list of changed file paths for a PR.
+ * Paginates through all pages — no cap. Used for filter evaluation
+ * and scoped guidelines, NOT for prompt rendering.
+ */
+export async function fetchFullFileList(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<string[]> {
+  const files: string[] = [];
+  let page = 1;
+  while (true) {
+    const { data } = await octokit.rest.pulls.listFiles({
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+      page,
+    });
+    if (data.length === 0) break;
+    files.push(...data.map((f) => f.filename));
+    if (data.length < 100) break;
+    page++;
+  }
+  return files;
+}
+
+/**
  * Fetch the diff between two commits (for incremental review).
  */
 export async function fetchCommitRangeDiff(

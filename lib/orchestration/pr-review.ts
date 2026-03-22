@@ -64,7 +64,7 @@ export async function dispatchPrReview(
   const automationSession = await getAutomationSession(automationSessionId);
   if (!automationSession) throw new Error(`AutomationSession ${automationSessionId} not found`);
 
-  const config = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
+  const connectorConfig = (automation.prReviewConfig ?? {}) as import("@/lib/reviews/types").PRReviewConfig;
   const sessionMetadata = automationSession.metadata as AutomationSessionMetadata;
 
   let checkRunId: string | undefined = input.checkRunId;
@@ -121,9 +121,49 @@ export async function dispatchPrReview(
     const log = useLogger();
     log.set({ dispatch: { automationRunId, automationId, sessionId: automationSessionId, prNumber: event.prNumber } });
 
-    // 3. Apply filters
+    // 3. Load repo-level config from BASE branch
+    const octokit = await getReviewOctokit(installationId);
+    const { loadRepoReviewConfig, mergeWithConnector, formatConfigError } = await import("@/lib/reviews/repo-config");
+    const repoConfigResult = await loadRepoReviewConfig(octokit, event.owner, event.repo, event.baseRef);
+
+    let config = connectorConfig;
+    if (repoConfigResult.status === "found") {
+      const resolved = mergeWithConnector(repoConfigResult.definition, automation);
+      config = resolved.reviewConfig;
+    } else if (
+      repoConfigResult.status === "invalid" ||
+      repoConfigResult.status === "multiple" ||
+      repoConfigResult.status === "error"
+    ) {
+      const errorMsg = formatConfigError(repoConfigResult);
+      const { failCheck } = await import("@/lib/reviews/github");
+      if (checkRunId) {
+        await failCheck({
+          installationId,
+          owner: event.owner,
+          repo: event.repo,
+          checkRunId,
+          error: errorMsg,
+        });
+      }
+      await updateAutomationRun(automationRunId, {
+        status: "failed",
+        summary: errorMsg,
+        error: errorMsg,
+        completedAt: new Date(),
+      });
+      await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
+      handedOff = true;
+      return { jobId: "" };
+    }
+
+    // 4. Fetch raw full file list for filters and guideline scoping
+    const { fetchFullFileList } = await import("@/lib/reviews/diff");
+    const allChangedFiles = await fetchFullFileList(octokit, event.owner, event.repo, event.prNumber);
+
+    // 5. Apply filters with the RAW full file list
     const { shouldReviewPR } = await import("@/lib/reviews/filters");
-    const filterResult = shouldReviewPR(event, config);
+    const filterResult = shouldReviewPR(event, config, allChangedFiles);
     if (!filterResult.review) {
       const skipSummary = `Skipped: ${filterResult.reason}`;
       await cancelCheck(skipSummary);
@@ -155,7 +195,7 @@ export async function dispatchPrReview(
       return { jobId: "" };
     }
 
-    // 4. Ensure check exists
+    // 6. Ensure check exists
     if (!checkRunId) {
       try {
         const check = await createPendingCheck({
@@ -177,9 +217,7 @@ export async function dispatchPrReview(
       startedAt: new Date(),
     });
 
-    // 5. Gather metadata
-    const octokit = await getReviewOctokit(installationId);
-    const { fetchPRFileList } = await import("@/lib/reviews/diff");
+    // 7. Gather metadata
     const { loadRepoGuidelines } = await import("@/lib/reviews/guidelines");
     const { classifyFiles, filterIgnoredPaths } = await import("@/lib/reviews/classification");
 
@@ -208,13 +246,14 @@ export async function dispatchPrReview(
 
     const reviewSequence = (sessionMetadata.reviewCount ?? 0) + 1;
 
+    // Compute reviewed paths (post-ignorePaths) for scoped guideline discovery
+    const reviewedPaths = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []);
+
     const { fetchPRDiff, fetchCommitRangeDiff } = await import("@/lib/reviews/diff");
 
-    const [allFiles, guidelines, diffResult] = await Promise.all([
-      fetchPRFileList(octokit, event.owner, event.repo, event.prNumber, {
-        maxFiles: config.maxPromptFiles,
-      }),
-      loadRepoGuidelines(octokit, event.owner, event.repo, toSha, [], {
+    const [guidelines, diffResult] = await Promise.all([
+      // Load guidelines from trusted base ref using reviewed paths
+      loadRepoGuidelines(octokit, event.owner, event.repo, event.baseRef, reviewedPaths, {
         maxBytes: config.maxGuidelinesBytes,
       }),
       reviewScope === "incremental" && fromSha
@@ -227,10 +266,10 @@ export async function dispatchPrReview(
           }),
     ]);
 
-    const filteredFiles = filterIgnoredPaths(allFiles, config.ignorePaths ?? []);
+    const filteredFiles = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []);
     const fileClassifications = classifyFiles(filteredFiles, config);
 
-    // 6. Build prompt
+    // 8. Build prompt
     const { buildReviewPrompt } = await import("@/lib/reviews/prompt-builder");
     const reviewPrompt = buildReviewPrompt({
       event,
@@ -256,7 +295,7 @@ export async function dispatchPrReview(
       reviewToSha: toSha,
     });
 
-    // 7. Handle "reset" — create new interactive session
+    // 9. Handle "reset" — create new interactive session
     if (reviewScope === "reset") {
       const { createInteractiveSession } = await import("@/lib/sessions/actions");
       const newSession = await createInteractiveSession({
@@ -274,7 +313,7 @@ export async function dispatchPrReview(
       await swapAutomationSessionInteractiveSession(automationSessionId, newSession.id);
     }
 
-    // 8. Dispatch prompt to session sandbox
+    // 10. Dispatch prompt to session sandbox
     const { getInteractiveSession, casSessionStatus } = await import("@/lib/sessions/actions");
     const session = await getInteractiveSession(targetSessionId);
     if (!session) throw new Error(`Interactive session ${targetSessionId} not found`);
@@ -298,7 +337,7 @@ export async function dispatchPrReview(
       throw new Error(`Cannot dispatch to session ${targetSessionId}: status is ${session.status}`);
     }
 
-    // 8. Create review job (before dispatch loop — job is the durable boundary)
+    // 11. Create review job (before dispatch loop — job is the durable boundary)
     const hmacKey = generateJobHmacKey();
     const job = await createJob({
       organizationId: orgId,
@@ -356,7 +395,7 @@ export async function dispatchPrReview(
 
     log.set({ dispatch: { callbackUrl, jobId: job.id, agent: resolved.agent } });
 
-    // 9. Dispatch with inline retry — health check adjacent to POST
+    // 12. Dispatch with inline retry — health check adjacent to POST
     let currentSandboxUrl = session.sandboxBaseUrl;
     let currentEpoch = session.epoch;
     let currentSandboxId = session.sandboxId;
