@@ -313,7 +313,7 @@ export function AutomationForm({
             <code className="text-xs">.polaris/reviews/{yamlOverrides.fileName}</code>{" "}
             overrides {yamlOverrides.overriddenFields.length}{" "}
             {yamlOverrides.overriddenFields.length === 1 ? "field" : "fields"} at
-            review time. Values set here serve as fallbacks.
+            review time. Badged fields below are ignored while the YAML key is present.
           </AlertDescription>
           <AlertAction>
             <a
