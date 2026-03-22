@@ -1,17 +1,17 @@
 # OpenReview — Codex Code Review GitHub Action
 
-A lightweight, self-contained PR review bot powered by Codex. Copy three files to any repo and get AI code reviews with inline comments, incremental review continuity, and automatic issue resolution.
+A lightweight, self-contained PR review bot powered by Codex. Copy four files to any repo and get AI code reviews with inline comments, incremental review continuity, and automatic issue resolution.
 
 ## Features
 
 - **Incremental reviews** — only reviews new commits since the last review pass
-- **Inline comments** — findings appear directly on the PR diff with file+line anchors
-- **Auto-resolve** — when a fix is pushed, the bot replies "Resolved" and closes the review thread
+- **Inline comments** — findings appear directly on the PR diff with file+line anchors, including multi-line ranges and GitHub suggestion blocks
+- **Auto-resolve** — when a fix is pushed, the bot replies "Resolved" and auto-resolves the review thread via GraphQL
 - **Stale comment management** — previous reviews are collapsed with a "Superseded" banner
 - **State continuity** — tracks open/resolved issues across review passes
 - **`/codex-review` command** — trigger reviews manually with options (`full`, `reset`, `--since <sha>`)
 - **Structured output** — uses `--output-schema` for reliable JSON output from Codex
-- **Repo guidelines** — loads `AGENTS.md` and `REVIEW_GUIDELINES.md` as review criteria
+- **Repo guidelines** — loads `AGENTS.md` and `REVIEW_GUIDELINES.md` from the repo root as review criteria
 - **Sandbox hardening** — workspace-write sandbox with network disabled, dirty-tree check, persist-credentials:false
 
 ## Setup
@@ -51,13 +51,21 @@ env:
   CODEX_WEB_SEARCH_MODE: disabled       # disabled | cached | live
 ```
 
-Optionally uncomment the `paths:` filter to only trigger on specific directories.
+Optionally uncomment the `paths:` filter to only auto-trigger on specific directories (applies to `pull_request_target` events only — `/codex-review` comments and `workflow_dispatch` always run).
 
 ## How it works
 
+### Triggers
+
+| Trigger | Behavior |
+|---------|----------|
+| PR opened / push | Auto-review (same-repo PRs only, fork PRs ignored) |
+| `/codex-review` comment | Manual trigger — restricted to MEMBER, OWNER, or COLLABORATOR |
+| `workflow_dispatch` | Manual trigger via Actions tab with PR number input |
+
 ### Review lifecycle
 
-1. PR opened or push → workflow triggers
+1. PR opened, push, `/codex-review` comment, or manual dispatch → workflow triggers
 2. Loads previous review state from a hidden GitHub comment (base64 JSON)
 3. Determines scope (full vs incremental) based on last reviewed SHA
 4. Generates diff, builds prompt with repo guidelines
@@ -72,9 +80,9 @@ When a fix is pushed and the next review detects a resolved issue:
 
 1. The bot replies to the original inline comment: "Resolved in `<sha>`"
 2. The bot auto-resolves the review thread via GraphQL `resolveReviewThread`
-3. The summary comment lists resolved issues with strikethrough
+3. The summary comment includes a "Resolved Since Last Review" section
 
-This requires `contents: write` permission (already configured in the workflow).
+This requires `contents: write` permission (already configured in the workflow alongside `pull-requests: write`, `checks: write`, and `issues: write`).
 
 ### State storage
 
@@ -85,10 +93,12 @@ Review state is stored as a base64-encoded JSON blob inside a hidden HTML commen
 - `open_issues` — currently open findings with stable IDs
 - `recently_resolved_issues` — issues resolved in the latest pass
 - `inlineCommentMap` — maps issue IDs to GitHub comment IDs for reply-on-resolve
+- `activeInlineReviewIds` / `lastInlineReviewId` — tracks inline review objects for lifecycle management
 
 ### Security model
 
-- Uses `pull_request_target` for secret access — only same-repo PRs are reviewed (fork PRs ignored)
+- **Auto-trigger (`pull_request_target`)**: only same-repo PRs are reviewed (fork PRs ignored via `head.repo.full_name == github.repository` check)
+- **Manual triggers**: `/codex-review` is restricted to MEMBER/OWNER/COLLABORATOR associations; `workflow_dispatch` requires repo write access. These can target any PR, including fork PRs.
 - `GITHUB_TOKEN` is NOT passed to Codex
 - PR code is checked out by SHA with `persist-credentials: false`
 - Codex runs in `workspace-write` sandbox with `network_access=false`
@@ -104,6 +114,12 @@ Review state is stored as a base64-encoded JSON blob inside a hidden HTML commen
 | `/codex-review full` | Full review of entire PR diff |
 | `/codex-review reset` | Clear state, start fresh |
 | `/codex-review --since <sha>` | Review changes since specific commit |
+
+Aliases: `--full`, `all`, `--all`, `--reset`, `--since=<sha>` are also accepted.
+
+### Repo guidelines
+
+The bot loads `AGENTS.md` and `REVIEW_GUIDELINES.md` from the **repo root only**. Nested or scoped guideline files in subdirectories are not loaded. If neither file exists, the bot falls back to general engineering best practices.
 
 ## Architecture decisions
 
