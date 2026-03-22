@@ -110,28 +110,21 @@ async function resolveServer(
       // Preemptive refresh: if token expires within 5 minutes
       const now = Math.floor(Date.now() / 1000);
       if (oauthConfig.expiresAt < now + 300) {
-        if (!oauthConfig.refreshToken || !row.oauthTokenEndpoint) {
-          // No refresh token or endpoint — clear auth so UI shows "Not connected"
-          await clearMcpServerAuth(row.id, row.organizationId);
-          return null;
-        }
-
         // Capture the encrypted blob we read — used for atomic compare-and-clear.
         // If a concurrent dispatch refreshes successfully and writes a new blob,
         // our clear will be a no-op because the WHERE won't match.
         const originalEncryptedBlob = row.encryptedAuthConfig!;
 
-        // Validate token endpoint resolves to a public IP before fetching
-        // (prevents SSRF via DNS rebinding on previously-valid domains)
-        const { validateServerFetchUrl } = await import("./url-validation");
-        const safeUrl = await validateServerFetchUrl(row.oauthTokenEndpoint);
-        if (!safeUrl) {
-          console.warn(`[mcp-servers] Token endpoint ${row.oauthTokenEndpoint} resolves to private address, skipping server ${row.id}`);
+        if (!oauthConfig.refreshToken || !row.oauthTokenEndpoint) {
+          // No refresh token or endpoint — atomically clear auth (only if blob unchanged)
+          await clearMcpServerAuthIfStale(row.id, row.organizationId, originalEncryptedBlob);
           return null;
         }
 
         try {
-          const refreshRes = await fetch(safeUrl, {
+          // Use safeFetch: re-validates DNS on every hop, blocks redirects to private IPs
+          const { safeFetch } = await import("./url-validation");
+          const refreshRes = await safeFetch(row.oauthTokenEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({

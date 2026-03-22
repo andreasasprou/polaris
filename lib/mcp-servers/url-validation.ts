@@ -90,3 +90,49 @@ export async function validateServerFetchUrl(urlStr: string): Promise<string | n
     return null;
   }
 }
+
+/**
+ * SSRF-safe fetch for server-side OAuth requests.
+ *
+ * 1. Re-validates the URL via DNS resolution immediately before the request
+ *    (prevents DNS rebinding between creation and use).
+ * 2. Uses `redirect: "manual"` so 307/308 redirects are caught and their
+ *    Location headers are validated before following.
+ * 3. Follows up to 3 redirects, re-validating each hop.
+ */
+export async function safeFetch(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const MAX_REDIRECTS = 3;
+  let currentUrl = url;
+
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    // Re-validate DNS on every hop
+    const validated = await validateServerFetchUrl(currentUrl);
+    if (!validated) {
+      throw new Error(`SSRF blocked: ${currentUrl} resolves to a private/internal address`);
+    }
+
+    const res = await fetch(currentUrl, {
+      ...init,
+      redirect: "manual",
+    });
+
+    // Not a redirect — return the response
+    if (res.status < 300 || res.status >= 400) {
+      return res;
+    }
+
+    // Handle redirect
+    const location = res.headers.get("location");
+    if (!location) {
+      throw new Error(`Redirect ${res.status} without Location header`);
+    }
+
+    // Resolve relative redirects
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
+}

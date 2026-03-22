@@ -3,6 +3,7 @@ import { getSessionWithOrgAdmin } from "@/lib/auth/session";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { updateMcpServerAuth } from "@/lib/mcp-servers/actions";
 import { verifyMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
+import { safeFetch } from "@/lib/mcp-servers/url-validation";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { withEvlog } from "@/lib/evlog";
 
@@ -84,7 +85,8 @@ export const GET = withEvlog(async (req: Request) => {
 
   let tokenRes: Response;
   try {
-    tokenRes = await fetch(server.oauthTokenEndpoint, {
+    // Use safeFetch to re-validate DNS + block redirect-based SSRF
+    tokenRes = await safeFetch(server.oauthTokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
