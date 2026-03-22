@@ -12,6 +12,21 @@ const LEGACY_PATHS = [
   "/settings",
 ];
 
+/**
+ * Collection routes where cookie-based fast redirect is safe.
+ * Resource routes (e.g. /runs/:id, /sessions/:id) must fall through
+ * to legacy-redirect pages that resolve the owning org from the DB.
+ */
+const COLLECTION_PATHS = new Set([
+  "/dashboard",
+  "/automations",
+  "/runs",
+  "/sessions",
+  "/sessions/new",
+  "/integrations",
+  "/settings",
+]);
+
 export function proxy(request: NextRequest) {
   const sessionCookie = getSessionCookie(request);
   const { pathname } = request.nextUrl;
@@ -33,15 +48,16 @@ export function proxy(request: NextRequest) {
     if (!sessionCookie) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
-    // Read cached org slug from cookie for fast redirect
+    // Only use cookie fast-path for collection routes (e.g. /dashboard, /sessions).
+    // Resource routes (e.g. /sessions/:id, /runs/:id) must fall through to the
+    // legacy-redirect pages that resolve the owning org from the DB row.
     const orgSlug = request.cookies.get("polaris_org_slug")?.value;
-    if (orgSlug) {
+    if (orgSlug && COLLECTION_PATHS.has(pathname)) {
       const url = request.nextUrl.clone();
       url.pathname = `/${orgSlug}${pathname}`;
       return NextResponse.redirect(url);
     }
-    // No cookie — fall through to the legacy-redirect catch-all pages
-    // which will resolve the org from DB
+    // No cookie or resource URL — fall through to the legacy-redirect pages
     return NextResponse.next();
   }
 

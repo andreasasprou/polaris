@@ -41,4 +41,10 @@ export const RESERVED_SLUGS = new Set([
   "onboarding",
   "_next",
   "favicon.ico",
+  "dashboard",
+  "automations",
+  "runs",
+  "sessions",
+  "integrations",
+  "settings",
 ]);

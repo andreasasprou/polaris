@@ -62,12 +62,12 @@ export default function McpServersPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("success") === "connected") {
       setSuccess("MCP server connected successfully.");
-      window.history.replaceState({}, "", "/settings/mcp");
+      window.history.replaceState({}, "", window.location.pathname);
     }
     const errorParam = params.get("error");
     if (errorParam) {
       setError(errorParam);
-      window.history.replaceState({}, "", "/settings/mcp");
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }, [loadServers]);
 
