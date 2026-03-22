@@ -32,6 +32,8 @@ const emptyMediaVariants = cva(
       variant: {
         default: "bg-transparent",
         icon: "flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground [&_svg:not([class*='size-'])]:size-4",
+        illustration:
+          "flex size-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-muted to-muted/50 text-muted-foreground [&_svg:not([class*='size-'])]:size-7",
       },
     },
     defaultVariants: {
@@ -91,6 +93,16 @@ function EmptyContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+function EmptyActions({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      data-slot="empty-actions"
+      className={cn("mt-2 flex items-center gap-2", className)}
+      {...props}
+    />
+  )
+}
+
 export {
   Empty,
   EmptyHeader,
@@ -98,4 +110,5 @@ export {
   EmptyDescription,
   EmptyContent,
   EmptyMedia,
+  EmptyActions,
 }

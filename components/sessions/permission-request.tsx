@@ -20,7 +20,7 @@ export function PermissionRequest({ permissionId, action, status }: PermissionRe
       <div
         className={`rounded-md border px-4 py-3 ${
           isPending
-            ? "border-amber-500/30 bg-amber-500/5"
+            ? "animate-attention-pulse border-amber-500/30 bg-amber-500/5"
             : status === "accepted"
               ? "border-emerald-500/30 bg-emerald-500/5"
               : "border-destructive/30 bg-destructive/5"

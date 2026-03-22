@@ -18,7 +18,17 @@ import {
   ZapIcon,
   MessageSquareIcon,
   ArrowRightIcon,
+  RocketIcon,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyActions,
+} from "@/components/ui/empty";
 
 type Stats = {
   activeAutomations: number;
@@ -161,7 +171,22 @@ export default function DashboardPage() {
             })}
           </div>
         ) : recentRuns.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No runs yet.</p>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="illustration">
+                <RocketIcon />
+              </EmptyMedia>
+              <EmptyTitle>Welcome to Polaris</EmptyTitle>
+              <EmptyDescription>
+                Create an automation to start running AI agents on your codebase.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyActions>
+              <Button asChild>
+                <Link href={op("/automations/new")}>Create automation</Link>
+              </Button>
+            </EmptyActions>
+          </Empty>
         ) : (
           <Card>
             <Table>
@@ -211,8 +236,10 @@ export default function DashboardPage() {
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(run.createdAt).toLocaleString()}
+                    <TableCell>
+                      <span className="text-[11px] tabular-nums text-muted-foreground/50">
+                        {new Date(run.createdAt).toLocaleString()}
+                      </span>
                     </TableCell>
                   </TableRow>
                 ))}

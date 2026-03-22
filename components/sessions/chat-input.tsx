@@ -317,6 +317,7 @@ export function ChatInput({
           ? "border-ring/60 shadow-[0_0_0_1px_var(--ring)]"
           : "border-border hover:border-border/80",
         isDragging && "border-primary/50 bg-primary/5",
+        isWorking && "animate-breathing-glow",
         disabled && "cursor-not-allowed opacity-50",
         className,
       )}

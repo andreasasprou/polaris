@@ -15,6 +15,15 @@ import {
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/status-badge";
 import { VerdictBadge } from "@/components/verdict-badge";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+} from "@/components/ui/empty";
+import { PlayIcon } from "lucide-react";
 
 type Run = {
   id: string;
@@ -91,9 +100,22 @@ export default function RunsPage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading...</p>
+        <div className="flex flex-col items-center gap-3 py-16">
+          <Spinner className="text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">Loading...</p>
+        </div>
       ) : runs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No runs yet.</p>
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="illustration">
+              <PlayIcon />
+            </EmptyMedia>
+            <EmptyTitle>No runs yet</EmptyTitle>
+            <EmptyDescription>
+              Runs are created when automations trigger. Configure an automation to get started.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
         <Card>
           <Table>
@@ -148,8 +170,10 @@ export default function RunsPage() {
                   <TableCell>
                     <ResultCell run={run} />
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Date(run.createdAt).toLocaleString()}
+                  <TableCell>
+                    <span className="text-[11px] tabular-nums text-muted-foreground/50">
+                      {new Date(run.createdAt).toLocaleString()}
+                    </span>
                   </TableCell>
                 </TableRow>
               ))}

@@ -14,6 +14,7 @@ import { useSessionChat } from "@/hooks/use-session-chat";
 import {
   ExternalLinkIcon,
 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 
 type Run = {
   id: string;
@@ -122,7 +123,12 @@ export default function RunDetailPage() {
   });
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading...</p>;
+    return (
+      <div className="flex flex-col items-center gap-3 py-16">
+        <Spinner className="text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      </div>
+    );
   }
 
   if (!run) {
@@ -160,7 +166,7 @@ export default function RunDetailPage() {
       {run.summary && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">
+            <CardTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               Summary
             </CardTitle>
           </CardHeader>
@@ -327,7 +333,7 @@ function MetadataCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-xs font-medium text-muted-foreground">
+        <CardTitle className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </CardTitle>
       </CardHeader>

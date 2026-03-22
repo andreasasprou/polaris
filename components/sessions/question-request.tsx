@@ -30,7 +30,7 @@ export function QuestionRequest({
       <div
         className={`rounded-md border px-4 py-3 ${
           isPending
-            ? "border-blue-500/30 bg-blue-500/5"
+            ? "animate-attention-pulse border-blue-500/30 bg-blue-500/5"
             : status === "answered"
               ? "border-emerald-500/30 bg-emerald-500/5"
               : "border-border bg-muted/30"

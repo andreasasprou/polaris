@@ -14,11 +14,11 @@ import { CopyButton } from "./copy-button";
 // ── Status indicators ──
 
 const statusConfig: Record<string, { icon: string; className: string }> = {
-  pending: { icon: "\u25CB", className: "text-amber-500" },
-  running: { icon: "\u25C9", className: "text-blue-500" },
-  completed: { icon: "\u2713", className: "text-emerald-500" },
-  failed: { icon: "\u2717", className: "text-red-500" },
-  interrupted: { icon: "\u25A0", className: "text-orange-500" },
+  pending: { icon: "\u25CB", className: "text-status-warning" },
+  running: { icon: "\u25C9", className: "text-status-active" },
+  completed: { icon: "\u2713", className: "text-status-success" },
+  failed: { icon: "\u2717", className: "text-status-error" },
+  interrupted: { icon: "\u25A0", className: "text-status-warning" },
 };
 
 // ── Content part renderers ──
