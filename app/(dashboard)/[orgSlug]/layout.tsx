@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { getSessionWithOrg, hasOrganizationMembership } from "@/lib/auth/session";
@@ -50,16 +49,7 @@ export default async function DashboardLayout({
       .where(eq(sessionTable.id, session.session.id));
   }
 
-  // 5. Set polaris_org_slug cookie now that the org is validated
-  const cookieStore = await cookies();
-  cookieStore.set("polaris_org_slug", orgSlug, {
-    path: "/",
-    httpOnly: false,
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 365, // 1 year
-  });
-
-  // 6. Gate: redirect to onboarding if not yet completed
+  // 5. Gate: redirect to onboarding if not yet completed
   const meta = org.metadata
     ? (JSON.parse(org.metadata) as Record<string, unknown>)
     : null;
