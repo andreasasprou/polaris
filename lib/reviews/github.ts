@@ -393,6 +393,71 @@ async function fetchAllReviewThreads(input: {
   return threads;
 }
 
+async function fetchAllReviewCommentsForReview(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  reviewId: number;
+}) {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  const comments: Awaited<ReturnType<typeof octokit.rest.pulls.listCommentsForReview>>["data"] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await octokit.rest.pulls.listCommentsForReview({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      review_id: input.reviewId,
+      per_page: 100,
+      page,
+    });
+    comments.push(...response.data);
+    if (response.data.length < 100) break;
+    page += 1;
+  }
+
+  return comments;
+}
+
+export async function findInlineReviewIdByMarker(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  headSha: string;
+  marker: string;
+}): Promise<number | null> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  let page = 1;
+
+  while (true) {
+    const response = await octokit.rest.pulls.listReviews({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      per_page: 100,
+      page,
+    });
+
+    for (const review of response.data) {
+      if (
+        review.commit_id === input.headSha &&
+        typeof review.body === "string" &&
+        review.body.includes(input.marker)
+      ) {
+        return review.id;
+      }
+    }
+
+    if (response.data.length < 100) break;
+    page += 1;
+  }
+
+  return null;
+}
+
 async function fetchReviewThreadState(input: {
   installationId: number;
   threadId: string;
@@ -458,18 +523,17 @@ export async function fetchTrackedInlineThreadsForReview(input: {
   threads: TrackedInlineThread[];
   commentMap: Record<string, number>;
 }> {
-  const octokit = await getInstallationOctokitById(input.installationId);
   const log = useLogger();
   const commentMap: Record<string, number> = {};
 
   try {
-    const [reviewCommentsResult, reviewThreads] = await Promise.all([
-      octokit.rest.pulls.listCommentsForReview({
+    const [reviewComments, reviewThreads] = await Promise.all([
+      fetchAllReviewCommentsForReview({
+        installationId: input.installationId,
         owner: input.owner,
         repo: input.repo,
-        pull_number: input.prNumber,
-        review_id: input.reviewId,
-        per_page: 100,
+        prNumber: input.prNumber,
+        reviewId: input.reviewId,
       }),
       fetchAllReviewThreads({
         installationId: input.installationId,
@@ -500,11 +564,11 @@ export async function fetchTrackedInlineThreadsForReview(input: {
     }
 
     const trackedThreads: TrackedInlineThread[] = [];
-    const reviewComments = reviewCommentsResult.data.filter((comment) =>
+    const rootReviewComments = reviewComments.filter((comment) =>
       comment.pull_request_review_id === input.reviewId && comment.in_reply_to_id == null,
     );
 
-    for (const reviewComment of reviewComments) {
+    for (const reviewComment of rootReviewComments) {
       const line = reviewComment.line ?? reviewComment.original_line ?? null;
       if (!reviewComment.path || line == null) continue;
 

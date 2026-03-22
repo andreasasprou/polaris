@@ -85,7 +85,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
   const automationRunId = job.automationRunId;
-  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, boolean>;
+  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, unknown>;
 
   const branchName = payload.branchName as string;
   const baseSha = payload.baseSha as string;
@@ -308,6 +308,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
     completeCheck,
     postInlineReview,
     dismissReview,
+    findInlineReviewIdByMarker,
     fetchTrackedInlineThreadsForReview,
     hydrateTrackedInlineThreadsFromCommentMap,
     replyAndResolveInlineComments,
@@ -339,7 +340,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
 
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
-  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, boolean>;
+  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, unknown>;
   const automationRunId = job.automationRunId;
   const automationId = job.automationId;
 
@@ -703,45 +704,85 @@ async function postprocessReview(job: JobRow): Promise<void> {
     }
 
     // 5. Post inline review (best-effort, after summary comment)
-    if (parsed && !sideEffects.inline_review_posted) {
+    if (parsed && (sideEffects.inline_review_posted !== true || sideEffects.inline_review_tracked !== true)) {
       try {
         if (anchors.length > 0) {
           const issueSeverityById = buildIssueSeverityMap(
             parsed.metadata.reviewState.openIssues,
           );
           const comments = buildReviewComments(anchors, issueSeverityById);
-          if (comments.length > 0) {
-            const inlineResult = await postInlineReview({
-              installationId,
-              owner,
-              repo,
-              prNumber,
-              headSha: toSha,
-              body: `See ${formatReviewLabel(reviewSequence)} above for the full summary.`,
-              comments,
+          if (comments.length === 0) {
+            await markSideEffects(job.id, {
+              inline_review_posted: true,
+              inline_review_tracked: true,
             });
-            if (inlineResult && automationSessionId) {
-              activeInlineReviewIds = [
-                ...activeInlineReviewIds,
-                inlineResult.reviewId,
-              ];
+          } else {
+            const inlineReviewMarker = buildInlineReviewMarker(job.id);
+            let inlineReviewId = readInlineReviewId(sideEffects);
 
-              // Fetch durable inline thread state for future reconciliation
-              const { threads: newTrackedThreads, commentMap: newCommentMap } = await fetchTrackedInlineThreadsForReview({
+            if (!inlineReviewId) {
+              inlineReviewId = await findInlineReviewIdByMarker({
                 installationId,
                 owner,
                 repo,
                 prNumber,
-                reviewId: inlineResult.reviewId,
-                reviewSequence,
-                inlineAnchors: anchors,
+                headSha: toSha,
+                marker: inlineReviewMarker,
+              });
+            }
+
+            if (!inlineReviewId) {
+              const inlineResult = await postInlineReview({
+                installationId,
+                owner,
+                repo,
+                prNumber,
+                headSha: toSha,
+                body: buildInlineReviewSummaryBody(
+                  formatReviewLabel(reviewSequence),
+                  inlineReviewMarker,
+                ),
+                comments,
+              });
+              inlineReviewId = inlineResult?.reviewId ?? null;
+            }
+
+            if (inlineReviewId) {
+              await markSideEffects(job.id, {
+                inline_review_posted: true,
+                inline_review_review_id: inlineReviewId,
               });
 
-              const { getAutomationSession: getSessionForInline } = await import(
-                "@/lib/automations/actions"
-              );
-              const sessionForInline = await getSessionForInline(automationSessionId);
-              if (sessionForInline?.metadata) {
+              if (!automationSessionId) {
+                await markSideEffects(job.id, {
+                  inline_review_tracked: true,
+                });
+              } else if (sideEffects.inline_review_tracked !== true) {
+                activeInlineReviewIds = normalizeActiveInlineReviewIds({
+                  activeInlineReviewIds: [
+                    ...activeInlineReviewIds,
+                    inlineReviewId,
+                  ],
+                });
+
+                const { threads: newTrackedThreads, commentMap: newCommentMap } = await fetchTrackedInlineThreadsForReview({
+                  installationId,
+                  owner,
+                  repo,
+                  prNumber,
+                  reviewId: inlineReviewId,
+                  reviewSequence,
+                  inlineAnchors: anchors,
+                });
+
+                const { getAutomationSession: getSessionForInline } = await import(
+                  "@/lib/automations/actions"
+                );
+                const sessionForInline = await getSessionForInline(automationSessionId);
+                if (!sessionForInline?.metadata) {
+                  throw new Error(`Automation session metadata missing for inline review tracking: ${automationSessionId}`);
+                }
+
                 const metadataForInline = sessionForInline.metadata as AutomationSessionMetadata;
                 const prevMap = metadataForInline.inlineCommentMap ?? {};
                 const mergedTrackedThreads = dedupeTrackedInlineThreads([
@@ -762,14 +803,21 @@ async function postprocessReview(job: JobRow): Promise<void> {
                     ),
                   },
                 });
+                await markSideEffects(job.id, {
+                  inline_review_tracked: true,
+                });
               }
             }
           }
         }
-      } catch {
-        // Non-fatal — summary comment is already posted
+      } catch (err) {
+        const log = useLogger();
+        log.set({
+          postprocess: {
+            inlineReviewTrackingFailed: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
-      await markSideEffect(job.id, "inline_review_posted");
     }
 
     // 6. Complete GitHub check
@@ -873,6 +921,26 @@ function mergeInlineCommentMapWithTrackedThreads(
   };
 }
 
+function buildInlineReviewMarker(jobId: string) {
+  return `polaris-inline-review:${jobId}`;
+}
+
+function buildInlineReviewSummaryBody(
+  reviewLabel: string,
+  marker: string,
+) {
+  return `See ${reviewLabel} above for the full summary.\n\n<!-- ${marker} -->`;
+}
+
+function readInlineReviewId(
+  sideEffects: Record<string, unknown>,
+) {
+  const reviewId = sideEffects.inline_review_review_id;
+  return typeof reviewId === "number" && Number.isInteger(reviewId) && reviewId > 0
+    ? reviewId
+    : null;
+}
+
 // ── Side Effect Tracking ──
 
 /**
@@ -882,6 +950,13 @@ async function markSideEffect(
   jobId: string,
   effectName: string,
 ): Promise<void> {
+  await markSideEffects(jobId, { [effectName]: true });
+}
+
+async function markSideEffects(
+  jobId: string,
+  effects: Record<string, unknown>,
+): Promise<void> {
   const { db } = await import("@/lib/db");
   const { jobs } = await import("@/lib/jobs/schema");
   const { eq, sql } = await import("drizzle-orm");
@@ -889,7 +964,7 @@ async function markSideEffect(
   await db
     .update(jobs)
     .set({
-      sideEffectsCompleted: sql`COALESCE(${jobs.sideEffectsCompleted}, '{}'::jsonb) || ${JSON.stringify({ [effectName]: true })}::jsonb`,
+      sideEffectsCompleted: sql`COALESCE(${jobs.sideEffectsCompleted}, '{}'::jsonb) || ${JSON.stringify(effects)}::jsonb`,
     })
     .where(eq(jobs.id, jobId));
 }
