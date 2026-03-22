@@ -498,7 +498,6 @@ jobs:
             --skip-git-repo-check \
             --model "$CODEX_MODEL" \
             --sandbox "$CODEX_SANDBOX_MODE" \
-            --ask-for-approval never \
             -c "allow_login_shell=false" \
             -c "web_search=\"$CODEX_WEB_SEARCH_MODE\"" \
             -c "model_reasoning_effort=\"$CODEX_REASONING\"" \
