@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CircleHelpIcon, CheckIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useHitlActions } from "@/app/(dashboard)/sessions/[sessionId]/page";
+import { useHitlActions } from "@/app/(dashboard)/[orgSlug]/sessions/[sessionId]/page";
 
 interface QuestionRequestProps {
   questionId: string;

@@ -14,10 +14,22 @@
 - **Execution plans**: `docs/exec-plans/active/` — check before starting complex work.
 - **Reference docs**: `docs/references/` — LLM-optimized API docs for Vercel Sandbox, sandbox-agent, ACP.
 
+## URL Routing
+
+All dashboard URLs are org-scoped: `/{orgSlug}/dashboard`, `/{orgSlug}/sessions/{id}`, etc.
+
+- **Route structure**: `app/(dashboard)/[orgSlug]/` contains all dashboard pages. The `[orgSlug]` layout validates the slug, checks membership, and syncs `activeOrganizationId`.
+- **Link helpers**: Use `useOrgPath()` hook in client components (`op("/runs")`) and `orgPath(orgSlug, path)` in server components. Never hardcode bare paths like `/sessions/...`.
+- **External links**: Use `orgUrl(slug, path)` from `lib/config/urls.ts` for GitHub check run detail URLs and similar.
+- **Legacy redirects**: `app/(legacy-redirect)/` handles old bare-path bookmarks by resolving the resource's org from DB and redirecting.
+- **Auth protection**: `proxy.ts` protects org-scoped paths and sets the `polaris_org_slug` cookie.
+- **Reserved slugs**: `RESERVED_SLUGS` in `lib/config/urls.ts` — org slugs cannot collide with `api`, `login`, `onboarding`, `_next`.
+
 ## Where to Start
 
 Pick the flow closest to your task. Paths show the recommended reading order:
 
+- **Changing URL routing or org context?** `proxy.ts` → `app/(dashboard)/[orgSlug]/layout.tsx` → `lib/config/urls.ts` → `hooks/use-org-path.ts`
 - **Changing session lifecycle?** `lib/sessions/status.ts` → `lib/sessions/actions.ts` → `lib/orchestration/sandbox-lifecycle.ts`
 - **Modifying PR review logic?** `lib/reviews/prompt-builder.ts` → `lib/orchestration/pr-review.ts` → `lib/reviews/output-parser.ts`
 - **Changing inline review comments?** `lib/reviews/inline-comments.ts` → `lib/reviews/github.ts` (postInlineReview, resolveReviewThreads) → `lib/orchestration/postprocess.ts` (steps 2c, 5)
