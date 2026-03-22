@@ -4,8 +4,11 @@
  */
 
 export function parseUserId(input: string): number {
-  // Potential issue: no validation, parseInt can return NaN
-  return parseInt(input);
+  const parsed = parseInt(input, 10);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`Invalid user ID: ${input}`);
+  }
+  return parsed;
 }
 
 export async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
@@ -29,7 +32,5 @@ export function buildConnectionString(
   database: string,
   password: string,
 ): string {
-  // Potential issue: password in connection string could be logged
-  console.log(`Connecting to ${host}:${port}/${database} with password ${password}`);
   return `postgresql://user:${password}@${host}:${port}/${database}`;
 }
