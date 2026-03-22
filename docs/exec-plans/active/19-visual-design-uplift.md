@@ -1,6 +1,6 @@
 ---
 title: Visual Design Uplift
-status: planned
+status: in-progress
 created: 2026-03-20
 owner: andreas
 related_prs: []
