@@ -92,13 +92,40 @@ export async function validateServerFetchUrl(urlStr: string): Promise<string | n
 }
 
 /**
+ * Resolve a hostname to a validated public IP address.
+ * Returns the first safe IPv4 address, or throws if all resolve to private.
+ */
+async function resolveToPublicIp(hostname: string): Promise<string> {
+  // If hostname is already a raw IP, just validate it
+  if (isPrivateIp(hostname)) {
+    throw new Error(`SSRF blocked: ${hostname} is a private address`);
+  }
+  const ipv4Match = hostname.match(/^\d+\.\d+\.\d+\.\d+$/);
+  if (ipv4Match) return hostname;
+
+  const addresses = await dns.resolve4(hostname).catch(() => [] as string[]);
+  for (const ip of addresses) {
+    if (!isPrivateIp(ip)) return ip;
+  }
+
+  const addresses6 = await dns.resolve6(hostname).catch(() => [] as string[]);
+  for (const ip of addresses6) {
+    if (!isPrivateIp(ip)) return ip;
+  }
+
+  throw new Error(`SSRF blocked: ${hostname} resolves only to private/unresolvable addresses`);
+}
+
+/**
  * SSRF-safe fetch for server-side OAuth requests.
  *
- * 1. Re-validates the URL via DNS resolution immediately before the request
- *    (prevents DNS rebinding between creation and use).
- * 2. Uses `redirect: "manual"` so 307/308 redirects are caught and their
- *    Location headers are validated before following.
- * 3. Follows up to 3 redirects, re-validating each hop.
+ * Eliminates the DNS rebinding TOCTOU by resolving DNS once, validating the
+ * resolved IP, then replacing the hostname with the IP in the URL so the
+ * actual TCP connection goes directly to the validated address. The original
+ * hostname is preserved in the Host header for TLS SNI / virtual hosting.
+ *
+ * Uses `redirect: "manual"` and re-validates each redirect hop the same way.
+ * Follows up to 3 redirects.
  */
 export async function safeFetch(
   url: string,
@@ -108,14 +135,28 @@ export async function safeFetch(
   let currentUrl = url;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    // Re-validate DNS on every hop
-    const validated = await validateServerFetchUrl(currentUrl);
-    if (!validated) {
-      throw new Error(`SSRF blocked: ${currentUrl} resolves to a private/internal address`);
+    // String-level pre-check
+    if (!isValidUrl(currentUrl)) {
+      throw new Error(`SSRF blocked: ${currentUrl} failed URL validation`);
     }
 
-    const res = await fetch(currentUrl, {
+    const parsed = new URL(currentUrl);
+
+    // Resolve DNS once and validate the IP
+    const resolvedIp = await resolveToPublicIp(parsed.hostname);
+
+    // Build a URL with the resolved IP to pin the connection.
+    // Preserve the original hostname in the Host header for TLS SNI.
+    const originalHost = parsed.hostname;
+    const pinnedUrl = new URL(currentUrl);
+    pinnedUrl.hostname = resolvedIp;
+
+    const headers = new Headers(init.headers);
+    headers.set("Host", parsed.port ? `${originalHost}:${parsed.port}` : originalHost);
+
+    const res = await fetch(pinnedUrl.toString(), {
       ...init,
+      headers,
       redirect: "manual",
     });
 
@@ -124,13 +165,12 @@ export async function safeFetch(
       return res;
     }
 
-    // Handle redirect
+    // Handle redirect — validate the new location
     const location = res.headers.get("location");
     if (!location) {
       throw new Error(`Redirect ${res.status} without Location header`);
     }
 
-    // Resolve relative redirects
     currentUrl = new URL(location, currentUrl).toString();
   }
 
