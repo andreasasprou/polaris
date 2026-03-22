@@ -6,7 +6,8 @@ import { useOrgPath } from "@/hooks/use-org-path";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
   Field,
@@ -34,8 +35,9 @@ import {
   getEnabledAgents,
 } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType, ModelParams } from "@/lib/sandbox-agent/types";
-import { AlertCircleIcon } from "lucide-react";
+import { AlertCircleIcon, FileCodeIcon, ExternalLinkIcon } from "lucide-react";
 import Link from "next/link";
+import type { YamlOverrideInfo } from "@/lib/reviews/repo-config";
 
 type Repo = {
   id: string;
@@ -89,11 +91,13 @@ export function AutomationForm({
   secrets,
   pools = [],
   initial,
+  yamlOverrides,
 }: {
   repos: Repo[];
   secrets: Secret[];
   pools?: Pool[];
   initial?: AutomationData;
+  yamlOverrides?: YamlOverrideInfo | null;
 }) {
   const router = useRouter();
   const op = useOrgPath();
@@ -140,6 +144,20 @@ export function AutomationForm({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const overriddenFields = useMemo(
+    () => new Set(yamlOverrides?.overriddenFields),
+    [yamlOverrides?.overriddenFields],
+  );
+
+  function YamlBadge({ field }: { field: string }) {
+    if (!overriddenFields.has(field)) return null;
+    return (
+      <Badge variant="secondary" className="ml-1.5 h-4 text-[10px] font-normal">
+        yaml
+      </Badge>
+    );
+  }
 
   // Dynamic options based on agent type
   const models = useMemo(
@@ -287,6 +305,30 @@ export function AutomationForm({
         </Alert>
       )}
 
+      {yamlOverrides && yamlOverrides.overriddenFields.length > 0 && (
+        <Alert>
+          <FileCodeIcon />
+          <AlertTitle>Some settings are managed in code</AlertTitle>
+          <AlertDescription>
+            <code className="text-xs">.polaris/reviews/{yamlOverrides.fileName}</code>{" "}
+            overrides {yamlOverrides.overriddenFields.length}{" "}
+            {yamlOverrides.overriddenFields.length === 1 ? "field" : "fields"} at
+            review time. Values set here serve as fallbacks.
+          </AlertDescription>
+          <AlertAction>
+            <a
+              href={yamlOverrides.fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+            >
+              View in GitHub
+              <ExternalLinkIcon className="size-3" />
+            </a>
+          </AlertAction>
+        </Alert>
+      )}
+
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="name">Name</FieldLabel>
@@ -336,7 +378,7 @@ export function AutomationForm({
             <FieldDescription>Comma-separated</FieldDescription>
           </Field>
           <Field>
-            <FieldLabel htmlFor="branches">Branch filter</FieldLabel>
+            <FieldLabel htmlFor="branches">Branch filter <YamlBadge field="branches" /></FieldLabel>
             <Input
               id="branches"
               type="text"
@@ -351,7 +393,7 @@ export function AutomationForm({
         </div>
 
         <Field>
-          <FieldLabel htmlFor="prompt">Instructions</FieldLabel>
+          <FieldLabel htmlFor="prompt">Instructions <YamlBadge field="instructions" /></FieldLabel>
           <Textarea
             id="prompt"
             value={prompt}
@@ -387,7 +429,7 @@ export function AutomationForm({
 
         <div className="grid gap-5 sm:grid-cols-2">
           <Field>
-            <FieldLabel htmlFor="agentType">Agent</FieldLabel>
+            <FieldLabel htmlFor="agentType">Agent <YamlBadge field="agent" /></FieldLabel>
             <Select value={agentType} onValueChange={handleAgentTypeChange}>
               <SelectTrigger id="agentType">
                 <SelectValue />
@@ -404,7 +446,7 @@ export function AutomationForm({
             </Select>
           </Field>
           <Field>
-            <FieldLabel htmlFor="secret">API key</FieldLabel>
+            <FieldLabel htmlFor="secret">API key <YamlBadge field="credential" /></FieldLabel>
             <Select
               value={validatedCredentialValue}
               onValueChange={setCredentialValue}
@@ -460,7 +502,7 @@ export function AutomationForm({
         <div className="grid gap-5 sm:grid-cols-2">
           {models.length > 0 && (
             <Field>
-              <FieldLabel htmlFor="model">Model</FieldLabel>
+              <FieldLabel htmlFor="model">Model <YamlBadge field="model" /></FieldLabel>
               <Select
                 value={model || "__default__"}
                 onValueChange={(v) => setModel(v === "__default__" ? "" : v)}
@@ -484,7 +526,7 @@ export function AutomationForm({
 
           {thoughtLevels && thoughtLevels.length > 0 && (
             <Field>
-              <FieldLabel htmlFor="effortLevel">Effort level</FieldLabel>
+              <FieldLabel htmlFor="effortLevel">Effort level <YamlBadge field="effort" /></FieldLabel>
               <Select
                 value={effortLevel || "__default__"}
                 onValueChange={(v) =>
@@ -521,7 +563,7 @@ export function AutomationForm({
                   checked={skipDrafts}
                   onCheckedChange={setSkipDrafts}
                 />
-                <FieldLabel htmlFor="skipDrafts">Skip draft PRs</FieldLabel>
+                <FieldLabel htmlFor="skipDrafts">Skip draft PRs <YamlBadge field="skipDrafts" /></FieldLabel>
               </Field>
               <Field orientation="horizontal">
                 <Switch
@@ -530,12 +572,12 @@ export function AutomationForm({
                   checked={skipBots}
                   onCheckedChange={setSkipBots}
                 />
-                <FieldLabel htmlFor="skipBots">Skip bot PRs</FieldLabel>
+                <FieldLabel htmlFor="skipBots">Skip bot PRs <YamlBadge field="skipBots" /></FieldLabel>
               </Field>
             </div>
 
             <Field>
-              <FieldLabel htmlFor="ignorePaths">Ignore paths</FieldLabel>
+              <FieldLabel htmlFor="ignorePaths">Ignore paths <YamlBadge field="ignorePaths" /></FieldLabel>
               <Input
                 id="ignorePaths"
                 type="text"

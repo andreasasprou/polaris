@@ -368,6 +368,78 @@ export async function resolveCredentialSlug(
   return null;
 }
 
+// ── YAML override info for UI ──
+
+export interface YamlOverrideInfo {
+  /** GitHub URL to the YAML file */
+  fileUrl: string;
+  /** File name for display (e.g. "default.yaml") */
+  fileName: string;
+  /** Field keys overridden by YAML (serializable across server/client boundary) */
+  overriddenFields: string[];
+  /** Human-readable YAML values per overridden field */
+  fieldValues: Record<string, string>;
+}
+
+/**
+ * Extract which fields a YAML definition overrides, for display in the edit form.
+ * Pure function — no I/O.
+ */
+export function extractOverrideInfo(
+  definition: RepoReviewDefinition,
+  fileName: string,
+  owner: string,
+  repo: string,
+  defaultBranch: string,
+): YamlOverrideInfo {
+  const overriddenFields: string[] = [];
+  const fieldValues: Record<string, string> = {};
+
+  if (definition.instructions !== undefined) {
+    overriddenFields.push("instructions");
+    fieldValues.instructions =
+      definition.instructions.length > 80
+        ? definition.instructions.slice(0, 80) + "…"
+        : definition.instructions;
+  }
+  if (definition.agent !== undefined) {
+    overriddenFields.push("agent");
+    fieldValues.agent = definition.agent;
+  }
+  if (definition.model !== undefined) {
+    overriddenFields.push("model");
+    fieldValues.model = definition.model;
+  }
+  if (definition.effort !== undefined) {
+    overriddenFields.push("effort");
+    fieldValues.effort = definition.effort;
+  }
+  if (definition.credential !== undefined) {
+    overriddenFields.push("credential");
+    fieldValues.credential = definition.credential;
+  }
+  if (definition.filters?.branches !== undefined) {
+    overriddenFields.push("branches");
+    fieldValues.branches = definition.filters.branches.join(", ");
+  }
+  if (definition.filters?.ignorePaths !== undefined) {
+    overriddenFields.push("ignorePaths");
+    fieldValues.ignorePaths = definition.filters.ignorePaths.join(", ");
+  }
+  if (definition.filters?.skipDrafts !== undefined) {
+    overriddenFields.push("skipDrafts");
+    fieldValues.skipDrafts = String(definition.filters.skipDrafts);
+  }
+  if (definition.filters?.skipBots !== undefined) {
+    overriddenFields.push("skipBots");
+    fieldValues.skipBots = String(definition.filters.skipBots);
+  }
+
+  const fileUrl = `https://github.com/${owner}/${repo}/blob/${defaultBranch}/.polaris/reviews/${fileName}`;
+
+  return { fileUrl, fileName, overriddenFields, fieldValues };
+}
+
 // ── Error formatting ──
 
 export function formatConfigError(

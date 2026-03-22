@@ -1,9 +1,16 @@
 import { notFound } from "next/navigation";
 import { getOrgIdBySlug } from "@/lib/auth/session";
 import { findAutomationById } from "@/lib/automations/queries";
+import { findRepositoryById } from "@/lib/integrations/queries";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
 import { findKeyPoolsByOrg } from "@/lib/key-pools/queries";
+import { getInstallationOctokit } from "@/lib/integrations/github";
+import {
+  loadRepoReviewConfig,
+  extractOverrideInfo,
+  type YamlOverrideInfo,
+} from "@/lib/reviews/repo-config";
 import { AutomationForm } from "../_components/automation-form";
 
 export default async function EditAutomationPage({
@@ -20,11 +27,42 @@ export default async function EditAutomationPage({
     notFound();
   }
 
-  const [repos, secrets, pools] = await Promise.all([
+  const [repos, secrets, pools, targetRepo] = await Promise.all([
     syncReposForOrg(orgId),
     findSecretsByOrg(orgId),
     findKeyPoolsByOrg(orgId),
+    automation.mode === "continuous" && automation.repositoryId
+      ? findRepositoryById(automation.repositoryId)
+      : Promise.resolve(null),
   ]);
+
+  // Check for YAML config overrides (continuous mode only)
+  let yamlOverrides: YamlOverrideInfo | null = null;
+  if (targetRepo) {
+    try {
+      const octokit = await getInstallationOctokit(
+        targetRepo.owner,
+        targetRepo.name,
+      );
+      const configResult = await loadRepoReviewConfig(
+        octokit,
+        targetRepo.owner,
+        targetRepo.name,
+        targetRepo.defaultBranch,
+      );
+      if (configResult.status === "found") {
+        yamlOverrides = extractOverrideInfo(
+          configResult.definition,
+          configResult.file,
+          targetRepo.owner,
+          targetRepo.name,
+          targetRepo.defaultBranch,
+        );
+      }
+    } catch {
+      // Graceful degradation — form renders without YAML indicators
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -38,6 +76,7 @@ export default async function EditAutomationPage({
         repos={repos}
         secrets={secrets}
         pools={pools}
+        yamlOverrides={yamlOverrides}
         initial={{
           id: automation.id,
           name: automation.name,
