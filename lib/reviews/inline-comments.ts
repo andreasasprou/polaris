@@ -8,12 +8,21 @@
  */
 
 import type { InlineAnchor } from "./types";
+import type { ReviewSeverity } from "./types";
+import { formatSeverityBadge } from "./formatting";
 
 /**
  * Format an InlineAnchor into a GitHub review comment body.
  */
-export function formatInlineCommentBody(anchor: InlineAnchor): string {
-  let body = `**${anchor.title}**\n\n`;
+export function formatInlineCommentBody(
+  anchor: InlineAnchor,
+  severity?: ReviewSeverity,
+): string {
+  const title = severity
+    ? `${formatSeverityBadge(severity)} ${anchor.title}`
+    : anchor.title;
+
+  let body = `**${title}**\n\n`;
   if (anchor.body) body += `${anchor.body}\n\n`;
   if (anchor.category) body += `*Category: ${anchor.category}*\n\n`;
   if (anchor.suggestion) {
@@ -28,7 +37,10 @@ export function formatInlineCommentBody(anchor: InlineAnchor): string {
  * Filters out invalid ranges and includes start_side for multi-line
  * comments (GitHub requires both start_line and start_side, or neither).
  */
-export function buildReviewComments(anchors: InlineAnchor[]): Array<{
+export function buildReviewComments(
+  anchors: InlineAnchor[],
+  issueSeverityById?: Map<string, ReviewSeverity>,
+): Array<{
   path: string;
   line: number;
   start_line?: number;
@@ -48,8 +60,14 @@ export function buildReviewComments(anchors: InlineAnchor[]): Array<{
         ? { start_line: a.startLine, start_side: "RIGHT" as const }
         : {}),
       side: "RIGHT" as const,
-      body: formatInlineCommentBody(a),
+      body: formatInlineCommentBody(a, issueSeverityById?.get(a.issueId)),
     }));
+}
+
+export function buildIssueSeverityMap(
+  issues: Array<{ id: string; severity: ReviewSeverity }>,
+): Map<string, ReviewSeverity> {
+  return new Map(issues.map((issue) => [issue.id, issue.severity]));
 }
 
 /**

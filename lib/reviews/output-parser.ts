@@ -5,16 +5,19 @@ const METADATA_MARKER = "<!-- polaris:metadata -->";
 
 /**
  * Regex matching the review header line the agent is instructed to write.
- * Matches: ## ✅ Polaris Review #N: APPROVE (and ⚠️/🚫 ATTENTION/BLOCK variants)
+ * Matches both:
+ * - ## ✅ Polaris Review Pass N: APPROVE
+ * - ## ✅ Polaris Review #N: APPROVE
  */
-const REVIEW_HEADER_RE = /^##\s+(?:✅|⚠️|🚫|[\u{1F7E0}-\u{1F7FF}])\s+Polaris Review\s+#\d+/mu;
+const REVIEW_HEADER_RE =
+  /^##\s+(?:✅|⚠️|🚫|[\u{1F7E0}-\u{1F7FF}])\s+Polaris Review(?:\s+Pass\s+\d+|\s+#\d+)/mu;
 
 /**
  * Parse the agent's review output.
  *
  * Strategy:
  * 1. Find the `<!-- polaris:metadata -->` marker and extract JSON metadata.
- * 2. For the comment body, try to find the review header (`## ✅ Polaris Review #N`)
+ * 2. For the comment body, try to find the review header (`## ✅ Polaris Review Pass N`)
  *    to trim any pre-review text (thinking, tool call output, etc.).
  * 3. If no header is found, use everything before the marker as-is.
  */

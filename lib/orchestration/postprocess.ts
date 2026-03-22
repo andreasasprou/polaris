@@ -308,7 +308,12 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const {
     extractInlineAnchors,
     buildReviewComments,
+    buildIssueSeverityMap,
   } = await import("@/lib/reviews/inline-comments");
+  const {
+    formatReviewHeading,
+    formatReviewLabel,
+  } = await import("@/lib/reviews/formatting");
 
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
@@ -373,7 +378,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             repo,
             prNumber,
             reviewId: prevReviewId,
-            message: `Superseded by Review #${reviewSequence}`,
+            message: `Superseded by ${formatReviewLabel(reviewSequence)}`,
           });
         }
       } catch {
@@ -438,7 +443,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             owner,
             repo,
             prNumber,
-            body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>Warning: Could not parse review metadata. Raw review shown above.</sub>`,
+            body: `${formatReviewHeading(reviewSequence, "ATTENTION")}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>Warning: Could not parse review metadata. Raw review shown above.</sub>`,
           });
           commentId = commentResult.commentId;
         }
@@ -468,7 +473,10 @@ async function postprocessReview(job: JobRow): Promise<void> {
       try {
         const anchors = extractInlineAnchors(parsed.metadata);
         if (anchors.length > 0) {
-          const comments = buildReviewComments(anchors);
+          const issueSeverityById = buildIssueSeverityMap(
+            parsed.metadata.reviewState.openIssues,
+          );
+          const comments = buildReviewComments(anchors, issueSeverityById);
           if (comments.length > 0) {
             const inlineResult = await postInlineReview({
               installationId,
@@ -476,7 +484,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
               repo,
               prNumber,
               headSha: toSha,
-              body: `See Review #${reviewSequence} above for the full summary.`,
+              body: `See ${formatReviewLabel(reviewSequence)} above for the full summary.`,
               comments,
             });
             if (inlineResult && automationSessionId) {
