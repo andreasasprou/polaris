@@ -280,7 +280,11 @@ async function processCallback(input: {
     }
 
     case "permission_requested": {
-      await casAttemptStatus(attemptId, ["running"], "waiting_human", {
+      // Include "accepted" — HITL callbacks fire immediately while
+      // session_events (which transitions accepted→running) is batched
+      // on a 250ms timer. Without this, the CAS is a no-op if the
+      // agent asks for permission before the first batch flushes.
+      await casAttemptStatus(attemptId, ["accepted", "running"], "waiting_human", {
         lastProgressAt: new Date(),
       });
       await appendJobEvent(jobId, "waiting_human", attemptId, {
@@ -291,7 +295,7 @@ async function processCallback(input: {
     }
 
     case "question_requested": {
-      await casAttemptStatus(attemptId, ["running"], "waiting_human", {
+      await casAttemptStatus(attemptId, ["accepted", "running"], "waiting_human", {
         lastProgressAt: new Date(),
       });
       await appendJobEvent(jobId, "waiting_human", attemptId, {
