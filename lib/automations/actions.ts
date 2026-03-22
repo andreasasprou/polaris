@@ -64,13 +64,32 @@ export async function updateAutomation(
 }
 
 export async function deleteAutomation(id: string) {
-  // Null out jobs.automationId before deleting — the FK has no onDelete
-  // clause (defaults to RESTRICT), so any referencing job blocks deletion.
+  // Detach jobs before deleting — both jobs.automationId and
+  // jobs.automationRunId have no onDelete clause (default RESTRICT).
+  // The cascade deletes automationRuns, but jobs referencing those
+  // runs via automationRunId block the cascade.
   const { jobs } = await import("@/lib/jobs/schema");
+  const { automationRuns: runsTable } = await import("./schema");
+
+  // Find all automation_run IDs for this automation
+  const runs = await db
+    .select({ id: runsTable.id })
+    .from(runsTable)
+    .where(eq(runsTable.automationId, id));
+  const runIds = runs.map((r) => r.id);
+
+  // Null out both FK columns on referencing jobs
   await db
     .update(jobs)
     .set({ automationId: null })
     .where(eq(jobs.automationId, id));
+
+  if (runIds.length > 0) {
+    await db
+      .update(jobs)
+      .set({ automationRunId: null })
+      .where(inArray(jobs.automationRunId, runIds));
+  }
 
   await db.delete(automations).where(eq(automations.id, id));
 }

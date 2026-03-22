@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   Table,
   TableBody,
@@ -60,11 +61,15 @@ export function AutomationsTable({ rows }: { rows: AutomationRow[] }) {
   async function handleToggle(id: string, enabled: boolean) {
     setTogglingIds((prev) => new Set(prev).add(id));
     try {
-      await fetch(`/api/automations/${id}/toggle`, {
+      const res = await fetch(`/api/automations/${id}/toggle`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
       });
+      if (!res.ok) {
+        toast.error(`Failed to ${enabled ? "enable" : "disable"} automation`);
+        return;
+      }
       router.refresh();
     } finally {
       setTogglingIds((prev) => {
@@ -98,11 +103,15 @@ export function AutomationsTable({ rows }: { rows: AutomationRow[] }) {
         modelParams: automation.modelParams,
         prReviewConfig: automation.prReviewConfig,
       };
-      await fetch("/api/automations", {
+      const res = await fetch("/api/automations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!res.ok) {
+        toast.error("Failed to duplicate automation");
+        return;
+      }
       router.refresh();
     } finally {
       setDuplicatingIds((prev) => {
@@ -114,8 +123,14 @@ export function AutomationsTable({ rows }: { rows: AutomationRow[] }) {
   }
 
   async function handleDelete(id: string) {
-    await fetch(`/api/automations/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/automations/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast.error("Failed to delete automation");
+      setDeleteTarget(null);
+      return;
+    }
     setDeleteTarget(null);
+    toast.success("Automation deleted");
     router.refresh();
   }
 
