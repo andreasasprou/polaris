@@ -1,9 +1,14 @@
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { getOrgIdBySlug } from "@/lib/auth/session";
 import { findGithubInstallationsByOrg } from "@/lib/integrations/queries";
 import { GitHubInstallCard } from "./_components/github-install-card";
 
-export default async function IntegrationsPage() {
-  const { orgId } = await getSessionWithOrg();
+export default async function IntegrationsPage({
+  params,
+}: {
+  params: Promise<{ orgSlug: string }>;
+}) {
+  const { orgSlug } = await params;
+  const orgId = await getOrgIdBySlug(orgSlug);
   const installations = await findGithubInstallationsByOrg(orgId);
 
   return (

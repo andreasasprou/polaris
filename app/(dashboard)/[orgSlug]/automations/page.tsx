@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { getOrgIdBySlug } from "@/lib/auth/session";
 import { findAutomationsWithRepoByOrg } from "@/lib/automations/queries";
 import { orgPath } from "@/lib/config/urls";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ export default async function AutomationsPage({
   params: Promise<{ orgSlug: string }>;
 }) {
   const { orgSlug } = await params;
-  const { orgId } = await getSessionWithOrg();
+  const orgId = await getOrgIdBySlug(orgSlug);
   const rows = await findAutomationsWithRepoByOrg(orgId);
   const op = (path: string) => orgPath(orgSlug, path);
 

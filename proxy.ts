@@ -20,6 +20,7 @@ const LEGACY_PATHS = [
 const COLLECTION_PATHS = new Set([
   "/dashboard",
   "/automations",
+  "/automations/new",
   "/runs",
   "/sessions",
   "/sessions/new",
@@ -51,8 +52,11 @@ export function proxy(request: NextRequest) {
     // Only use cookie fast-path for collection routes (e.g. /dashboard, /sessions).
     // Resource routes (e.g. /sessions/:id, /runs/:id) must fall through to the
     // legacy-redirect pages that resolve the owning org from the DB row.
+    // Settings subpaths are all collection routes (no resource IDs).
     const orgSlug = request.cookies.get("polaris_org_slug")?.value;
-    if (orgSlug && COLLECTION_PATHS.has(pathname)) {
+    const isCollectionRoute = COLLECTION_PATHS.has(pathname)
+      || pathname.startsWith("/settings/");
+    if (orgSlug && isCollectionRoute) {
       const url = request.nextUrl.clone();
       url.pathname = `/${orgSlug}${pathname}`;
       return NextResponse.redirect(url);

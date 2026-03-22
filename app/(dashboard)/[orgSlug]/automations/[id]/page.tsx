@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { getOrgIdBySlug } from "@/lib/auth/session";
 import { findAutomationById } from "@/lib/automations/queries";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
@@ -9,10 +9,10 @@ import { AutomationForm } from "../_components/automation-form";
 export default async function EditAutomationPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; id: string }>;
 }) {
-  const { orgId } = await getSessionWithOrg();
-  const { id } = await params;
+  const { orgSlug, id } = await params;
+  const orgId = await getOrgIdBySlug(orgSlug);
   const automation = await findAutomationById(id);
 
   if (!automation || automation.organizationId !== orgId) {

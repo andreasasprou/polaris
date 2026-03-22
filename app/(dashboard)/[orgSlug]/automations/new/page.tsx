@@ -1,11 +1,16 @@
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { getOrgIdBySlug } from "@/lib/auth/session";
 import { syncReposForOrg } from "@/lib/integrations/sync-repos";
 import { findSecretsByOrg } from "@/lib/secrets/queries";
 import { findKeyPoolsByOrg } from "@/lib/key-pools/queries";
 import { AutomationForm } from "../_components/automation-form";
 
-export default async function NewAutomationPage() {
-  const { orgId } = await getSessionWithOrg();
+export default async function NewAutomationPage({
+  params,
+}: {
+  params: Promise<{ orgSlug: string }>;
+}) {
+  const { orgSlug } = await params;
+  const orgId = await getOrgIdBySlug(orgSlug);
 
   const [repos, secrets, pools] = await Promise.all([
     syncReposForOrg(orgId),
