@@ -302,6 +302,88 @@ async function postInlineReview({
 }
 
 /**
+ * After posting an inline review, fetch the individual comment IDs
+ * and map them back to issue IDs using file+line matching.
+ * Returns { issueId: commentId } mapping for future reply-on-resolve.
+ */
+async function fetchInlineCommentMap({
+  github,
+  owner,
+  repo,
+  prNumber,
+  reviewId,
+  inlineComments,
+}) {
+  const commentMap = {};
+  try {
+    const { data: reviewComments } =
+      await github.rest.pulls.listCommentsForReview({
+        owner,
+        repo,
+        pull_number: prNumber,
+        review_id: reviewId,
+        per_page: 100,
+      });
+
+    // Match review comments back to our inline comments by file+line
+    for (const rc of reviewComments) {
+      const match = inlineComments.find(
+        (ic) => ic.file === rc.path && ic.line === rc.line
+      );
+      if (match?.issue_id) {
+        commentMap[match.issue_id] = rc.id;
+      }
+    }
+  } catch (e) {
+    console.log(
+      `[codex-review] Failed to fetch inline comment IDs (non-fatal): ${e.message}`
+    );
+  }
+  return commentMap;
+}
+
+/**
+ * Reply to inline comments for resolved issues with a "Resolved" message.
+ * Uses pulls.createReplyForReviewComment to thread the reply.
+ */
+async function replyToResolvedComments({
+  github,
+  owner,
+  repo,
+  prNumber,
+  resolvedIssues,
+  inlineCommentMap,
+  headSha,
+}) {
+  const log = (msg) => console.log(`[codex-review] ${msg}`);
+  let repliedCount = 0;
+
+  for (const resolved of resolvedIssues) {
+    const commentId = inlineCommentMap[resolved.id];
+    if (!commentId) continue;
+
+    try {
+      const shortSha = headSha?.slice(0, 8) || 'latest';
+      const resolution = resolved.resolution || 'Fixed';
+      await github.rest.pulls.createReplyForReviewComment({
+        owner,
+        repo,
+        pull_number: prNumber,
+        comment_id: commentId,
+        body: `> **Resolved** in \`${shortSha}\`\n>\n> ${resolution}`,
+      });
+      repliedCount++;
+    } catch (e) {
+      log(`Failed to reply to resolved comment ${commentId}: ${e.message}`);
+    }
+  }
+
+  if (repliedCount > 0) {
+    log(`Replied to ${repliedCount} resolved inline comment(s)`);
+  }
+}
+
+/**
  * Dismiss a previous inline review (best-effort).
  */
 async function dismissInlineReview({
@@ -570,6 +652,27 @@ async function postResults({
     activeInlineReviewIds = remainingInlineReviewIds;
   }
 
+  // Step 2b: Reply "Resolved" to inline comments for resolved issues
+  const prevCommentMap = previousState?.state?.inlineCommentMap || {};
+  const resolvedIssues = reviewState?.recently_resolved_issues || [];
+  if (resolvedIssues.length > 0 && Object.keys(prevCommentMap).length > 0) {
+    try {
+      await replyToResolvedComments({
+        github,
+        owner,
+        repo,
+        prNumber,
+        resolvedIssues,
+        inlineCommentMap: prevCommentMap,
+        headSha,
+      });
+    } catch (e) {
+      log(`Reply to resolved comments failed (non-fatal): ${e.message}`);
+    }
+  }
+
+  // Step 2c: Post new inline comments
+  let newInlineCommentMap = {};
   if (inlineComments.length > 0) {
     if (!headSha) {
       log('Skipping inline review post: missing head SHA');
@@ -590,6 +693,17 @@ async function postResults({
         if (result) {
           activeInlineReviewIds = [...activeInlineReviewIds, result.reviewId];
           log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
+
+          // Fetch individual comment IDs for future reply-on-resolve
+          newInlineCommentMap = await fetchInlineCommentMap({
+            github,
+            owner,
+            repo,
+            prNumber,
+            reviewId: result.reviewId,
+            inlineComments,
+          });
+          log(`Mapped ${Object.keys(newInlineCommentMap).length} inline comment(s) to issue IDs`);
         }
       } catch (e) {
         log(`Inline review failed (non-fatal): ${e.message}`);
@@ -610,6 +724,10 @@ async function postResults({
         state: {
           ...reviewState,
           ...buildInlineReviewTrackingState(activeInlineReviewIds),
+          inlineCommentMap: {
+            ...prevCommentMap,
+            ...newInlineCommentMap,
+          },
         },
         stateCommentId: previousState?.stateCommentId,
       });
