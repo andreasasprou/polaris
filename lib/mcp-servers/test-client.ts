@@ -1,4 +1,9 @@
-import { isValidUrl, safeFetch, validateServerFetchUrl } from "./url-validation";
+import {
+  isValidUrl,
+  safeFetch,
+  safeStreamingFetch,
+  validateServerFetchUrl,
+} from "./url-validation";
 import type { McpDiscoveredTool } from "./types";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
@@ -48,6 +53,18 @@ async function runtimeFetch(url: string, init: RequestInit): Promise<Response> {
     return fetch(validated, init);
   }
   return safeFetch(validated, init);
+}
+
+async function runtimeStreamingFetch(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const validated = await validateRuntimeUrl(url);
+  const parsed = new URL(validated);
+  if (isLocalDevUrl(parsed)) {
+    return fetch(validated, init);
+  }
+  return safeStreamingFetch(validated, init);
 }
 
 function normalizeHeaders(headers?: Record<string, string>) {
@@ -280,7 +297,7 @@ async function sendSseMessage(
   const requestHeaders = normalizeHeaders(headers);
   requestHeaders.set("content-type", "application/json");
 
-  const response = await fetch(await validateRuntimeUrl(endpointUrl), {
+  const response = await runtimeFetch(endpointUrl, {
     method: "POST",
     headers: requestHeaders,
     body: JSON.stringify(message),
@@ -299,7 +316,7 @@ async function testLegacySseServer(
   serverUrl: string,
   headers?: Record<string, string>,
 ): Promise<McpDiscoveredTool[]> {
-  const response = await fetch(await validateRuntimeUrl(serverUrl), {
+  const response = await runtimeStreamingFetch(serverUrl, {
     method: "GET",
     headers: {
       ...Object.fromEntries(normalizeHeaders(headers).entries()),
