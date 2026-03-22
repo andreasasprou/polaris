@@ -161,6 +161,44 @@ export async function casAttemptStatus(
 }
 
 /**
+ * Touch the attempt's lastProgressAt timestamp (liveness heartbeat).
+ * Does NOT require a status transition — used for session_events callbacks.
+ */
+export async function touchAttemptProgress(attemptId: string): Promise<void> {
+  await db
+    .update(jobAttempts)
+    .set({ lastProgressAt: new Date() })
+    .where(eq(jobAttempts.id, attemptId));
+}
+
+/**
+ * Get jobs in accepted/running status whose latest attempt hasn't reported
+ * progress for longer than the staleness threshold.
+ */
+export async function getStaleRunningJobs(staleMinutes: number = 5) {
+  return db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        inArray(jobs.status, ["accepted", "running"]),
+        sql`EXISTS (
+          SELECT 1 FROM job_attempts ja
+          WHERE ja.job_id = ${jobs.id}
+          AND ja.last_progress_at IS NOT NULL
+          AND ja.last_progress_at < NOW() - (${staleMinutes} * INTERVAL '1 minute')
+          AND ja.attempt_number = (
+            SELECT MAX(ja2.attempt_number) FROM job_attempts ja2
+            WHERE ja2.job_id = ${jobs.id}
+          )
+        )`,
+        // Exclude jobs already past their hard timeout (handled by sweepTimedOutJobs)
+        sql`(${jobs.timeoutAt} IS NULL OR ${jobs.timeoutAt} > NOW())`,
+      ),
+    );
+}
+
+/**
  * Count the number of attempts for a job (to decide retry vs terminal failure).
  */
 export async function countAttempts(jobId: string): Promise<number> {

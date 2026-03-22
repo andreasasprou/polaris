@@ -7,6 +7,7 @@ import {
   casAttemptStatus,
   appendJobEvent,
   getJob,
+  touchAttemptProgress,
 } from "@/lib/jobs/actions";
 import type { CallbackType } from "@/lib/jobs/status";
 import { useLogger } from "@/lib/evlog";
@@ -123,6 +124,7 @@ async function processCallback(input: {
     case "prompt_accepted": {
       await casAttemptStatus(attemptId, ["dispatching"], "accepted", {
         acceptedAt: new Date(),
+        lastProgressAt: new Date(),
       });
       await casJobStatus(jobId, ["pending"], "accepted");
       await appendJobEvent(jobId, "accepted", attemptId);
@@ -338,6 +340,15 @@ async function processCallback(input: {
           })),
         );
       }
+
+      // Update liveness — session_events prove the agent is alive
+      await touchAttemptProgress(attemptId);
+
+      // Transition accepted → running on first session_events batch
+      // (the agent is executing if it's producing events).
+      // CAS ensures this fires only once; subsequent calls are no-ops.
+      await casJobStatus(jobId, ["accepted"], "running");
+
       break;
     }
   }
