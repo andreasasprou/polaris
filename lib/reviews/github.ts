@@ -1,6 +1,7 @@
 import { getInstallationOctokitById } from "@/lib/integrations/github";
 import type { ReviewVerdict } from "./types";
 import { formatReviewLabel } from "./formatting";
+import { useLogger } from "@/lib/evlog";
 
 /**
  * Create a pending GitHub check run.
@@ -234,9 +235,11 @@ export async function postInlineReview(input: {
       comments: input.comments,
     });
     return { reviewId: data.id };
-  } catch {
+  } catch (err) {
     // 422 = invalid anchors, network errors, etc.
     // Non-fatal — summary comment is already posted
+    const log = useLogger();
+    log.set({ inlineReview: { error: err instanceof Error ? err.message : String(err) } });
     return null;
   }
 }
@@ -264,8 +267,9 @@ export async function dismissReview(input: {
       message: input.message,
     });
     return true;
-  } catch {
-    // Best-effort — COMMENT reviews may not be dismissible
+  } catch (err) {
+    const log = useLogger();
+    log.set({ dismissReview: { reviewId: input.reviewId, error: err instanceof Error ? err.message : String(err) } });
     return false;
   }
 }
@@ -333,12 +337,14 @@ export async function resolveReviewThreads(input: {
           }
         `, { threadId: thread.id });
         resolvedCount++;
-      } catch {
-        // Best-effort per thread
+      } catch (err) {
+        const log = useLogger();
+        log.set({ resolveThread: { threadId: thread.id, error: err instanceof Error ? err.message : String(err) } });
       }
     }
-  } catch {
-    // Non-fatal — thread resolution is a UX enhancement
+  } catch (err) {
+    const log = useLogger();
+    log.set({ resolveThreads: { error: err instanceof Error ? err.message : String(err) } });
   }
 
   return resolvedCount;
