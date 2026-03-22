@@ -195,7 +195,7 @@ export async function safeFetch(
   const MAX_REDIRECTS = 3;
   let currentUrl = url;
   let currentHeaders = new Headers(init.headers);
-  const body = init.body ? await bodyToString(init.body) : undefined;
+  let currentBody = init.body ? await bodyToString(init.body) : undefined;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (!isValidUrl(currentUrl)) {
@@ -215,7 +215,7 @@ export async function safeFetch(
       method: (init.method ?? "GET") as string,
       path: parsed.pathname + parsed.search,
       headers: buildRequestHeaders(currentHeaders, originalHostname, parsed.port),
-      body,
+      body: currentBody,
       signal: init.signal as AbortSignal | undefined,
     });
 
@@ -234,6 +234,7 @@ export async function safeFetch(
     }
     const nextUrl = new URL(location, currentUrl).toString();
     currentHeaders = getRedirectHeaders(currentHeaders, currentUrl, nextUrl);
+    currentBody = getRedirectBody(currentBody, currentUrl, nextUrl);
     currentUrl = nextUrl;
   }
 
@@ -247,7 +248,7 @@ export async function safeStreamingFetch(
   const MAX_REDIRECTS = 3;
   let currentUrl = url;
   let currentHeaders = new Headers(init.headers);
-  const body = init.body ? await bodyToString(init.body) : undefined;
+  let currentBody = init.body ? await bodyToString(init.body) : undefined;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (!isValidUrl(currentUrl)) {
@@ -267,7 +268,7 @@ export async function safeStreamingFetch(
       method: (init.method ?? "GET") as string,
       path: parsed.pathname + parsed.search,
       headers: buildRequestHeaders(currentHeaders, originalHostname, parsed.port),
-      body,
+      body: currentBody,
       signal: init.signal as AbortSignal | undefined,
     });
 
@@ -285,6 +286,7 @@ export async function safeStreamingFetch(
     }
     const nextUrl = new URL(location, currentUrl).toString();
     currentHeaders = getRedirectHeaders(currentHeaders, currentUrl, nextUrl);
+    currentBody = getRedirectBody(currentBody, currentUrl, nextUrl);
     currentUrl = nextUrl;
   }
 
@@ -329,6 +331,22 @@ function getRedirectHeaders(
   }
 
   return redirectHeaders;
+}
+
+function getRedirectBody(
+  body: string | undefined,
+  currentUrl: string,
+  nextUrl: string,
+): string | undefined {
+  if (!body) {
+    return undefined;
+  }
+
+  if (new URL(currentUrl).origin === new URL(nextUrl).origin) {
+    return body;
+  }
+
+  throw new Error("Cross-origin redirect blocked for request with body");
 }
 
 /** Low-level HTTPS request that connects to a specific IP with TLS SNI override. */

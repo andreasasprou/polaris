@@ -74,6 +74,9 @@ function mockHttpsResponse({
 describe("mcp URL validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    httpsRequestMock.mockReset();
+    resolve4Mock.mockReset();
+    resolve6Mock.mockReset();
     resolve4Mock.mockResolvedValue([]);
     resolve6Mock.mockResolvedValue([]);
   });
@@ -186,18 +189,18 @@ describe("mcp URL validation", () => {
         return req;
       });
 
-    const response = await safeFetch("https://oauth.example.com/token", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: "Bearer secret-token",
-        "X-Api-Key": "secret-api-key",
-      },
-      body: JSON.stringify({ hello: "world" }),
-    });
-
-    expect(response.status).toBe(200);
+    await expect(
+      safeFetch("https://oauth.example.com/token", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: "Bearer secret-token",
+          "X-Api-Key": "secret-api-key",
+        },
+        body: JSON.stringify({ hello: "world" }),
+      }),
+    ).rejects.toThrow("Cross-origin redirect blocked for request with body");
   });
 
   it("drops auth headers on cross-origin redirects in safeStreamingFetch", async () => {
@@ -262,6 +265,78 @@ describe("mcp URL validation", () => {
         Authorization: "Bearer secret-token",
         "X-Api-Key": "secret-api-key",
       },
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("allows same-origin redirects to preserve POST bodies", async () => {
+    resolve4Mock.mockResolvedValue(["203.0.113.10"]);
+    httpsRequestMock
+      .mockImplementationOnce((options, callback) => {
+        expect(options.headers).toMatchObject({
+          Host: "oauth.example.com",
+        });
+
+        const req = new EventEmitter() as EventEmitter & {
+          write: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+
+        req.write = vi.fn();
+        req.end = vi.fn(() => {
+          const res = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            headers: Record<string, string>;
+          };
+
+          res.statusCode = 307;
+          res.headers = { location: "https://oauth.example.com/token-2" };
+          callback(res);
+          res.emit("end");
+        });
+        req.destroy = vi.fn();
+
+        return req;
+      })
+      .mockImplementationOnce((options, callback) => {
+        expect(options.headers).toMatchObject({
+          Host: "oauth.example.com",
+        });
+
+        const req = new EventEmitter() as EventEmitter & {
+          write: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+
+        req.write = vi.fn();
+        req.end = vi.fn(() => {
+          const res = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            headers: Record<string, string>;
+          };
+
+          res.statusCode = 200;
+          res.headers = { "content-type": "application/json" };
+          callback(res);
+          res.emit("data", Buffer.from('{"ok":true}'));
+          res.emit("end");
+        });
+        req.destroy = vi.fn();
+
+        return req;
+      });
+
+    const response = await safeFetch("https://oauth.example.com/token", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: "Bearer secret-token",
+      },
+      body: JSON.stringify({ hello: "world" }),
     });
 
     expect(response.status).toBe(200);

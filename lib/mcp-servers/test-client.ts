@@ -31,13 +31,16 @@ function isLocalDevUrl(url: URL) {
   );
 }
 
-async function validateRuntimeUrl(url: string): Promise<string> {
-  if (!isValidUrl(url, { allowLocalDev: true })) {
+async function validateRuntimeUrl(
+  url: string,
+  { allowLocalDev = true }: { allowLocalDev?: boolean } = {},
+): Promise<string> {
+  if (!isValidUrl(url, { allowLocalDev })) {
     throw new Error(`Invalid MCP server URL: ${url}`);
   }
 
   const parsed = new URL(url);
-  if (isLocalDevUrl(parsed)) return url;
+  if (allowLocalDev && isLocalDevUrl(parsed)) return url;
 
   const validated = await validateServerFetchUrl(url);
   if (!validated) {
@@ -46,8 +49,12 @@ async function validateRuntimeUrl(url: string): Promise<string> {
   return validated;
 }
 
-async function runtimeFetch(url: string, init: RequestInit): Promise<Response> {
-  const validated = await validateRuntimeUrl(url);
+async function runtimeFetch(
+  url: string,
+  init: RequestInit,
+  options?: { allowLocalDev?: boolean },
+): Promise<Response> {
+  const validated = await validateRuntimeUrl(url, options);
   const parsed = new URL(validated);
   if (isLocalDevUrl(parsed)) {
     return fetch(validated, init);
@@ -58,8 +65,9 @@ async function runtimeFetch(url: string, init: RequestInit): Promise<Response> {
 async function runtimeStreamingFetch(
   url: string,
   init: RequestInit,
+  options?: { allowLocalDev?: boolean },
 ): Promise<Response> {
-  const validated = await validateRuntimeUrl(url);
+  const validated = await validateRuntimeUrl(url, options);
   const parsed = new URL(validated);
   if (isLocalDevUrl(parsed)) {
     return fetch(validated, init);
@@ -293,6 +301,7 @@ async function sendSseMessage(
   endpointUrl: string,
   headers: Record<string, string> | undefined,
   message: JsonRpcMessage,
+  options?: { allowLocalDev?: boolean },
 ) {
   const requestHeaders = normalizeHeaders(headers);
   requestHeaders.set("content-type", "application/json");
@@ -302,7 +311,7 @@ async function sendSseMessage(
     headers: requestHeaders,
     body: JSON.stringify(message),
     signal: AbortSignal.timeout(10_000),
-  });
+  }, options);
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -316,6 +325,7 @@ async function testLegacySseServer(
   serverUrl: string,
   headers?: Record<string, string>,
 ): Promise<McpDiscoveredTool[]> {
+  const allowLocalDev = isLocalDevUrl(new URL(serverUrl));
   const response = await runtimeStreamingFetch(serverUrl, {
     method: "GET",
     headers: {
@@ -323,7 +333,7 @@ async function testLegacySseServer(
       Accept: "text/event-stream",
     },
     signal: AbortSignal.timeout(10_000),
-  });
+  }, { allowLocalDev });
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -354,13 +364,13 @@ async function testLegacySseServer(
         capabilities: {},
         clientInfo: CLIENT_INFO,
       },
-    });
+    }, { allowLocalDev });
     await waitForRpcResponse(reader, initializeId);
 
     await sendSseMessage(endpointUrl, headers, {
       jsonrpc: "2.0",
       method: "notifications/initialized",
-    });
+    }, { allowLocalDev });
 
     const toolsListId = 2;
     await sendSseMessage(endpointUrl, headers, {
@@ -368,7 +378,7 @@ async function testLegacySseServer(
       id: toolsListId,
       method: "tools/list",
       params: {},
-    });
+    }, { allowLocalDev });
 
     return normalizeTools(await waitForRpcResponse(reader, toolsListId));
   } finally {
