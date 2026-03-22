@@ -291,8 +291,10 @@ async function dismissInlineReview({
       review_id: reviewId,
       message,
     });
+    return true;
   } catch {
     // Best-effort — COMMENT reviews may not be dismissible
+    return false;
   }
 }
 
@@ -495,6 +497,8 @@ async function postResults({
   }
 
   const verdict = extractVerdict(reviewBody);
+  const previousInlineReviewId = previousState?.lastInlineReviewId ?? null;
+  let lastInlineReviewId = previousInlineReviewId;
 
   // Step 1: Post new summary comment (most important — do first)
   let newCommentId = null;
@@ -506,57 +510,72 @@ async function postResults({
       prNumber,
       body: reviewBody,
     });
-    log(`Posted review #${reviewNumber} (comment ${newCommentId})`);
+    log(`Posted ${formatReviewLabel(reviewNumber)} (comment ${newCommentId})`);
   } catch (e) {
     log(`Failed to post comment: ${e.message}`);
   }
 
-  // Step 2: Post inline review comments (best-effort, after summary)
-  if (inlineComments.length > 0 && headSha) {
+  // Step 2: Reconcile inline review lifecycle (best-effort, after summary)
+  let previousInlineReviewCleared = previousInlineReviewId == null;
+  if (previousInlineReviewId != null) {
     try {
-      // Dismiss previous inline review if one exists
-      if (previousState?.lastInlineReviewId) {
-        await dismissInlineReview({
-          github,
-          owner,
-          repo,
-          prNumber,
-          reviewId: previousState.lastInlineReviewId,
-          message: `Superseded by ${formatReviewLabel(reviewNumber)}`,
-        });
-        log(`Dismissed previous inline review ${previousState.lastInlineReviewId}`);
-      }
-
-      const issueSeverityById = buildIssueSeverityMap(reviewState);
-      const result = await postInlineReview({
+      const dismissed = await dismissInlineReview({
         github,
         owner,
         repo,
         prNumber,
-        headSha,
-        body: `See ${formatReviewLabel(reviewNumber)} above for the full summary.`,
-        comments: inlineComments,
-        issueSeverityById,
+        reviewId: previousInlineReviewId,
+        message: `Superseded by ${formatReviewLabel(reviewNumber)}`,
       });
 
-      if (result) {
-        // Store the inline review ID in state for future dismissal
-        if (reviewState) {
-          reviewState._lastInlineReviewId = result.reviewId;
-        }
-        log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
+      if (dismissed) {
+        lastInlineReviewId = null;
+        previousInlineReviewCleared = true;
+        log(`Dismissed previous inline review ${previousInlineReviewId}`);
+      } else {
+        log(
+          `Could not dismiss previous inline review ${previousInlineReviewId}; keeping it active`
+        );
       }
     } catch (e) {
-      log(`Inline review failed (non-fatal): ${e.message}`);
+      log(`Inline review dismissal failed (non-fatal): ${e.message}`);
+    }
+  }
+
+  if (inlineComments.length > 0) {
+    if (!headSha) {
+      log('Skipping inline review post: missing head SHA');
+    } else if (!previousInlineReviewCleared) {
+      log(
+        `Skipping inline review post: previous inline review ${previousInlineReviewId} is still active`
+      );
+    } else {
+      try {
+        const issueSeverityById = buildIssueSeverityMap(reviewState);
+        const result = await postInlineReview({
+          github,
+          owner,
+          repo,
+          prNumber,
+          headSha,
+          body: `See ${formatReviewLabel(reviewNumber)} above for the full summary.`,
+          comments: inlineComments,
+          issueSeverityById,
+        });
+
+        if (result) {
+          lastInlineReviewId = result.reviewId;
+          log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
+        }
+      } catch (e) {
+        log(`Inline review failed (non-fatal): ${e.message}`);
+      }
     }
   }
 
   // Step 3: Persist state (important for continuity)
   if (reviewState) {
     reviewState.review_count = reviewNumber;
-    // Carry over inline review ID for dismissal on next review
-    const lastInlineReviewId = reviewState._lastInlineReviewId;
-    delete reviewState._lastInlineReviewId;
 
     try {
       await persistState({
@@ -564,7 +583,7 @@ async function postResults({
         owner,
         repo,
         prNumber,
-        state: { ...reviewState, lastInlineReviewId: lastInlineReviewId || null },
+        state: { ...reviewState, lastInlineReviewId },
         stateCommentId: previousState?.stateCommentId,
       });
       log('State persisted');

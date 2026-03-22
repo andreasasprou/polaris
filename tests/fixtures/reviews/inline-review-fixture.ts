@@ -1,5 +1,5 @@
 /**
- * Test file for inline review comments.
+ * QA fixture for inline review comments.
  * Each function has an intentional bug that should trigger an inline comment.
  */
 
@@ -27,5 +27,4 @@ export function parseConfig(raw: string): Record<string, string> {
   return eval(`(${raw})`);
 }
 
-// Stub for the SQL example
 declare function executeQuery(query: string, params?: unknown[]): Promise<void>;

@@ -126,11 +126,11 @@ Each inline comment needs:
 - `issue_id`: must match an `id` in `state.open_issues`
 - `file`: exact file path as it appears in the diff
 - `line`: the ending line number in the NEW file version (right side of diff)
-- `start_line`: optional start line for multi-line ranges (must be < `line`)
+- `start_line`: required key — use `null` for single-line comments, otherwise the start line for a multi-line range (must be < `line`)
 - `title`: short finding title
 - `body`: detailed explanation
 - `category`: finding category
-- `suggestion`: optional replacement code (renders as a GitHub suggestion block)
+- `suggestion`: required key — use `null` when there is no replacement code to suggest
 
 **Rules:**
 - Do NOT invent line numbers. Only provide anchors for lines you can see in the diff.
