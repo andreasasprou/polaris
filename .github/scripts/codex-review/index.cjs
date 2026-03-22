@@ -337,7 +337,8 @@ async function fetchInlineCommentMap({
       }
     }
     if (Object.keys(commentMap).length === 0 && reviewComments.length > 0) {
-      console.log(`[codex-review] Debug: API returned: ${JSON.stringify(reviewComments.map(rc => ({ id: rc.id, path: rc.path, line: rc.line, original_line: rc.original_line })))}`);
+      console.log(`[codex-review] Debug: API comment keys: ${JSON.stringify(Object.keys(reviewComments[0] || {}))}`);
+      console.log(`[codex-review] Debug: API comment[0]: ${JSON.stringify({ id: reviewComments[0]?.id, path: reviewComments[0]?.path, line: reviewComments[0]?.line, original_line: reviewComments[0]?.original_line, position: reviewComments[0]?.position, original_position: reviewComments[0]?.original_position })}`);
       console.log(`[codex-review] Debug: Expected: ${JSON.stringify(inlineComments.map(ic => ({ issue_id: ic.issue_id, file: ic.file, line: ic.line })))}`);
     }
     console.log(
