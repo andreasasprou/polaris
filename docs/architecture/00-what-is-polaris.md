@@ -370,6 +370,19 @@ This is what `interactive_session` should become conceptually:
 - not the task object
 - instead, the reusable continuity channel for long-lived agent context
 
+Not every continuation session should be exposed as a user-chat surface.
+
+Polaris should explicitly distinguish at least these continuation roles:
+
+| Role | Meaning | UX expectation |
+|------|---------|----------------|
+| `user_interactive` | User-created conversational work | visible in primary Sessions UI, full transcript, prompt input enabled |
+| `review_continuation` | PR-review continuity owned by the system | reachable from task/run detail, read-only transcript, no prompt input |
+| `automation_continuation` | automation-owned long-lived context | generally hidden from primary Sessions UI unless debugging, read-only by default |
+
+The important rule is that **continuation** and **interactivity** are not the same thing.
+Some tasks need durable context without becoming an end-user chat thread.
+
 ### 6. Artifact
 
 An **artifact** is a durable output produced by a run.
@@ -450,6 +463,7 @@ The future model should handle all of these cases using the same top-level nouns
 - The PR comment thread is the **feedback thread**
 - Review comments and check runs are **artifacts**
 - A review-scoped continuation/session preserves context between passes
+- That continuation/session is **read-only in the product UI**; users continue the work through the PR thread or task/run follow-up affordances, not by chatting into a hidden review session
 
 ### Example 3 — Slack-triggered coding task
 
@@ -538,6 +552,7 @@ A continuation/session-level state answers:
 - can follow-up context be resumed?
 - does the thread still have a usable environment?
 - does it need restore or fresh start?
+- is the continuation user-interactive or read-only?
 
 This should eventually be much narrower than the current `interactive_sessions.status`.
 
@@ -550,6 +565,9 @@ If this model is correct, several architectural consequences follow.
 ### 1. `Session` should stop being the top-level product noun
 
 Interactive sessions remain important, but they should become one kind of continuation primitive rather than the main container for all work.
+
+That also means the architecture must stop assuming every continuation session is user-interactive.
+Review continuations and automation continuations should be modeled as read-only by default unless a product feature explicitly promotes them to an interactive surface.
 
 ### 2. Runtime identity must move fully out of session records
 
@@ -571,6 +589,13 @@ Over time, the user should be able to reason about:
 - what artifacts were produced
 - what feedback is pending
 - what environment backed the run
+
+The continuation-session UI should also become role-aware:
+
+- primary Sessions navigation should focus on `user_interactive` sessions
+- review/automation continuations should appear through task/run views or explicit debug affordances
+- non-interactive continuations should render transcript/history without a prompt box
+- run/task detail pages should embed transcript previews/snippets rather than dumping full continuation history inline
 
 ### 5. Feedback loops need a first-class model
 
@@ -650,6 +675,7 @@ These are the main strategic changes implied by this document.
 
 - introduce a first-class `Task` concept at the product boundary
 - reframe `interactive_session` as a continuation primitive
+- derive continuation-session role/capabilities in server read models instead of inferring them ad hoc in the UI
 - introduce explicit read models for task, run, environment, artifact, and feedback thread views
 
 ### Long term

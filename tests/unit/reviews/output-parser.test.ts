@@ -12,7 +12,7 @@ function makeAgentOutput(opts?: {
   const verdict = opts?.verdict ?? "APPROVE";
   const body =
     opts?.body ??
-    `## ✅ Polaris Review #1: ${verdict}\n\nLooks good overall.\n\n<sub>Polaris Review #1 · Automated by Polaris</sub>`;
+    `## ✅ Polaris Review Pass 1: ${verdict}\n\nLooks good overall.\n\n<sub>Polaris Review Pass 1 · Automated by Polaris</sub>`;
 
   const metadata = {
     verdict,
@@ -36,7 +36,7 @@ describe("parseReviewOutput", () => {
     const result = parseReviewOutput(output);
 
     expect(result).not.toBeNull();
-    expect(result!.commentBody).toContain("Polaris Review #1");
+    expect(result!.commentBody).toContain("Polaris Review Pass 1");
     expect(result!.commentBody).not.toContain("polaris:metadata");
     expect(result!.metadata.verdict).toBe("APPROVE");
     expect(result!.metadata.summary).toBe("Looks good overall");
@@ -126,7 +126,7 @@ describe("parseReviewOutput", () => {
   it("extracts review from allOutput with pre-review thinking text", () => {
     // Simulates allOutput where the agent wrote thinking text before the review
     const preReviewText = "Let me analyze the changes in this PR...\n\nI'll look at the key files.\n\n";
-    const reviewBody = `## ⚠️ Polaris Review #3: ATTENTION\n\nThis PR has a potential issue.\n\n#### 🟡 [P1] Missing null check\n**File:** \`src/auth.ts\` · **Category:** Correctness\n\nThe function does not check for null.\n\n<sub>Polaris Review #3 · abc1234 · Automated by Polaris</sub>`;
+    const reviewBody = `## ⚠️ Polaris Review Pass 3: ATTENTION\n\nThis PR has a potential issue.\n\n#### 🟡 [P1] Missing null check\n**File:** \`src/auth.ts\` · **Category:** Correctness\n\nThe function does not check for null.\n\n<sub>Polaris Review Pass 3 · abc1234 · Automated by Polaris</sub>`;
 
     const output = preReviewText + makeAgentOutput({
       verdict: "ATTENTION",
@@ -140,7 +140,7 @@ describe("parseReviewOutput", () => {
     // Pre-review thinking text should be stripped
     expect(result!.commentBody).not.toContain("Let me analyze");
     // Review header should be present
-    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review #3: ATTENTION"));
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review Pass 3: ATTENTION"));
     expect(result!.commentBody).toContain("Missing null check");
   });
 
@@ -152,7 +152,7 @@ describe("parseReviewOutput", () => {
       "Found the relevant code section, now writing the review.",
     ].join("\n\n");
 
-    const reviewBody = `## ✅ Polaris Review #2: APPROVE\n\nClean implementation with good test coverage.\n\n<sub>Polaris Review #2 · def5678 · Automated by Polaris</sub>`;
+    const reviewBody = `## ✅ Polaris Review Pass 2: APPROVE\n\nClean implementation with good test coverage.\n\n<sub>Polaris Review Pass 2 · def5678 · Automated by Polaris</sub>`;
 
     const output = toolCallOutput + "\n\n" + makeAgentOutput({
       verdict: "APPROVE",
@@ -162,7 +162,7 @@ describe("parseReviewOutput", () => {
     const result = parseReviewOutput(output);
     expect(result).not.toBeNull();
     expect(result!.metadata.verdict).toBe("APPROVE");
-    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review #2: APPROVE"));
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review Pass 2: APPROVE"));
     expect(result!.commentBody).not.toContain("I need to check");
   });
 
@@ -171,11 +171,11 @@ describe("parseReviewOutput", () => {
     const output = makeAgentOutput({ verdict: "APPROVE" });
     const result = parseReviewOutput(output);
     expect(result).not.toBeNull();
-    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review #1: APPROVE"));
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review Pass 1: APPROVE"));
   });
 
   it("handles BLOCK verdict header with 🚫 emoji", () => {
-    const reviewBody = `## 🚫 Polaris Review #1: BLOCK\n\nCritical security issue found.\n\n<sub>Polaris Review #1 · abc · Automated by Polaris</sub>`;
+    const reviewBody = `## 🚫 Polaris Review Pass 1: BLOCK\n\nCritical security issue found.\n\n<sub>Polaris Review Pass 1 · abc · Automated by Polaris</sub>`;
     const output = "Some thinking...\n\n" + makeAgentOutput({
       verdict: "BLOCK",
       body: reviewBody,
@@ -183,8 +183,18 @@ describe("parseReviewOutput", () => {
 
     const result = parseReviewOutput(output);
     expect(result).not.toBeNull();
-    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## 🚫 Polaris Review #1: BLOCK"));
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## 🚫 Polaris Review Pass 1: BLOCK"));
     expect(result!.commentBody).not.toContain("Some thinking");
+  });
+
+  it("still recognizes legacy Review #N headers", () => {
+    const output = makeAgentOutput({
+      body: "## ✅ Polaris Review #4: APPROVE\n\nLooks good.\n\n<sub>Polaris Review #4 · Automated by Polaris</sub>",
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review #4: APPROVE"));
   });
 
   it("falls back to full text before marker when no review header found", () => {

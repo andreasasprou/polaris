@@ -56,7 +56,7 @@ export interface PRReviewConfig {
 export interface ReviewIssue {
   id: string;
   file: string;
-  severity: "P0" | "P1" | "P2";
+  severity: ReviewSeverity;
   category?: string;
   summary?: string;
   title?: string;
@@ -112,6 +112,7 @@ export interface AutomationSessionMetadata {
   reviewState: ReviewState | null;
   reviewCount: number;
   lastCommentId: string | null;
+  activeInlineReviewIds?: number[] | null;
   lastInlineReviewId?: number | null;
   lastCheckRunId: string | null;
   lastCompletedRunId: string | null;
@@ -171,6 +172,7 @@ export interface InlineAnchor {
 // ── Parsed review output ──
 
 export type ReviewVerdict = "BLOCK" | "ATTENTION" | "APPROVE";
+export type ReviewSeverity = "P0" | "P1" | "P2";
 
 /** Zod schema for the metadata block the agent appends after the comment body. Single source of truth. */
 export const ReviewMetadataSchema = z.object({

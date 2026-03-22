@@ -5,6 +5,7 @@ import type {
   NormalizedPrReviewEvent,
 } from "./types";
 import type { FileClassification } from "./classification";
+import { formatReviewPassLabel } from "./formatting";
 
 export interface BuildReviewPromptInput {
   event: NormalizedPrReviewEvent;
@@ -119,10 +120,10 @@ Your response will be posted **directly** as a GitHub PR comment. Write it as th
 ### Required structure
 
 1. **Header line** — Start with a header showing the verdict:
-   - \`## ✅ Polaris Review #N: APPROVE\`
-   - \`## ⚠️ Polaris Review #N: ATTENTION\`
-   - \`## 🚫 Polaris Review #N: BLOCK\`
-   where N is the review sequence number (provided in Review Scope above).
+   - \`## ✅ Polaris Review Pass N: APPROVE\`
+   - \`## ⚠️ Polaris Review Pass N: ATTENTION\`
+   - \`## 🚫 Polaris Review Pass N: BLOCK\`
+   where N is the review pass number (provided in Review Scope above).
 
 2. **Summary** — 2-3 sentences summarizing the changes and your overall assessment.
 
@@ -137,8 +138,8 @@ Your response will be posted **directly** as a GitHub PR comment. Write it as th
 
 4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them with the original title for context: \`- ~~finding-id: Original title of the finding~~ ✅\`
 
-5. **Footer** — End the visible comment with the review number and the head commit SHA you reviewed (from Review Scope above):
-   \`<sub>Polaris Review #N · \`<head-sha-short>\` · Automated by Polaris</sub>\`
+5. **Footer** — End the visible comment with the review pass and the head commit SHA you reviewed (from Review Scope above):
+   \`<sub>Polaris Review Pass N · \`<head-sha-short>\` · Automated by Polaris</sub>\`
 
 ### Metadata block
 
@@ -238,7 +239,8 @@ function formatReviewScope(input: BuildReviewPromptInput): string {
 
   return `## Review Scope
 
-**Type:** ${input.reviewScope} (Review #${input.reviewSequence})
+**Review Pass:** ${input.reviewSequence}
+**Type:** ${input.reviewScope}
 ${scopeDescriptions[input.reviewScope]}
 **Reviewing:** ${input.fromSha?.slice(0, 8) ?? "start"}..${input.toSha.slice(0, 8)}`;
 }
@@ -389,7 +391,7 @@ function formatExplorationInstructions(input: BuildReviewPromptInput): string {
 }
 
 function formatPreviousState(state: ReviewState): string {
-  const parts: string[] = [`## Previous Review State (Review #${state.reviewCount})`];
+  const parts: string[] = [`## Previous Review State (after ${formatReviewPassLabel(state.reviewCount)})`];
 
   if (state.openIssues.length > 0) {
     parts.push("### Open Issues from Previous Review");

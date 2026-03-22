@@ -13,6 +13,31 @@ const MARKERS = {
   stale: 'codex-review:stale',
 };
 
+const SEVERITY_EMOJI = {
+  P0: '🔴',
+  P1: '🟡',
+  P2: '🔵',
+};
+
+function formatReviewLabel(reviewNumber) {
+  return `Codex Review Pass ${reviewNumber}`;
+}
+
+function formatSeverityBadge(severity) {
+  const emoji = SEVERITY_EMOJI[severity];
+  return emoji ? `${emoji} [${severity}]` : null;
+}
+
+function buildIssueSeverityMap(reviewState) {
+  const map = new Map();
+  for (const issue of reviewState?.open_issues || []) {
+    if (issue?.id && issue?.severity) {
+      map.set(issue.id, issue.severity);
+    }
+  }
+  return map;
+}
+
 // ─── State Management ─────────────────────────────────────────────────────────
 
 /**
@@ -21,7 +46,7 @@ const MARKERS = {
  * State is stored as base64-encoded JSON inside a hidden HTML comment.
  * The review comment is identified by a marker and must not be stale.
  *
- * @returns {{ stateCommentId, reviewCommentId, lastReviewedSha, reviewCount, state, previousReviewBody }}
+ * @returns {{ stateCommentId, reviewCommentId, lastReviewedSha, reviewCount, lastInlineReviewId, state, previousReviewBody }}
  */
 async function loadPreviousState({ github, owner, repo, prNumber, reset }) {
   const result = {
@@ -29,6 +54,7 @@ async function loadPreviousState({ github, owner, repo, prNumber, reset }) {
     reviewCommentId: null,
     lastReviewedSha: null,
     reviewCount: 0,
+    lastInlineReviewId: null,
     state: null,
     previousReviewBody: null,
   };
@@ -79,6 +105,8 @@ async function loadPreviousState({ github, owner, repo, prNumber, reset }) {
           result.lastReviewedSha =
             result.state.last_reviewed_head_sha || null;
           result.reviewCount = result.state.review_count || 0;
+          result.lastInlineReviewId =
+            result.state.lastInlineReviewId || null;
           console.log(
             `Loaded state: review_count=${result.reviewCount}, last_sha=${result.lastReviewedSha?.slice(0, 8) || 'none'}`
           );
@@ -92,6 +120,48 @@ async function loadPreviousState({ github, owner, repo, prNumber, reset }) {
   }
 
   return result;
+}
+
+function summarizePreviousState(previousState) {
+  const activeInlineReviewIds =
+    previousState?.activeInlineReviewIds?.length
+      ? previousState.activeInlineReviewIds
+      : previousState?.state?.activeInlineReviewIds?.length
+        ? previousState.state.activeInlineReviewIds
+        : previousState?.lastInlineReviewId != null
+          ? [previousState.lastInlineReviewId]
+          : previousState?.state?.lastInlineReviewId != null
+            ? [previousState.state.lastInlineReviewId]
+            : [];
+
+  return {
+    stateCommentId: previousState?.stateCommentId ?? null,
+    reviewCommentId: previousState?.reviewCommentId ?? null,
+    lastReviewedSha: previousState?.lastReviewedSha ?? null,
+    reviewCount: previousState?.reviewCount ?? 0,
+    activeInlineReviewIds,
+    lastInlineReviewId:
+      activeInlineReviewIds[activeInlineReviewIds.length - 1] ?? null,
+  };
+}
+
+function normalizeActiveInlineReviewIds(previousState) {
+  const summary = summarizePreviousState(previousState);
+  return Array.from(
+    new Set(
+      (summary.activeInlineReviewIds || []).filter(
+        (reviewId) => Number.isInteger(reviewId) && reviewId > 0
+      )
+    )
+  );
+}
+
+function buildInlineReviewTrackingState(activeInlineReviewIds) {
+  return {
+    activeInlineReviewIds,
+    lastInlineReviewId:
+      activeInlineReviewIds[activeInlineReviewIds.length - 1] ?? null,
+  };
 }
 
 /**
@@ -160,7 +230,7 @@ async function markCommentStale({
 
   const staleBody = [
     `<!-- ${MARKERS.stale} -->`,
-    `> **Superseded** — See Review #${newReviewNumber} below for the latest review.\n`,
+    `> **Superseded** — See ${formatReviewLabel(newReviewNumber)} below for the latest review.\n`,
     `<details><summary>Previous review (collapsed)</summary>\n`,
     body,
     `\n</details>`,
@@ -202,6 +272,7 @@ async function postInlineReview({
   headSha,
   body,
   comments,
+  issueSeverityById,
 }) {
   try {
     const { data } = await github.rest.pulls.createReview({
@@ -218,7 +289,7 @@ async function postInlineReview({
           ? { start_line: c.start_line, start_side: 'RIGHT' }
           : {}),
         side: 'RIGHT',
-        body: formatInlineBody(c),
+        body: formatInlineBody(c, issueSeverityById?.get(c.issue_id)),
       })),
     });
     return { reviewId: data.id };
@@ -249,16 +320,23 @@ async function dismissInlineReview({
       review_id: reviewId,
       message,
     });
+    return true;
   } catch {
     // Best-effort — COMMENT reviews may not be dismissible
+    return false;
   }
 }
 
 /**
  * Format an inline comment body with title, explanation, and optional suggestion.
  */
-function formatInlineBody(comment) {
-  let body = `**${comment.title}**\n\n`;
+function formatInlineBody(comment, severity) {
+  const severityBadge = formatSeverityBadge(severity);
+  const title = severityBadge
+    ? `${severityBadge} ${comment.title}`
+    : comment.title;
+
+  let body = `**${title}**\n\n`;
   if (comment.body) body += `${comment.body}\n\n`;
   if (comment.category) body += `*Category: ${comment.category}*\n\n`;
   if (comment.suggestion) {
@@ -448,6 +526,7 @@ async function postResults({
   }
 
   const verdict = extractVerdict(reviewBody);
+  let activeInlineReviewIds = normalizeActiveInlineReviewIds(previousState);
 
   // Step 1: Post new summary comment (most important — do first)
   let newCommentId = null;
@@ -459,55 +538,68 @@ async function postResults({
       prNumber,
       body: reviewBody,
     });
-    log(`Posted review #${reviewNumber} (comment ${newCommentId})`);
+    log(`Posted ${formatReviewLabel(reviewNumber)} (comment ${newCommentId})`);
   } catch (e) {
     log(`Failed to post comment: ${e.message}`);
   }
 
-  // Step 2: Post inline review comments (best-effort, after summary)
-  if (inlineComments.length > 0 && headSha) {
+  // Step 2: Reconcile inline review lifecycle (best-effort, after summary)
+  if (activeInlineReviewIds.length > 0) {
+    const remainingInlineReviewIds = [];
     try {
-      // Dismiss previous inline review if one exists
-      if (previousState?.lastInlineReviewId) {
-        await dismissInlineReview({
+      for (const reviewId of activeInlineReviewIds) {
+        const dismissed = await dismissInlineReview({
           github,
           owner,
           repo,
           prNumber,
-          reviewId: previousState.lastInlineReviewId,
-          message: `Superseded by Review #${reviewNumber}`,
+          reviewId,
+          message: `Superseded by ${formatReviewLabel(reviewNumber)}`,
         });
-        log(`Dismissed previous inline review ${previousState.lastInlineReviewId}`);
-      }
 
-      const result = await postInlineReview({
-        github,
-        owner,
-        repo,
-        prNumber,
-        headSha,
-        body: `See Review #${reviewNumber} above for the full summary.`,
-        comments: inlineComments,
-      });
-
-      if (result) {
-        // Store the inline review ID in state for future dismissal
-        if (reviewState) {
-          reviewState._lastInlineReviewId = result.reviewId;
+        if (dismissed) {
+          log(`Dismissed previous inline review ${reviewId}`);
+        } else {
+          remainingInlineReviewIds.push(reviewId);
+          log(`Could not dismiss previous inline review ${reviewId}; keeping it active`);
         }
-        log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
       }
     } catch (e) {
-      log(`Inline review failed (non-fatal): ${e.message}`);
+      log(`Inline review dismissal failed (non-fatal): ${e.message}`);
+    }
+    activeInlineReviewIds = remainingInlineReviewIds;
+  }
+
+  if (inlineComments.length > 0) {
+    if (!headSha) {
+      log('Skipping inline review post: missing head SHA');
+    } else {
+      try {
+        const issueSeverityById = buildIssueSeverityMap(reviewState);
+        const result = await postInlineReview({
+          github,
+          owner,
+          repo,
+          prNumber,
+          headSha,
+          body: `See ${formatReviewLabel(reviewNumber)} above for the full summary.`,
+          comments: inlineComments,
+          issueSeverityById,
+        });
+
+        if (result) {
+          activeInlineReviewIds = [...activeInlineReviewIds, result.reviewId];
+          log(`Posted ${inlineComments.length} inline comment(s) (review ${result.reviewId})`);
+        }
+      } catch (e) {
+        log(`Inline review failed (non-fatal): ${e.message}`);
+      }
     }
   }
 
   // Step 3: Persist state (important for continuity)
   if (reviewState) {
     reviewState.review_count = reviewNumber;
-    // Carry over inline review ID for dismissal on next review
-    const lastInlineReviewId = reviewState._lastInlineReviewId;
-    delete reviewState._lastInlineReviewId;
 
     try {
       await persistState({
@@ -515,7 +607,10 @@ async function postResults({
         owner,
         repo,
         prNumber,
-        state: { ...reviewState, lastInlineReviewId: lastInlineReviewId || null },
+        state: {
+          ...reviewState,
+          ...buildInlineReviewTrackingState(activeInlineReviewIds),
+        },
         stateCommentId: previousState?.stateCommentId,
       });
       log('State persisted');
@@ -549,7 +644,7 @@ async function postResults({
         repo,
         checkId,
         conclusion: verdict === 'BLOCK' ? 'failure' : 'success',
-        title: `Review #${reviewNumber}: ${verdict}`,
+        title: `${formatReviewLabel(reviewNumber)}: ${verdict}`,
         summary: `Verdict: **${verdict}**`,
       });
       log(`Check updated: ${verdict}`);
@@ -573,5 +668,12 @@ module.exports = {
   extractVerdict,
   parseCommand,
   postResults,
+  summarizePreviousState,
+  normalizeActiveInlineReviewIds,
+  buildInlineReviewTrackingState,
+  formatReviewLabel,
+  formatSeverityBadge,
+  formatInlineBody,
+  buildIssueSeverityMap,
   MARKERS,
 };

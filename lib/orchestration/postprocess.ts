@@ -308,7 +308,16 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const {
     extractInlineAnchors,
     buildReviewComments,
+    buildIssueSeverityMap,
   } = await import("@/lib/reviews/inline-comments");
+  const {
+    normalizeActiveInlineReviewIds,
+    buildInlineReviewTrackingState,
+  } = await import("@/lib/reviews/inline-review-state");
+  const {
+    formatReviewHeading,
+    formatReviewLabel,
+  } = await import("@/lib/reviews/formatting");
 
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
@@ -327,6 +336,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const reviewScope = (payload.reviewScope as string) ?? "full";
   const lastCommentId = payload.lastCommentId as string | undefined;
   const orgId = job.organizationId;
+  let activeInlineReviewIds: number[] = [];
 
   // Read persisted output from the result.
   // Prefer allOutput (full concatenated output) over lastMessage (only final
@@ -359,27 +369,53 @@ async function postprocessReview(job: JobRow): Promise<void> {
     }
 
     // 2b. Dismiss previous inline review (best-effort)
+    //
+    // Load activeInlineReviewIds BEFORE the dismissal try/catch so that
+    // even if dismissal fails, step 3 has the correct pre-existing IDs
+    // and won't overwrite them with []. If the session load itself fails,
+    // it propagates to the outer catch — step 3 can't persist either.
     if (automationSessionId && !sideEffects.inline_review_dismissed) {
+      const { getAutomationSession: getSessionForDismiss } = await import(
+        "@/lib/automations/actions"
+      );
+      const sessionForDismiss = await getSessionForDismiss(automationSessionId);
+      activeInlineReviewIds = normalizeActiveInlineReviewIds(
+        sessionForDismiss?.metadata ?? {},
+      );
+
       try {
-        const { getAutomationSession: getSessionForDismiss } = await import(
-          "@/lib/automations/actions"
-        );
-        const sessionForDismiss = await getSessionForDismiss(automationSessionId);
-        const prevReviewId = sessionForDismiss?.metadata?.lastInlineReviewId;
-        if (prevReviewId) {
-          await dismissReview({
+        const remainingInlineReviewIds: number[] = [];
+
+        for (const reviewId of activeInlineReviewIds) {
+          const dismissed = await dismissReview({
             installationId,
             owner,
             repo,
             prNumber,
-            reviewId: prevReviewId,
-            message: `Superseded by Review #${reviewSequence}`,
+            reviewId,
+            message: `Superseded by ${formatReviewLabel(reviewSequence)}`,
           });
+
+          if (!dismissed) {
+            remainingInlineReviewIds.push(reviewId);
+          }
         }
+
+        activeInlineReviewIds = remainingInlineReviewIds;
+        await markSideEffect(job.id, "inline_review_dismissed");
       } catch {
-        // Best-effort — COMMENT reviews may not be dismissible
+        // Best-effort — COMMENT reviews may not be dismissible.
+        // activeInlineReviewIds retains the pre-dismissal list so step 3
+        // preserves existing tracked IDs instead of wiping them.
       }
-      await markSideEffect(job.id, "inline_review_dismissed");
+    } else if (automationSessionId) {
+      const { getAutomationSession: getSessionForInlineState } = await import(
+        "@/lib/automations/actions"
+      );
+      const sessionForInlineState = await getSessionForInlineState(automationSessionId);
+      activeInlineReviewIds = normalizeActiveInlineReviewIds(
+        sessionForInlineState?.metadata ?? {},
+      );
     }
 
     // 3. Update session metadata (survives comment post failure)
@@ -396,6 +432,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
           headSha: toSha,
           reviewCount: reviewSequence,
           lastCompletedRunId: automationRunId ?? null,
+          ...buildInlineReviewTrackingState(activeInlineReviewIds),
           ...(parsed
             ? {
                 lastReviewedSha: toSha,
@@ -438,7 +475,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
             owner,
             repo,
             prNumber,
-            body: `## Polaris Review #${reviewSequence}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>Warning: Could not parse review metadata. Raw review shown above.</sub>`,
+            body: `${formatReviewHeading(reviewSequence, "ATTENTION")}\n\n${agentOutput.slice(0, 60000) || "(No output captured)"}\n\n<sub>Warning: Could not parse review metadata. Raw review shown above.</sub>`,
           });
           commentId = commentResult.commentId;
         }
@@ -468,7 +505,10 @@ async function postprocessReview(job: JobRow): Promise<void> {
       try {
         const anchors = extractInlineAnchors(parsed.metadata);
         if (anchors.length > 0) {
-          const comments = buildReviewComments(anchors);
+          const issueSeverityById = buildIssueSeverityMap(
+            parsed.metadata.reviewState.openIssues,
+          );
+          const comments = buildReviewComments(anchors, issueSeverityById);
           if (comments.length > 0) {
             const inlineResult = await postInlineReview({
               installationId,
@@ -476,17 +516,24 @@ async function postprocessReview(job: JobRow): Promise<void> {
               repo,
               prNumber,
               headSha: toSha,
-              body: `See Review #${reviewSequence} above for the full summary.`,
+              body: `See ${formatReviewLabel(reviewSequence)} above for the full summary.`,
               comments,
             });
             if (inlineResult && automationSessionId) {
+              activeInlineReviewIds = [
+                ...activeInlineReviewIds,
+                inlineResult.reviewId,
+              ];
               const { getAutomationSession: getSessionForInline } = await import(
                 "@/lib/automations/actions"
               );
               const sessionForInline = await getSessionForInline(automationSessionId);
               if (sessionForInline?.metadata) {
                 await updateAutomationSession(automationSessionId, {
-                  metadata: { ...sessionForInline.metadata, lastInlineReviewId: inlineResult.reviewId },
+                  metadata: {
+                    ...sessionForInline.metadata,
+                    ...buildInlineReviewTrackingState(activeInlineReviewIds),
+                  },
                 });
               }
             }

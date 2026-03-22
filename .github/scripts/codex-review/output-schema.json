@@ -14,11 +14,11 @@
           "issue_id": { "type": "string", "description": "Must match an id in state.open_issues" },
           "file": { "type": "string", "description": "Exact file path as it appears in the diff" },
           "line": { "type": "integer", "description": "End line number in the new file version" },
-          "start_line": { "type": ["integer", "null"], "description": "Start line for multi-line range (must be < line), or null for single-line" },
+          "start_line": { "type": ["integer", "null"], "description": "Required key. Start line for a multi-line range (must be < line), or null for single-line comments." },
           "title": { "type": "string" },
           "body": { "type": "string", "description": "Detailed explanation for the inline comment" },
           "category": { "type": "string" },
-          "suggestion": { "type": ["string", "null"], "description": "Replacement code for GitHub suggestion block, or null if no suggestion" }
+          "suggestion": { "type": ["string", "null"], "description": "Required key. Replacement code for a GitHub suggestion block, or null when no suggestion is available." }
         },
         "required": ["issue_id", "file", "line", "start_line", "title", "body", "category", "suggestion"],
         "additionalProperties": false

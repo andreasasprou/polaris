@@ -6,7 +6,7 @@
 #   - Stale comment management (collapses previous reviews)
 #   - State continuity across reviews (tracks open/resolved issues)
 #   - /codex-review command (full, reset, --since <sha>)
-#   - Review sequence numbers (Review #1, #2, ...)
+#   - Review passes (`Codex Review Pass 1`, `Pass 2`, ...)
 #   - Repo guidelines support (AGENTS.md, REVIEW_GUIDELINES.md)
 #
 # Setup:
@@ -243,7 +243,10 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const fs = require('fs');
-            const { loadPreviousState } = require('/tmp/codex-review-scripts/index.cjs');
+            const {
+              loadPreviousState,
+              summarizePreviousState,
+            } = require('/tmp/codex-review-scripts/index.cjs');
 
             // Create .codex-ci/ directory for review artifacts
             fs.mkdirSync('.codex-ci', { recursive: true });
@@ -270,12 +273,7 @@ jobs:
             // Write previous state summary for the post-processing step
             fs.writeFileSync(
               '/tmp/previous-state.json',
-              JSON.stringify({
-                stateCommentId: prev.stateCommentId,
-                reviewCommentId: prev.reviewCommentId,
-                lastReviewedSha: prev.lastReviewedSha,
-                reviewCount: prev.reviewCount,
-              })
+              JSON.stringify(summarizePreviousState(prev))
             );
 
             core.setOutput('last_reviewed_sha', prev.lastReviewedSha || '');
@@ -484,7 +482,7 @@ jobs:
               fs.writeFileSync('.codex-ci/output-schema.json', JSON.stringify(schema, null, 2));
             }
 
-            console.log(`Prompt built (${prompt.length} chars, review #${reviewNumber})`);
+            console.log(`Prompt built (${prompt.length} chars, pass ${reviewNumber})`);
 
       - name: Run Codex
         id: codex

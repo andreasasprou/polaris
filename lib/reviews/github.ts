@@ -1,5 +1,6 @@
 import { getInstallationOctokitById } from "@/lib/integrations/github";
 import type { ReviewVerdict } from "./types";
+import { formatReviewLabel } from "./formatting";
 
 /**
  * Create a pending GitHub check run.
@@ -136,7 +137,7 @@ export async function markCommentStale(input: {
   }
 
   const staleBody =
-    `> **Superseded** — See Review #${input.supersededBySequence} for the latest review.\n\n` +
+    `> **Superseded** — See ${formatReviewLabel(input.supersededBySequence)} for the latest review.\n\n` +
     (previousBody
       ? `<details><summary>Previous review (collapsed)</summary>\n\n${previousBody}\n\n</details>`
       : "");
@@ -252,7 +253,7 @@ export async function dismissReview(input: {
   prNumber: number;
   reviewId: number;
   message: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const octokit = await getInstallationOctokitById(input.installationId);
   try {
     await octokit.rest.pulls.dismissReview({
@@ -262,8 +263,10 @@ export async function dismissReview(input: {
       review_id: input.reviewId,
       message: input.message,
     });
+    return true;
   } catch {
     // Best-effort — COMMENT reviews may not be dismissible
+    return false;
   }
 }
 

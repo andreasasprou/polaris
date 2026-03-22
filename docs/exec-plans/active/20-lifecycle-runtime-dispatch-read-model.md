@@ -11,7 +11,9 @@ domains: [sessions, jobs, orchestration, sandbox-proxy, automations, ui, archite
 
 ## Problem
 ### What
-The architecture documents describe a clean split between session state, job coordination, sandbox runtime state, proxy transport, and UI presentation. The current implementation still re-implements those boundaries ad hoc:
+The architecture documents describe a clean split between session state, job coordination, sandbox runtime state, proxy transport, and UI presentation. `docs/architecture/00-what-is-polaris.md` further clarifies that Polaris should evolve toward a **task-centric** cloud agent platform where the current `interactive_session` becomes a **continuation primitive**, not the top-level product noun.
+
+The current implementation still re-implements those boundaries ad hoc:
 
 - session/job/attempt transitions are open-coded in routes and orchestrators
 - runtime identity is split between `interactive_sessions` and `interactive_session_runtimes`
@@ -22,6 +24,8 @@ The architecture documents describe a clean split between session state, job coo
 
 ### Why
 This is the main reason the codebase feels home-made: the primitives exist, but they are not the only allowed path. The result is drift, repeated edge-case fixes, brittle state transitions, and presentation code that compensates for backend seams. It also makes future agent-assisted changes riskier because the intended flow is not enforced structurally.
+
+This refactor is therefore not just cleanup. It is the control-plane hardening step required before Polaris can safely add a first-class `Task` layer, richer `Environment` modeling, and task/run/artifact-oriented product surfaces.
 
 ## Key Decisions
 
@@ -36,6 +40,25 @@ This is the main reason the codebase feels home-made: the primitives exist, but 
 | 2026-03-21 | Replace job-type branching with a registry of typed job specs | Retry, postprocess, and failure cleanup are job semantics and need one extension point |
 | 2026-03-21 | Move transcript projection and session capability derivation to server-side read models | UI should render projected state, not reconstruct orchestration facts from raw events |
 | 2026-03-21 | Do not add TanStack Query in this program | The missing abstraction is the app-specific read model/polling layer, not a generic cache library |
+| 2026-03-21 | Treat this program as control-plane hardening, not the introduction of a new top-level `Task` aggregate | The current repo already has strong session/runtime/job/attempt primitives; this wave sequence makes them disciplined enough to support the later task-centric product model |
+| 2026-03-21 | Interpret `interactive_session` as a future continuation/session primitive when making new abstractions | New APIs and read models should avoid deepening the mistake that a session is the top-level product noun |
+
+## North-Star Alignment
+
+This plan should be read together with `docs/architecture/00-what-is-polaris.md`.
+
+The relationship is:
+
+- the north-star doc defines **what Polaris is becoming**
+- this exec plan defines **which control-plane refactors are required to get there safely**
+
+In north-star terms:
+
+- current `jobs` / `job_attempts` are the closest existing primitives to future **runs** / **attempts**
+- current `interactive_session_runtimes` are the beginning of future **environment** modeling
+- current `interactive_sessions` should be treated as future **continuation sessions**
+
+This program deliberately does **not** introduce a first-class `Task` aggregate yet. That is a follow-on program after these control-plane seams are hardened.
 
 ## Target State
 
@@ -47,6 +70,7 @@ This is the main reason the codebase feels home-made: the primitives exist, but 
 - No UI component consolidates raw sandbox-agent events directly.
 - All prompt-like execution paths (`prompt`, `review`, sweeper retry) use the same executor and the same typed proxy envelope.
 - All job-specific behavior is owned by a `JobSpec` implementation, not by `switch (job.type)` branches.
+- Any new code added during this program treats `interactive_session` as a continuation/session boundary, not as the permanent top-level product noun.
 
 ### Program Shape
 
@@ -79,7 +103,7 @@ Review rule: do not mix two rows from this table into one PR unless a dependency
 
 ### Wave 1 — Lifecycle Services and Current Runtime Authority
 
-**Goal:** make lifecycle transitions and runtime ownership explicit, centralized, and reusable.
+**Goal:** make continuation-session lifecycle transitions and runtime ownership explicit, centralized, and reusable.
 
 Treat this wave as two sub-phases/PRs:
 
@@ -104,6 +128,8 @@ Treat this wave as two sub-phases/PRs:
 These files remain thin table/query helpers. They may still expose `cas*Status`, but those functions are no longer imported by routes or orchestration entrypoints once this wave is complete.
 
 **Session lifecycle service responsibilities**
+
+For the purpose of this wave, “session lifecycle” means the lifecycle of the current **continuation-session** primitive, not the final top-level task model.
 
 - `reconcileForRead(sessionId, source)` — replaces ad-hoc “active but no live job” healing in API GET handlers and dispatch entrypoints
 - `beginDispatch(sessionId, allowedFromStatuses)` — the only supported session activation path
@@ -172,7 +198,7 @@ Each of these should call lifecycle services/current-runtime helpers instead of 
 
 ### Wave 2 — Shared Prompt Executor and Typed Proxy Contract
 
-**Goal:** make prompt dispatch one reusable pipeline with one shared transport contract.
+**Goal:** make prompt dispatch one reusable run-execution pipeline with one shared transport contract.
 
 **Create**
 
@@ -230,6 +256,8 @@ The only module allowed to resolve semantic agent intent remains `lib/sandbox-ag
 - POST the typed prompt envelope through `proxy-client.ts`
 - normalize outcomes into `accepted`, `failed`, and `dispatch_unknown`
 - invoke lifecycle services for rollback and timeout ownership
+
+This executor is the main bridge from the current codebase into the future **run** abstraction described in `docs/architecture/00-what-is-polaris.md`.
 
 **Executor outcome contract**
 
@@ -297,7 +325,7 @@ The executor must support both:
 
 ### Wave 3 — Typed Job Spec Registry
 
-**Goal:** move all job-type semantics behind one registry instead of branching across postprocess and sweeper.
+**Goal:** move all current run-type semantics behind one registry instead of branching across postprocess and sweeper.
 
 **Create**
 
@@ -353,7 +381,9 @@ type JobSpec<TPayload, TResult> = {
 
 ### Wave 4 — Session Read Model, Transcript Projector, and Session UI Migration
 
-**Goal:** make the session UI consume projected state from the server rather than reconstructing orchestration state on the client.
+**Goal:** make the current continuation-session UI consume projected state from the server rather than reconstructing orchestration state on the client.
+
+This wave is intentionally **not** the final task/run information architecture. It is a server-side read-model cleanup that stops the current session-first UI from deriving domain state client-side and positions the UI for a later task-centric layer.
 
 **Create**
 
@@ -366,8 +396,11 @@ type JobSpec<TPayload, TResult> = {
 
 **Refactor**
 
+- `app/api/interactive-sessions/route.ts`
 - `app/api/interactive-sessions/[sessionId]/route.ts`
+- `app/(dashboard)/sessions/page.tsx`
 - `app/(dashboard)/sessions/[sessionId]/page.tsx`
+- `app/(dashboard)/runs/[runId]/page.tsx`
 - `components/sessions/session-chat.tsx`
 - `components/status-badge.tsx`
 - `components/sessions/session-status.tsx`
@@ -380,9 +413,12 @@ type JobSpec<TPayload, TResult> = {
 `buildSessionDetailView(sessionId, organizationId)` returns one server-side view model with:
 
 - canonical session row
+- derived continuation role (`user_interactive`, `review_continuation`, `automation_continuation`)
 - current runtime pointers
 - latest active/recent job summary
-- derived session capabilities (`canSend`, `canStop`, `isTerminal`)
+- derived session capabilities (`canSend`, `canStop`, `isTerminal`, `showInPrimarySessionsList`)
+- derived interaction policy (`readOnly` vs `interactive`)
+- transcript presentation mode (`full` vs `preview`)
 - `pollIntervalMs`
 - derived timeline state
 - any banner/error state the page needs
@@ -394,6 +430,15 @@ type JobSpec<TPayload, TResult> = {
 - latest usage/cost summary
 - pending permission/question state
 - `nextPollIntervalMs`
+- supports a preview/snippet mode for embedding session context into run/task pages without dumping the full history inline
+
+`buildSessionListView(organizationId, options?)` returns:
+
+- primary continuation sessions for the Sessions UI
+- excludes non-user continuations by default or marks them explicitly as system/read-only when an include-system mode is requested
+- enough summary metadata for the list to explain why a session is or is not directly interactive
+
+These are still session-oriented read models because they are replacing existing session pages. They should be written in a way that can later compose into task/run/environment read models rather than hard-coding “session is the top-level object” assumptions.
 
 **Transcript projector responsibilities**
 
@@ -434,28 +479,37 @@ This is the only new client-side data primitive introduced in the program. Do no
 
 **API changes**
 
+- `GET /api/interactive-sessions` returns a role-aware session list view; by default it only includes primary user-interactive sessions and supports an explicit include-system/debug mode if needed
 - `GET /api/interactive-sessions/[id]` returns `SessionDetailView`, not a near-raw `session`
 - add `GET /api/interactive-sessions/[id]/transcript`
+- the transcript endpoint supports preview/snippet parameters for embedding in run/task pages
 - keep `/api/sessions/[sdkSessionId]/events` as an internal/debug endpoint; the session detail page should stop using it directly
 
 **UI migration**
 
+- `app/(dashboard)/sessions/page.tsx` should render only primary user-interactive sessions by default; review/automation continuations should be hidden or clearly marked behind an explicit system/debug affordance
 - `app/(dashboard)/sessions/[sessionId]/page.tsx` should load `SessionDetailView` and `SessionTranscriptView` via the new hooks
 - the page should not compute poll interval or capabilities from `getStatusConfig`
 - the chat rendering layer should only render projected `TranscriptItem[]`
+- the session detail page should suppress the prompt input and render a read-only transcript when `SessionDetailView` marks the continuation as non-interactive
+- `app/(dashboard)/runs/[runId]/page.tsx` should consume transcript preview/snippet data instead of rendering the entire continuation transcript inline; it should link out to the full continuation page when the user needs complete history
 
 **Tests**
 
 - unit tests for transcript projection edge cases (resume replay, duplicate prompt cycles, interrupted tools, pending HITL at terminal state)
 - regression fixtures ported from current `consolidateEvents()` behavior before swapping the UI to the projector
 - route tests for the new detail/transcript view endpoints
+- route tests for primary session list filtering / system-session inclusion
 - browser verification of active, completed, failed/stopped, hibernated/resumed, and HITL states using the new view models
+- browser verification that review/automation continuations are read-only and do not show a prompt box
+- browser verification that run detail pages render only transcript previews with a link to the full continuation
 
 **PR exit criteria**
 
 - the session detail page consumes only `SessionDetailView` and `SessionTranscriptView`
 - the old direct event-fetching path is no longer used by the session detail page
 - transcript projection rules live server-side, not in client hooks
+- non-user continuation sessions are modeled explicitly in the session read model and do not present as user-chat sessions by default
 
 ### Wave 5 — Cleanup, Legacy Removal, and Enforcement
 
@@ -506,8 +560,18 @@ The column-drop PR must not merge until this script returns zero rows in product
 **Docs**
 
 - update `ARCHITECTURE.md` module map and request lifecycle traces
+- keep `docs/architecture/00-what-is-polaris.md` aligned with any terminology changes introduced during implementation
 - update `docs/architecture/v2-protocol-contract.md`
 - update `docs/exec-plans/known-hotspots.md` to remove resolved hotspots and add any intentionally deferred follow-ups
+
+**Follow-on explicitly out of scope for this plan**
+
+- introducing a new top-level `Task` aggregate/table
+- redesigning the product IA around task/run/environment/artifact pages
+- introducing first-class artifact persistence beyond what current jobs/postprocess already produce
+- adding Slack or other new product surfaces
+
+Those changes should be planned separately once this program lands and the control plane is disciplined enough to support them.
 
 **Tests**
 
@@ -530,6 +594,7 @@ The column-drop PR must not merge until this script returns zero rows in product
 - [ ] Wave 4: ship session read models, transcript projection, and session UI migration
 - [ ] Wave 5: remove legacy runtime columns/fallbacks and tighten architecture enforcement
 - [ ] Update architecture/protocol docs to match the final implementation
+- [ ] Keep terminology aligned with `docs/architecture/00-what-is-polaris.md` throughout implementation
 
 ## Done When
 
@@ -541,6 +606,7 @@ The column-drop PR must not merge until this script returns zero rows in product
 - [ ] `reconcileForRead()` healing is observable in evlog and no longer happens silently
 - [ ] Legacy session runtime columns are removed after additive migration/backfill
 - [ ] The pre-drop runtime migration gate script returns zero violating rows
+- [ ] The shipped implementation leaves Polaris better positioned for a later task/run/environment layer rather than deepening session-first assumptions
 - [ ] `ARCHITECTURE.md` and `docs/architecture/v2-protocol-contract.md` match the shipped design
 - [ ] `pnpm lint` passes
 - [ ] `pnpm check:deps` passes

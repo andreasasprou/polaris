@@ -55,8 +55,8 @@ export async function reconcileProvider(): Promise<JanitorResult> {
 
   if (allRunning.length === 0) return result;
 
-  // 2. Get all known sandbox IDs from our DB (any status — a recently-stopped
-  // runtime's sandbox might still show as "running" in Vercel briefly)
+  // 2. Get all known sandbox IDs from our DB (only live statuses — failed/stopped
+  // runtimes don't protect their sandbox from cleanup)
   const knownIds = await getKnownSandboxIds();
 
   // 3. Reconcile
@@ -131,10 +131,14 @@ async function fetchAllRunningSandboxes(creds: {
 }
 
 async function getKnownSandboxIds(): Promise<Set<string>> {
+  // Only consider live runtimes as "known". Failed/stopped runtimes should
+  // not protect their sandbox from cleanup — they may be stale leftovers
+  // from a resume cycle where the sandbox was never destroyed.
   const rows = await db.execute(sql`
     SELECT DISTINCT sandbox_id
     FROM interactive_session_runtimes
     WHERE sandbox_id IS NOT NULL
+    AND status IN ('creating', 'running', 'idle')
   `);
   return new Set(
     (rows.rows as Array<{ sandbox_id: string }>).map((r) => r.sandbox_id),

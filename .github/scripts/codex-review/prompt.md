@@ -6,7 +6,7 @@ You are a staff-level engineer performing a PR code review. The PR is checked ou
 - **Description**:
 ${PR_BODY}
 
-## Review Scope (Review #${REVIEW_NUMBER})
+## Review Scope (Review Pass ${REVIEW_NUMBER})
 - **Mode**: ${REVIEW_MODE} — ${REVIEW_SCOPE_REASON}
 - **Commits**: ${COMMIT_RANGE} (${COMMIT_COUNT} commits)
 - **Diff base**: ${DIFF_BASE_SHA}
@@ -80,7 +80,7 @@ Your response is structured via `--output-schema`. Fill in the three fields:
 Use this exact markdown structure:
 
 ```
-## Codex Review #${REVIEW_NUMBER} — Verdict: [BLOCK | ATTENTION | OK]
+## Codex Review Pass ${REVIEW_NUMBER} — Verdict: [BLOCK | ATTENTION | OK]
 
 ### Scope
 - [1 bullet: what commits/area you reviewed]
@@ -126,11 +126,11 @@ Each inline comment needs:
 - `issue_id`: must match an `id` in `state.open_issues`
 - `file`: exact file path as it appears in the diff
 - `line`: the ending line number in the NEW file version (right side of diff)
-- `start_line`: optional start line for multi-line ranges (must be < `line`)
+- `start_line`: required key — use `null` for single-line comments, otherwise the start line for a multi-line range (must be < `line`)
 - `title`: short finding title
 - `body`: detailed explanation
 - `category`: finding category
-- `suggestion`: optional replacement code (renders as a GitHub suggestion block)
+- `suggestion`: required key — use `null` when there is no replacement code to suggest
 
 **Rules:**
 - Do NOT invent line numbers. Only provide anchors for lines you can see in the diff.
