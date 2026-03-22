@@ -98,6 +98,10 @@ export async function dispatchPromptToSession(input: {
     // Resolve credentials
     const creds = await timer.time("resolveCredentials", () => resolveSessionCredentials(session));
 
+    // Resolve MCP servers for this org
+    const { getResolvedMcpServers } = await import("@/lib/mcp-servers/queries");
+    const mcpServers = await getResolvedMcpServers(session.organizationId);
+
     // Determine if sandbox is alive (Tier 1) or needs provisioning (Tier 2)
     let sandboxBaseUrl = session.sandboxBaseUrl;
     let epoch = session.epoch;
@@ -201,6 +205,7 @@ export async function dispatchPromptToSession(input: {
           sdkSessionId: session.sdkSessionId ?? undefined,
           nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
           nextEventIndex: nextEventIndex ?? undefined,
+          mcpServers,
         },
         ...(attachments?.length ? { attachments } : {}),
       }),

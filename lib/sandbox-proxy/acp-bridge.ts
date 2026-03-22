@@ -24,6 +24,28 @@ import { proxyLog } from "./logger";
 const AGENT_SERVER_URL = "http://localhost:2468";
 const HEALTH_TIMEOUT_MS = 30_000;
 
+/**
+ * Convert our simplified MCP server format into the ACP SDK format.
+ * Our format: { url, transport?, headers?: Record<string, string> }
+ * SDK format: { name, url, type: "http"|"sse", headers: [{ name, value }] }
+ */
+function toSdkMcpServers(
+  servers?: PromptConfig["mcpServers"],
+) {
+  if (!servers || servers.length === 0) return [];
+  return servers.map((s, i) => {
+    const type = s.transport === "sse" ? ("sse" as const) : ("http" as const);
+    return {
+      name: new URL(s.url).hostname || `mcp-server-${i}`,
+      url: s.url,
+      type,
+      headers: s.headers
+        ? Object.entries(s.headers).map(([name, value]) => ({ name, value }))
+        : [],
+    };
+  });
+}
+
 type PromptResult = {
   success: boolean;
   sdkSessionId?: string;
@@ -155,6 +177,7 @@ export class AcpBridge {
       model: config.model,
       mode: config.mode,
       cwd,
+      mcpServers: config.mcpServers,
     };
 
     // 1. Try native resume
@@ -164,6 +187,7 @@ export class AcpBridge {
         config.agent,
         cwd,
         config.sdkSessionId,
+        config.mcpServers,
       );
       if (nativeSession) {
         this.lastResumeType = "native";
@@ -203,7 +227,7 @@ export class AcpBridge {
    * falls back to bare session + manual session/set_mode RPC.
    */
   private async createSessionWithFallback(
-    config: { agent: AgentType; model?: string; mode?: string; cwd: string },
+    config: { agent: AgentType; model?: string; mode?: string; cwd: string; mcpServers?: PromptConfig["mcpServers"] },
     resumeSdkSessionId?: string,
   ): Promise<AgentSession> {
     if (!this.sdk) throw new Error("Not connected");
@@ -212,7 +236,7 @@ export class AcpBridge {
       agent: config.agent,
       model: config.model,
       mode: config.mode,
-      sessionInit: { cwd: config.cwd, mcpServers: [] },
+      sessionInit: { cwd: config.cwd, mcpServers: toSdkMcpServers(config.mcpServers) },
     };
 
     try {
@@ -235,7 +259,7 @@ export class AcpBridge {
 
       const bareOpts = {
         agent: config.agent,
-        sessionInit: { cwd: config.cwd, mcpServers: [] },
+        sessionInit: { cwd: config.cwd, mcpServers: toSdkMcpServers(config.mcpServers) },
       };
 
       const session = resumeSdkSessionId
@@ -272,6 +296,7 @@ export class AcpBridge {
     agent: AgentType,
     cwd: string,
     originalSdkSessionId?: string,
+    mcpServers?: PromptConfig["mcpServers"],
   ): Promise<NativeResumedSession | null> {
     try {
       const serverId = `native-${agent}-${Date.now()}`;
@@ -304,7 +329,7 @@ export class AcpBridge {
       await acp.unstableResumeSession({
         sessionId: nativeSessionId,
         cwd,
-        mcpServers: [],
+        mcpServers: toSdkMcpServers(mcpServers),
       });
 
       return new NativeResumedSession(nativeSessionId, acp, eventListeners, originalSdkSessionId);

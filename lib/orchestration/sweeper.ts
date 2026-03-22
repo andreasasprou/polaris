@@ -444,6 +444,10 @@ async function retryReviewDispatch(
     const session = await getInteractiveSession(job.sessionId!);
     if (!session) throw new Error("Session not found");
 
+    // Resolve MCP servers for this org
+    const { getResolvedMcpServers } = await import("@/lib/mcp-servers/queries");
+    const mcpServers = await getResolvedMcpServers(session.organizationId);
+
     const { probeSandboxHealth, buildCallbackUrl, resolveSessionCredentials } =
       await import("./prompt-dispatch");
     const { ensureSandboxReady } = await import("./sandbox-lifecycle");
@@ -529,6 +533,7 @@ async function retryReviewDispatch(
           sdkSessionId: session.sdkSessionId ?? undefined,
           nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
           nextEventIndex: nextEventIndex ?? undefined,
+          mcpServers,
         },
       }),
       signal: AbortSignal.timeout(30_000),

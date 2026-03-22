@@ -94,6 +94,10 @@ export async function dispatchCodingTask(
     log.set({ codingTask: { branchName } });
     const baseSha = await git.resolveRef(`origin/${ctx.baseBranch}`);
 
+    // Resolve MCP servers for this org
+    const { getResolvedMcpServers } = await import("@/lib/mcp-servers/queries");
+    const mcpServers = await getResolvedMcpServers(payload.orgId);
+
     // Create job with session link
     const hmacKey = generateJobHmacKey();
     const prompt = buildAutomationPrompt({
@@ -166,6 +170,7 @@ export async function dispatchCodingTask(
           mode: ctx.agentMode ?? undefined,
           model: ctx.model ?? undefined,
           cwd: SandboxManager.PROJECT_DIR,
+          mcpServers,
         },
       }),
       signal: AbortSignal.timeout(30_000),

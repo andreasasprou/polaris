@@ -32,6 +32,16 @@ export default function SettingsPage() {
             </CardHeader>
           </Card>
         </Link>
+        <Link href="/settings/mcp" className="block transition-colors hover:opacity-80">
+          <Card>
+            <CardHeader>
+              <CardTitle>MCP Servers</CardTitle>
+              <CardDescription>
+                Connect external tools to agent sessions.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </Link>
       </div>
     </div>
   );
