@@ -4,7 +4,7 @@
  */
 
 export function divideNumbers(a: number, b: number): number {
-  // Bug: no division by zero check
+  if (b === 0) throw new Error("Division by zero");
   return a / b;
 }
 
@@ -20,6 +20,11 @@ export function formatCurrency(amount: number): string {
   // Bug: floating point arithmetic without rounding
   const withTax = amount * 1.2;
   return `$${withTax}`;
+}
+
+export function parseConfig(raw: string): Record<string, string> {
+  // Bug: eval used to parse config — code injection risk
+  return eval(`(${raw})`);
 }
 
 // Stub for the SQL example
