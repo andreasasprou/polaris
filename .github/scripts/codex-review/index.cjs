@@ -325,15 +325,20 @@ async function fetchInlineCommentMap({
         per_page: 100,
       });
 
-    // Match review comments back to our inline comments by file+line
+    // Match review comments back to our inline comments by file+line.
+    // Use original_line (at review creation time) and coerce types.
     for (const rc of reviewComments) {
+      const rcLine = rc.original_line ?? rc.line;
       const match = inlineComments.find(
-        (ic) => ic.file === rc.path && ic.line === rc.line
+        (ic) => ic.file === rc.path && Number(ic.line) === Number(rcLine)
       );
       if (match?.issue_id) {
         commentMap[match.issue_id] = rc.id;
       }
     }
+    console.log(
+      `[codex-review] Comment map: ${JSON.stringify(commentMap)} (from ${reviewComments.length} review comments)`
+    );
   } catch (e) {
     console.log(
       `[codex-review] Failed to fetch inline comment IDs (non-fatal): ${e.message}`
