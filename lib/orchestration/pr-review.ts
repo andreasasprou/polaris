@@ -348,6 +348,10 @@ export async function dispatchPrReview(
       effortLevel: automation.modelParams?.effortLevel,
     });
 
+    // Resolve MCP servers for this org
+    const { getResolvedMcpServers } = await import("@/lib/mcp-servers/queries");
+    const mcpServers = await getResolvedMcpServers(orgId);
+
     // Shared primitives
     const { probeSandboxHealth, buildCallbackUrl } = await import("./prompt-dispatch");
     const { getNextEventIndex } = await import("@/lib/sandbox-agent/queries");
@@ -421,6 +425,7 @@ export async function dispatchPrReview(
           sdkSessionId: session.sdkSessionId ?? undefined,
           nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,
           nextEventIndex: nextEventIndex ?? undefined,
+          mcpServers,
         },
         contextFiles: [
           {

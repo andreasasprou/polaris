@@ -23,6 +23,12 @@ export type PromptConfig = {
   cwd?: string;
   env?: Record<string, string>;
   nextEventIndex?: number;
+  mcpServers?: Array<{
+    name: string;
+    url: string;
+    transport?: "streamable-http" | "sse";
+    headers?: Record<string, string>;
+  }>;
 };
 
 // ── Prompt Request (POST /prompt body) ──

@@ -57,6 +57,32 @@ export async function getSessionWithOrg() {
   return { session, orgId: activeOrgId };
 }
 
+/**
+ * Check if the current user is an owner or admin of the active org.
+ * Returns { session, orgId } on success, or null if the user lacks permission.
+ * Callers should return a 403 NextResponse when null.
+ */
+export async function getSessionWithOrgAdmin() {
+  const { session, orgId } = await getSessionWithOrg();
+
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, session.user.id),
+        eq(member.organizationId, orgId),
+      ),
+    )
+    .limit(1);
+
+  if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
+    return null;
+  }
+
+  return { session, orgId };
+}
+
 export async function hasOrganizationMembership(
   userId: string,
   organizationId: string,

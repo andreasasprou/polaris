@@ -9,3 +9,4 @@ export * from "@/lib/sandbox-env/schema";
 export * from "@/lib/jobs/schema";
 export * from "@/lib/key-pools/schema";
 export * from "@/lib/compute/schema";
+export * from "@/lib/mcp-servers/schema";
