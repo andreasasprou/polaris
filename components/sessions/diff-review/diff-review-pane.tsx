@@ -1,12 +1,16 @@
 "use client";
 
-import { useDiffReview } from "@/hooks/use-diff-review";
 import { DiffReviewHeader } from "./diff-review-header";
 import { DiffFileSection } from "./diff-file-section";
-import type { ChatItem } from "@/lib/sandbox-agent/event-types";
+import type { DiffSummary } from "@/lib/diff/types";
 
-export function DiffReviewPane({ items }: { items: ChatItem[] }) {
-  const { summary, prUrl } = useDiffReview(items);
+export function DiffReviewPane({
+  summary,
+  prUrl,
+}: {
+  summary: DiffSummary;
+  prUrl: string | null;
+}) {
 
   if (summary.totalFiles === 0) {
     return (

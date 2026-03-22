@@ -248,7 +248,7 @@ function SessionTabs({
   sessionStatus?: string | null;
   pendingPrompt: string | null;
 }) {
-  const { summary } = useDiffReview(items);
+  const { summary, prUrl } = useDiffReview(items);
 
   return (
     <Tabs defaultValue="chat" className="min-h-0 flex flex-1 flex-col">
@@ -264,7 +264,10 @@ function SessionTabs({
         </TabsTrigger>
       </TabsList>
 
-      <TabsContent value="chat" className="min-h-0 flex flex-col">
+      {/* forceMount keeps chat mounted when Review tab is active,
+          preserving scroll position and useAutoScroll state.
+          data-[state=inactive] hides it visually without unmounting. */}
+      <TabsContent value="chat" forceMount className="min-h-0 flex flex-col data-[state=inactive]:hidden">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <SessionChat
             items={items}
@@ -278,7 +281,7 @@ function SessionTabs({
       </TabsContent>
 
       <TabsContent value="review" className="min-h-0 flex flex-col">
-        <DiffReviewPane items={items} />
+        <DiffReviewPane summary={summary} prUrl={prUrl} />
       </TabsContent>
     </Tabs>
   );

@@ -13,6 +13,8 @@ import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import "@git-diff-view/react/styles/diff-view.css";
 import type { FileChange } from "@/lib/diff/types";
 
+const MAX_DISPLAY_LINES = 5000;
+
 /** Map common file extensions to highlight.js language identifiers. */
 function langFromPath(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -62,6 +64,7 @@ export function DiffFileSection({ file }: { file: FileChange }) {
   const fileName = file.path.split("/").pop() ?? file.path;
   const lang = langFromPath(file.path);
   const diffTheme = resolvedTheme === "dark" ? "dark" : "light";
+  const tooLarge = file.parsedLines.length > MAX_DISPLAY_LINES;
 
   const diffData = useMemo(
     () => ({
@@ -108,14 +111,20 @@ export function DiffFileSection({ file }: { file: FileChange }) {
 
       <CollapsibleContent>
         <div className="mt-1 overflow-hidden rounded-md border border-border">
-          <DiffView
-            data={diffData}
-            diffViewMode={DiffModeEnum.Unified}
-            diffViewTheme={diffTheme}
-            diffViewHighlight
-            diffViewWrap
-            diffViewFontSize={12}
-          />
+          {tooLarge ? (
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+              Diff too large to display ({file.parsedLines.length.toLocaleString()} lines)
+            </div>
+          ) : (
+            <DiffView
+              data={diffData}
+              diffViewMode={DiffModeEnum.Unified}
+              diffViewTheme={diffTheme}
+              diffViewHighlight
+              diffViewWrap
+              diffViewFontSize={12}
+            />
+          )}
         </div>
       </CollapsibleContent>
     </Collapsible>

@@ -1,9 +1,9 @@
 ---
 title: Diff Review Pane
-status: planned
+status: completed
 created: 2026-03-20
 owner: andreas
-related_prs: []
+related_prs: [126]
 domains: [ui, sessions, code-review]
 ---
 
