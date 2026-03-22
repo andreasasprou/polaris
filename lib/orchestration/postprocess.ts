@@ -396,10 +396,14 @@ async function postprocessReview(job: JobRow): Promise<void> {
         }
 
         activeInlineReviewIds = remainingInlineReviewIds;
+        await markSideEffect(job.id, "inline_review_dismissed");
       } catch {
-        // Best-effort — COMMENT reviews may not be dismissible
+        // Best-effort — COMMENT reviews may not be dismissible.
+        // Don't mark side effect: if loading the session failed, retrying
+        // must re-enter this block to properly load activeInlineReviewIds.
+        // Otherwise activeInlineReviewIds stays [] and step 3 wipes the
+        // tracked IDs, causing zombie reviews that can never be dismissed.
       }
-      await markSideEffect(job.id, "inline_review_dismissed");
     } else if (automationSessionId) {
       const { getAutomationSession: getSessionForInlineState } = await import(
         "@/lib/automations/actions"

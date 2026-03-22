@@ -270,6 +270,77 @@ describe("codex review script helpers", () => {
     });
   });
 
+  it("dismisses old inline review before posting replacement (happy path)", async () => {
+    const outputDir = writeReviewOutput({
+      review_markdown: "## Codex Review Pass 4 — Verdict: ATTENTION",
+      inline_comments: [
+        {
+          issue_id: "finding-1",
+          file: "lib/sessions/actions.ts",
+          line: 230,
+          start_line: null,
+          title: "Sandbox leak on resume",
+          body: "endStaleRuntimes does not destroy the Vercel sandbox.",
+          category: "Correctness",
+          suggestion: null,
+        },
+      ],
+      state: {
+        schema_version: 1,
+        last_reviewed_head_sha: "head-sha",
+        review_count: 3,
+        updated_at: "2026-03-22T12:00:00.000Z",
+        open_issues: [
+          {
+            id: "finding-1",
+            severity: "P1",
+            category: "Correctness",
+            title: "Sandbox leak on resume",
+            location: "lib/sessions/actions.ts:230",
+            status: "open",
+            first_seen_head_sha: "prev-sha",
+            last_seen_head_sha: "head-sha",
+          },
+        ],
+        recently_resolved_issues: [],
+      },
+    });
+    const { calls, github } = createGithubStub();
+
+    await postResults({
+      github,
+      owner: "polaris",
+      repo: "polaris",
+      prNumber: 108,
+      headSha: "head-sha",
+      previousState: {
+        reviewCount: 3,
+        lastInlineReviewId: 77,
+        activeInlineReviewIds: [77],
+        stateCommentId: 12,
+      },
+      outputDir,
+    });
+
+    // Dismiss must happen before the new review is posted
+    expect(calls.dismissReview).toHaveLength(1);
+    expect(calls.dismissReview[0]).toMatchObject({
+      owner: "polaris",
+      repo: "polaris",
+      pull_number: 108,
+      review_id: 77,
+    });
+
+    // New inline review should be posted
+    expect(calls.createReview).toHaveLength(1);
+
+    // Persisted state should contain only the new review ID (901), not the old one (77)
+    expect(decodePersistedState(String(calls.updateComment[0].body))).toMatchObject({
+      activeInlineReviewIds: [901],
+      lastInlineReviewId: 901,
+    });
+  });
+
   it("documents nullable inline comment fields as required keys", () => {
     const prompt = fs.readFileSync(
       path.resolve(".github/scripts/codex-review/prompt.md"),
