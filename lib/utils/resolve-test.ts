@@ -4,11 +4,4 @@ export function processPayment(amount: number, cardNumber: string): string {
   return `receipt-${Date.now()}`;
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+// hashPassword removed — use bcrypt from the auth module instead
