@@ -112,6 +112,7 @@ export interface AutomationSessionMetadata {
   reviewState: ReviewState | null;
   reviewCount: number;
   lastCommentId: string | null;
+  lastInlineReviewId?: number | null;
   lastCheckRunId: string | null;
   lastCompletedRunId: string | null;
   pendingReviewRequest: QueuedReviewRequest | null;
@@ -153,6 +154,20 @@ export interface ManualReviewCommand {
   sinceSha?: string;
 }
 
+// ── Inline review anchors (transient — used for rendering, not persisted in ReviewState) ──
+
+/** Transient inline anchor data from the model. Used once for rendering, then discarded. */
+export interface InlineAnchor {
+  issueId: string;
+  file: string;
+  line: number;
+  startLine?: number;
+  title: string;
+  body: string;
+  category?: string;
+  suggestion?: string;
+}
+
 // ── Parsed review output ──
 
 export type ReviewVerdict = "BLOCK" | "ATTENTION" | "APPROVE";
@@ -167,6 +182,18 @@ export const ReviewMetadataSchema = z.object({
     P2: z.number(),
   }),
   resolvedIssueIds: z.array(z.string()).default([]),
+  inlineAnchors: z.array(
+    z.object({
+      issueId: z.string(),
+      file: z.string(),
+      line: z.number(),
+      startLine: z.number().optional(),
+      title: z.string(),
+      body: z.string(),
+      category: z.string().optional(),
+      suggestion: z.string().optional(),
+    }),
+  ).default([]),
   reviewState: z.object({
     lastReviewedSha: z.string().nullable(),
     openIssues: z.array(

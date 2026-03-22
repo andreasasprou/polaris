@@ -152,6 +152,18 @@ After the footer, append a metadata block using this exact format:
   "summary": "1-2 sentence summary",
   "severityCounts": { "P0": 0, "P1": 0, "P2": 0 },
   "resolvedIssueIds": ["finding-id-from-previous-review"],
+  "inlineAnchors": [
+    {
+      "issueId": "finding-1",
+      "file": "path/to/file.ts",
+      "line": 42,
+      "startLine": 40,
+      "title": "Short title",
+      "body": "Detailed explanation for inline comment",
+      "category": "Correctness",
+      "suggestion": "optional replacement code"
+    }
+  ],
   "reviewState": {
     "lastReviewedSha": "<head sha>",
     "openIssues": [
@@ -171,7 +183,18 @@ After the footer, append a metadata block using this exact format:
 - The JSON must be valid and match the schema exactly.
 - Do NOT duplicate finding details in the metadata — findings only appear in the markdown body above.
 - \`openIssues\` must include all unresolved findings from this review.
-- For incremental reviews, \`resolvedIssueIds\` must list IDs of previously raised issues that are now fixed.`;
+- For incremental reviews, \`resolvedIssueIds\` must list IDs of previously raised issues that are now fixed.
+- \`inlineAnchors\` (optional): For findings you can confidently anchor to specific diff lines, provide:
+  - \`issueId\`: must match an \`id\` in \`openIssues\`
+  - \`file\`: exact file path as it appears in the diff
+  - \`line\`: the ending line number in the NEW file version (right side of diff)
+  - \`startLine\`: optional start line for multi-line ranges (must be < \`line\`, same file)
+  - \`title\`: short finding title
+  - \`body\`: detailed explanation for the inline comment
+  - \`category\`: finding category
+  - \`suggestion\`: optional replacement code (renders as a GitHub suggestion block)
+- Do NOT invent line numbers. Only provide anchors for lines you can see in the diff.
+- Omitting \`inlineAnchors\` entirely is fine — findings always appear in the summary comment.`;
 
 // ── Formatting helpers ──
 

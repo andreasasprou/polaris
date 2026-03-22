@@ -197,6 +197,77 @@ export async function isAncestor(input: {
 }
 
 /**
+ * Post an inline review with COMMENT event.
+ *
+ * Never uses REQUEST_CHANGES — the check run is the merge-blocking mechanism.
+ * This avoids stale blocking reviews in branch protection.
+ *
+ * Returns the review ID, or null if posting failed.
+ * Non-fatal — the summary comment (posted before this) is the primary artifact.
+ */
+export async function postInlineReview(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  headSha: string;
+  body: string;
+  comments: Array<{
+    path: string;
+    line: number;
+    start_line?: number;
+    start_side?: "RIGHT";
+    side: "RIGHT";
+    body: string;
+  }>;
+}): Promise<{ reviewId: number } | null> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  try {
+    const { data } = await octokit.rest.pulls.createReview({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      commit_id: input.headSha,
+      body: input.body,
+      event: "COMMENT",
+      comments: input.comments,
+    });
+    return { reviewId: data.id };
+  } catch {
+    // 422 = invalid anchors, network errors, etc.
+    // Non-fatal — summary comment is already posted
+    return null;
+  }
+}
+
+/**
+ * Dismiss a previous inline review (best-effort).
+ * Used when a new review supersedes the old one.
+ * COMMENT reviews may not be dismissible — failure is silently ignored.
+ */
+export async function dismissReview(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  reviewId: number;
+  message: string;
+}): Promise<void> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  try {
+    await octokit.rest.pulls.dismissReview({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      review_id: input.reviewId,
+      message: input.message,
+    });
+  } catch {
+    // Best-effort — COMMENT reviews may not be dismissible
+  }
+}
+
+/**
  * Get an Octokit instance for use by other review modules.
  */
 export async function getReviewOctokit(installationId: number) {

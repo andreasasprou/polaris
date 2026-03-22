@@ -302,7 +302,13 @@ async function postprocessReview(job: JobRow): Promise<void> {
     postReviewComment,
     markCommentStale,
     completeCheck,
+    postInlineReview,
+    dismissReview,
   } = await import("@/lib/reviews/github");
+  const {
+    extractInlineAnchors,
+    buildReviewComments,
+  } = await import("@/lib/reviews/inline-comments");
 
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
@@ -350,6 +356,30 @@ async function postprocessReview(job: JobRow): Promise<void> {
         const log = useLogger();
         log.set({ postprocess: { staleMarkFailed: err instanceof Error ? err.message : String(err) } });
       }
+    }
+
+    // 2b. Dismiss previous inline review (best-effort)
+    if (automationSessionId && !sideEffects.inline_review_dismissed) {
+      try {
+        const { getAutomationSession: getSessionForDismiss } = await import(
+          "@/lib/automations/actions"
+        );
+        const sessionForDismiss = await getSessionForDismiss(automationSessionId);
+        const prevReviewId = sessionForDismiss?.metadata?.lastInlineReviewId;
+        if (prevReviewId) {
+          await dismissReview({
+            installationId,
+            owner,
+            repo,
+            prNumber,
+            reviewId: prevReviewId,
+            message: `Superseded by Review #${reviewSequence}`,
+          });
+        }
+      } catch {
+        // Best-effort — COMMENT reviews may not be dismissible
+      }
+      await markSideEffect(job.id, "inline_review_dismissed");
     }
 
     // 3. Update session metadata (survives comment post failure)
@@ -433,7 +463,42 @@ async function postprocessReview(job: JobRow): Promise<void> {
       }
     }
 
-    // 5. Complete GitHub check
+    // 5. Post inline review (best-effort, after summary comment)
+    if (parsed && !sideEffects.inline_review_posted) {
+      try {
+        const anchors = extractInlineAnchors(parsed.metadata);
+        if (anchors.length > 0) {
+          const comments = buildReviewComments(anchors);
+          if (comments.length > 0) {
+            const inlineResult = await postInlineReview({
+              installationId,
+              owner,
+              repo,
+              prNumber,
+              headSha: toSha,
+              body: `See Review #${reviewSequence} above for the full summary.`,
+              comments,
+            });
+            if (inlineResult && automationSessionId) {
+              const { getAutomationSession: getSessionForInline } = await import(
+                "@/lib/automations/actions"
+              );
+              const sessionForInline = await getSessionForInline(automationSessionId);
+              if (sessionForInline?.metadata) {
+                await updateAutomationSession(automationSessionId, {
+                  metadata: { ...sessionForInline.metadata, lastInlineReviewId: inlineResult.reviewId },
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — summary comment is already posted
+      }
+      await markSideEffect(job.id, "inline_review_posted");
+    }
+
+    // 6. Complete GitHub check
     if (checkRunId && !sideEffects.check_completed) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
       const detailsUrl = automationRunId && appUrl
@@ -468,7 +533,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
       }
     }
 
-    // 6. Update automation run
+    // 7. Update automation run
     if (automationRunId && !sideEffects.run_updated) {
       await updateAutomationRun(automationRunId, {
         status: "completed",
@@ -481,7 +546,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
       await markSideEffect(job.id, "run_updated");
     }
   } finally {
-    // 7. Destroy sandbox — review postprocess doesn't need the VM
+    // 8. Destroy sandbox — review postprocess doesn't need the VM
     // (all data is already persisted platform-side via callbacks).
     if (job.sessionId && !sideEffects.sandbox_destroyed) {
       try {
@@ -493,7 +558,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
       }
     }
 
-    // 8. Release lock + dispatch queued review (always runs)
+    // 9. Release lock + dispatch queued review (always runs)
     if (automationSessionId) {
       const { finalizeReviewRun } = await import(
         "./review-lifecycle"
