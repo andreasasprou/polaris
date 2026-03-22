@@ -553,106 +553,121 @@ export default function SecretsPage() {
         </CardContent>
       </Card>
 
-      {/* Individual Keys List */}
+      {/* Individual Keys Table */}
       {secrets.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {secrets.map((secret) => (
-            <Card key={secret.id}>
-              <CardContent className="flex flex-col gap-3 py-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">
-                      {secret.provider} — {secret.label}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Added {new Date(secret.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="flex gap-1">
-                    {editingId !== secret.id && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setEditingId(secret.id);
-                          setEditValue("");
-                          setError(null);
-                        }}
-                      >
-                        Update
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleRevoke(secret.id)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                </div>
-
-                {editingId === secret.id && (
-                  <div className="flex flex-col gap-3 border-t pt-3">
-                    {secret.provider === "openai" ? (
-                      <>
-                        <Textarea
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          placeholder="Paste API key (sk-...) or base64 auth.json"
-                          className="max-h-32 font-mono text-xs"
-                          rows={3}
-                        />
-                        <CodexOAuthInstructions />
-                      </>
-                    ) : (
-                      <>
-                        <Input
-                          type="password"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          placeholder="sk-ant-..."
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Get your API key from the{" "}
-                          <a
-                            href="https://console.anthropic.com/settings/keys"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline hover:text-foreground"
+        <Card>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-muted-foreground">
+                  <th className="px-4 py-2 font-medium">Label</th>
+                  <th className="px-4 py-2 font-medium">Provider</th>
+                  <th className="px-4 py-2 font-medium">Added</th>
+                  <th className="px-4 py-2 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {secrets.map((secret) => (
+                  <>
+                    <tr key={secret.id} className="border-b last:border-0">
+                      <td className="px-4 py-2.5 font-medium">{secret.label}</td>
+                      <td className="px-4 py-2.5 capitalize text-muted-foreground">{secret.provider}</td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {new Date(secret.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <div className="flex justify-end gap-1">
+                          {editingId !== secret.id && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setEditingId(secret.id);
+                                setEditValue("");
+                                setError(null);
+                              }}
+                            >
+                              Update
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRevoke(secret.id)}
+                            className="text-destructive hover:text-destructive"
                           >
-                            Anthropic Console
-                          </a>
-                          .
-                        </p>
-                      </>
+                            Revoke
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {editingId === secret.id && (
+                      <tr key={`${secret.id}-edit`}>
+                        <td colSpan={4} className="border-b px-4 py-3">
+                          <div className="flex flex-col gap-3">
+                            {secret.provider === "openai" ? (
+                              <>
+                                <Textarea
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  placeholder="Paste API key (sk-...) or base64 auth.json"
+                                  className="max-h-32 font-mono text-xs"
+                                  rows={3}
+                                />
+                                <CodexOAuthInstructions />
+                              </>
+                            ) : (
+                              <>
+                                <Input
+                                  type="password"
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  placeholder="sk-ant-..."
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  Get your API key from the{" "}
+                                  <a
+                                    href="https://console.anthropic.com/settings/keys"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="underline hover:text-foreground"
+                                  >
+                                    Anthropic Console
+                                  </a>
+                                  .
+                                </p>
+                              </>
+                            )}
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                disabled={editLoading || !editValue}
+                                onClick={() => handleUpdate(secret.id)}
+                              >
+                                {editLoading ? "Saving..." : "Save"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setEditingId(null);
+                                  setEditValue("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        disabled={editLoading || !editValue}
-                        onClick={() => handleUpdate(secret.id)}
-                      >
-                        {editLoading ? "Saving..." : "Save"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingId(null);
-                          setEditValue("");
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
