@@ -1,4 +1,9 @@
 import { RequestError } from "@/lib/errors/request-error";
+import {
+  getCompatibleProviders,
+  type ProviderType,
+} from "@/lib/sandbox-agent/agent-profiles";
+import type { AgentType } from "@/lib/sandbox-agent/types";
 import type { CredentialRef } from "./types";
 
 /**
@@ -37,4 +42,35 @@ export async function validateCredentialRef(
       return { provider: pool.provider };
     }
   }
+}
+
+export function isProviderCompatibleWithAgent(
+  provider: string,
+  agentType: AgentType,
+): boolean {
+  return getCompatibleProviders(agentType).includes(provider as ProviderType);
+}
+
+export function assertProviderCompatibleWithAgent(
+  provider: string,
+  agentType: AgentType,
+): void {
+  if (isProviderCompatibleWithAgent(provider, agentType)) {
+    return;
+  }
+
+  throw new RequestError(
+    `Selected API key provider "${provider}" is not compatible with agent "${agentType}"`,
+    400,
+  );
+}
+
+export async function validateCredentialRefForAgent(
+  ref: CredentialRef,
+  organizationId: string,
+  agentType: AgentType,
+): Promise<{ provider: string }> {
+  const credential = await validateCredentialRef(ref, organizationId);
+  assertProviderCompatibleWithAgent(credential.provider, agentType);
+  return credential;
 }

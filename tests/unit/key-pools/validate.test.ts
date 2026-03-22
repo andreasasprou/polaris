@@ -4,18 +4,18 @@ import {
   isProviderCompatibleWithAgent,
 } from "@/lib/key-pools/validate";
 
-describe("key-pool provider compatibility", () => {
-  it("accepts providers that match the selected agent", () => {
+describe("credential provider compatibility", () => {
+  it("accepts providers supported by the selected agent", () => {
     expect(isProviderCompatibleWithAgent("openai", "codex")).toBe(true);
     expect(isProviderCompatibleWithAgent("anthropic", "claude")).toBe(true);
   });
 
-  it("rejects providers that do not match the selected agent", () => {
+  it("rejects providers not supported by the selected agent", () => {
     expect(isProviderCompatibleWithAgent("anthropic", "codex")).toBe(false);
     expect(isProviderCompatibleWithAgent("openai", "claude")).toBe(false);
   });
 
-  it("throws a request error for incompatible providers", () => {
+  it("throws for incompatible provider and agent combinations", () => {
     expect(() =>
       assertProviderCompatibleWithAgent("anthropic", "codex"),
     ).toThrow(/not compatible/);

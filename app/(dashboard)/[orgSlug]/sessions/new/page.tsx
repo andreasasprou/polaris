@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useOrgPath } from "@/hooks/use-org-path";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getEnabledAgents } from "@/lib/sandbox-agent/agent-profiles";
+import {
+  getCompatibleProviders,
+  getEnabledAgents,
+  type ProviderType,
+} from "@/lib/sandbox-agent/agent-profiles";
+import type { AgentType } from "@/lib/sandbox-agent/types";
 
 type Repo = {
   id: string;
@@ -45,6 +50,23 @@ export default function NewSessionPage() {
   const [repositoryId, setRepositoryId] = useState("__none__");
   const [agentSecretId, setAgentSecretId] = useState("__none__");
   const [prompt, setPrompt] = useState("");
+  const compatibleProviders = useMemo(
+    () => getCompatibleProviders(agentType as AgentType),
+    [agentType],
+  );
+  const filteredSecrets = useMemo(
+    () =>
+      secrets.filter((secret) =>
+        compatibleProviders.includes(secret.provider as ProviderType),
+      ),
+    [compatibleProviders, secrets],
+  );
+  const validatedAgentSecretId = useMemo(() => {
+    if (agentSecretId === "__none__") return "__none__";
+    return filteredSecrets.some((secret) => secret.id === agentSecretId)
+      ? agentSecretId
+      : "__none__";
+  }, [agentSecretId, filteredSecrets]);
 
   useEffect(() => {
     fetch("/api/repositories")
@@ -70,7 +92,10 @@ export default function NewSessionPage() {
         body: JSON.stringify({
           agentType,
           repositoryId: repositoryId === "__none__" ? undefined : repositoryId,
-          agentSecretId: agentSecretId === "__none__" ? undefined : agentSecretId,
+          agentSecretId:
+            validatedAgentSecretId === "__none__"
+              ? undefined
+              : validatedAgentSecretId,
           prompt,
         }),
       });
@@ -119,7 +144,24 @@ export default function NewSessionPage() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label htmlFor="agent">Agent</Label>
-              <Select value={agentType} onValueChange={setAgentType}>
+              <Select
+                value={agentType}
+                onValueChange={(nextAgentType) => {
+                  setAgentType(nextAgentType);
+                  const nextProviders = getCompatibleProviders(
+                    nextAgentType as AgentType,
+                  );
+                  const selectedSecret = secrets.find(
+                    (secret) => secret.id === validatedAgentSecretId,
+                  );
+                  if (
+                    selectedSecret &&
+                    !nextProviders.includes(selectedSecret.provider as ProviderType)
+                  ) {
+                    setAgentSecretId("__none__");
+                  }
+                }}
+              >
                 <SelectTrigger id="agent">
                   <SelectValue />
                 </SelectTrigger>
@@ -166,14 +208,17 @@ export default function NewSessionPage() {
                   (optional — falls back to env)
                 </span>
               </Label>
-              <Select value={agentSecretId} onValueChange={setAgentSecretId}>
+              <Select
+                value={validatedAgentSecretId}
+                onValueChange={setAgentSecretId}
+              >
                 <SelectTrigger id="apiKey">
                   <SelectValue placeholder="Use environment default" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
                     <SelectItem value="__none__">Use environment default</SelectItem>
-                    {secrets.map((s) => (
+                    {filteredSecrets.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.label} ({s.provider})
                       </SelectItem>

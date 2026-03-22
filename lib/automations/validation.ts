@@ -1,10 +1,12 @@
 import { RequestError } from "@/lib/errors/request-error";
 import { findRepositoryByIdAndOrg } from "@/lib/integrations/queries";
-import { findSecretByIdAndOrg } from "@/lib/secrets/queries";
-import { findKeyPoolByIdAndOrg, poolHasActiveMembers } from "@/lib/key-pools/queries";
+import { validateCredentialRefForAgent } from "@/lib/key-pools/validate";
+import { credentialRefFromRow } from "@/lib/key-pools/types";
+import type { AgentType } from "@/lib/sandbox-agent/types";
 
 export async function validateAutomationRelationsForOrg(input: {
   organizationId: string;
+  agentType: AgentType;
   repositoryId?: string | null;
   agentSecretId?: string | null;
   keyPoolId?: string | null;
@@ -31,31 +33,17 @@ export async function validateAutomationRelationsForOrg(input: {
     );
   }
 
-  if (agentSecretId) {
-    const secret = await findSecretByIdAndOrg(
-      agentSecretId,
-      input.organizationId,
-    );
-    if (!secret) {
-      throw new RequestError("Secret not found", 404);
-    }
-    if (secret.revokedAt) {
-      throw new RequestError("This API key has been revoked", 400);
-    }
-  }
+  const credentialRef = credentialRefFromRow({
+    agentSecretId,
+    keyPoolId,
+  });
 
-  if (keyPoolId) {
-    const pool = await findKeyPoolByIdAndOrg(keyPoolId, input.organizationId);
-    if (!pool) {
-      throw new RequestError("Key pool not found", 404);
-    }
-    const hasActive = await poolHasActiveMembers(keyPoolId);
-    if (!hasActive) {
-      throw new RequestError(
-        `All keys in pool "${pool.name}" are revoked or disabled`,
-        400,
-      );
-    }
+  if (credentialRef) {
+    await validateCredentialRefForAgent(
+      credentialRef,
+      input.organizationId,
+      input.agentType,
+    );
   }
 
   return {
