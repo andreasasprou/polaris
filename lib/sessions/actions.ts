@@ -223,17 +223,45 @@ export async function getLatestRuntime(sessionId: string) {
 /**
  * End any live runtimes for a session. Called before creating a new runtime
  * on resume to satisfy the one-live-runtime-per-session unique constraint.
+ *
+ * Destroys the actual Vercel sandbox for each stale runtime before marking
+ * the DB record as failed. Without this, resumed sessions leak sandboxes
+ * that neither the controller nor the janitor will clean up.
  */
 export async function endStaleRuntimes(sessionId: string) {
-  await db
-    .update(interactiveSessionRuntimes)
-    .set({ status: "failed", endedAt: new Date() })
+  const staleRuntimes = await db
+    .select({ id: interactiveSessionRuntimes.id, sandboxId: interactiveSessionRuntimes.sandboxId })
+    .from(interactiveSessionRuntimes)
     .where(
       and(
         eq(interactiveSessionRuntimes.sessionId, sessionId),
         inArray(interactiveSessionRuntimes.status, LIVE_RUNTIME_STATUSES),
       ),
     );
+
+  // Destroy the actual Vercel sandboxes (best-effort — don't block resume on cleanup)
+  if (staleRuntimes.length > 0) {
+    const { SandboxManager } = await import("@/lib/sandbox/SandboxManager");
+    const manager = new SandboxManager();
+    await Promise.allSettled(
+      staleRuntimes
+        .filter((r) => r.sandboxId)
+        .map((r) => manager.destroyById(r.sandboxId!)),
+    );
+  }
+
+  // Mark DB records as failed
+  if (staleRuntimes.length > 0) {
+    await db
+      .update(interactiveSessionRuntimes)
+      .set({ status: "failed", endedAt: new Date() })
+      .where(
+        inArray(
+          interactiveSessionRuntimes.id,
+          staleRuntimes.map((r) => r.id),
+        ),
+      );
+  }
 }
 
 // ── Checkpoints ──

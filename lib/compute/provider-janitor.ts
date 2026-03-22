@@ -131,10 +131,14 @@ async function fetchAllRunningSandboxes(creds: {
 }
 
 async function getKnownSandboxIds(): Promise<Set<string>> {
+  // Only consider live runtimes as "known". Failed/stopped runtimes should
+  // not protect their sandbox from cleanup — they may be stale leftovers
+  // from a resume cycle where the sandbox was never destroyed.
   const rows = await db.execute(sql`
     SELECT DISTINCT sandbox_id
     FROM interactive_session_runtimes
     WHERE sandbox_id IS NOT NULL
+    AND status IN ('creating', 'running', 'idle')
   `);
   return new Set(
     (rows.rows as Array<{ sandbox_id: string }>).map((r) => r.sandbox_id),
