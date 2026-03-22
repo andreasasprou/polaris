@@ -14,6 +14,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { StatusBadge } from "@/components/status-badge";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Empty,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyActions,
+} from "@/components/ui/empty";
+import { MessageSquareIcon } from "lucide-react";
 
 type Session = {
   id: string;
@@ -54,17 +64,27 @@ export default function SessionsPage() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      ) : sessions.length === 0 ? (
-        <div className="py-12 text-center">
-          <p className="text-sm text-muted-foreground">No sessions yet.</p>
-          <Link
-            href={op("/sessions/new")}
-            className="mt-2 inline-block text-sm text-primary hover:underline"
-          >
-            Start your first session
-          </Link>
+        <div className="flex flex-col items-center gap-3 py-16">
+          <Spinner className="text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">Loading...</p>
         </div>
+      ) : sessions.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="illustration">
+              <MessageSquareIcon />
+            </EmptyMedia>
+            <EmptyTitle>No sessions yet</EmptyTitle>
+            <EmptyDescription>
+              Interactive agent sessions will appear here once created.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyActions>
+            <Button asChild>
+              <Link href={op("/sessions/new")}>Start your first session</Link>
+            </Button>
+          </EmptyActions>
+        </Empty>
       ) : (
         <Card>
           <Table>
@@ -94,8 +114,10 @@ export default function SessionsPage() {
                   <TableCell>
                     <StatusBadge status={s.status} />
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Date(s.createdAt).toLocaleString()}
+                  <TableCell>
+                    <span className="text-[11px] tabular-nums text-muted-foreground/50">
+                      {new Date(s.createdAt).toLocaleString()}
+                    </span>
                   </TableCell>
                 </TableRow>
               ))}

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useOrgPath } from "@/hooks/use-org-path";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { ChevronLeftIcon } from "lucide-react";
 import { SessionErrorAlert } from "@/components/sessions/session-error-alert";
 import { StatusBadge } from "@/components/status-badge";
@@ -302,7 +303,12 @@ export default function SessionDetailPage() {
   }, [pendingPrompt, chat.items]);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading...</p>;
+    return (
+      <div className="flex flex-col items-center gap-3 py-16">
+        <Spinner className="text-muted-foreground" />
+        <p className="text-xs text-muted-foreground">Loading...</p>
+      </div>
+    );
   }
 
   if (!session) {

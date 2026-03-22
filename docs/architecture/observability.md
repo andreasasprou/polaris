@@ -88,7 +88,7 @@ crons: [{ path: "/api/cron/sweeper", schedule: "*/2 * * * *" }]
 Each cycle runs (in order):
 1. **Runtime controller** — expire overdue claims, destroy/hibernate orphaned sandboxes, enforce hard TTLs
 2. **Provider janitor** — list Vercel sandboxes, stop any without a DB runtime record
-3. **Job sweeps** — timeout, dispatch_unknown reconciliation, postprocess retry, stale session healing, stale lock release, retryable job processing
+3. **Job sweeps** — timeout, stale-progress detection (dead sandbox recovery), dispatch_unknown reconciliation, postprocess retry, stale session healing, stale lock release, retryable job processing
 
 The route at `app/api/cron/sweeper/route.ts` is protected by `CRON_SECRET` in production.
 
@@ -112,7 +112,7 @@ log.set({ proxyMetrics: { connectMs, sessionCreateMs, promptExecutionMs, resumeT
 log.set({ lifecycle: { phase: "provisioning", restoreSource: "snapshot" } });
 
 // Sweeper
-log.set({ sweep: { timedOut: 3, unknownReconciled: 1 } });
+log.set({ sweep: { timedOut: 3, staleKilled: 1, unknownReconciled: 1 } });
 
 // Timing (StepTimer)
 log.set({ timing: timer.finalize() });
@@ -267,6 +267,20 @@ AXIOM_TOKEN=xaat-xxx AXIOM_NOTIFIER_ID=not_xxx ./scripts/axiom-sandbox-observabi
     expired = toint(p.sweep.runtimeController.expiredClaims)
 | where orphans > 0 or hibernated > 0 or ttl > 0 or expired > 0
 ```
+
+### Stale-progress job kills (dead sandbox recovery)
+
+```apl
+['vercel']
+| where ['request.path'] == "/api/cron/sweeper"
+| extend p = parse_json(message)
+| where toint(p.sweep.staleKilled) > 0
+| project _time,
+    staleKilled = toint(p.sweep.staleKilled),
+    timedOut = toint(p.sweep.timedOut)
+```
+
+Jobs killed because their sandbox died and no progress was reported for 5+ minutes. Non-zero values indicate lost `prompt_complete` callbacks that were recovered before the 30-minute hard timeout.
 
 ### Provider janitor — unknown sandboxes stopped
 
