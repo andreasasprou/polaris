@@ -83,6 +83,31 @@ export async function clearMcpServerAuth(
     );
 }
 
+/**
+ * Atomically clear auth config only if the stored blob still matches
+ * the expected value. Prevents a concurrent refresh that stored fresh
+ * credentials from being wiped by a stale refresh failure.
+ */
+export async function clearMcpServerAuthIfStale(
+  id: string,
+  organizationId: string,
+  expectedEncryptedBlob: string,
+) {
+  await db
+    .update(mcpServers)
+    .set({
+      encryptedAuthConfig: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(mcpServers.id, id),
+        eq(mcpServers.organizationId, organizationId),
+        eq(mcpServers.encryptedAuthConfig, expectedEncryptedBlob),
+      ),
+    );
+}
+
 export async function deleteMcpServer(id: string, organizationId: string) {
   await db
     .delete(mcpServers)

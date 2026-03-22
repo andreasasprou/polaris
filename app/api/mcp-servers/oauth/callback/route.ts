@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { requireOrgAdmin } from "@/lib/auth/session";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { updateMcpServerAuth } from "@/lib/mcp-servers/actions";
 import { verifyMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
@@ -14,7 +14,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 export const GET = withEvlog(async (req: Request) => {
-  const { session, orgId } = await getSessionWithOrg();
+  const { session, orgId } = await requireOrgAdmin();
   const url = new URL(req.url);
 
   // Check for OAuth error response — normalize to safe error codes

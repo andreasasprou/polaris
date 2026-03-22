@@ -2,7 +2,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { mcpServers } from "./schema";
 import { decrypt } from "@/lib/credentials/encryption";
-import { updateMcpServerAuth, clearMcpServerAuth } from "./actions";
+import { updateMcpServerAuth, clearMcpServerAuth, clearMcpServerAuthIfStale } from "./actions";
 import type {
   StaticAuthConfig,
   OAuthAuthConfig,
@@ -116,9 +116,10 @@ async function resolveServer(
           return null;
         }
 
-        // Remember the refresh token we're about to use — needed for
-        // concurrency-safe clearing (only clear if nobody else refreshed).
-        const staleRefreshToken = oauthConfig.refreshToken;
+        // Capture the encrypted blob we read — used for atomic compare-and-clear.
+        // If a concurrent dispatch refreshes successfully and writes a new blob,
+        // our clear will be a no-op because the WHERE won't match.
+        const originalEncryptedBlob = row.encryptedAuthConfig!;
 
         try {
           const refreshRes = await fetch(row.oauthTokenEndpoint, {
@@ -137,7 +138,7 @@ async function resolveServer(
             // refresh token still matches the stale one we used. A concurrent
             // dispatch may have already refreshed successfully.
             if (refreshRes.status === 401 || refreshRes.status === 400) {
-              await conditionalClearAuth(row.id, row.organizationId, staleRefreshToken);
+              await clearMcpServerAuthIfStale(row.id, row.organizationId, originalEncryptedBlob);
               return null;
             }
             // Non-fatal: use cached token if not yet expired
@@ -194,30 +195,3 @@ async function resolveServer(
   }
 }
 
-/**
- * Concurrency-safe clear: re-read the row and only clear auth if
- * the stored refresh token still matches the stale one we tried.
- * This prevents a concurrent dispatch that successfully refreshed
- * from having its fresh tokens wiped out.
- */
-async function conditionalClearAuth(
-  id: string,
-  organizationId: string,
-  staleRefreshToken: string,
-): Promise<void> {
-  try {
-    const current = await findMcpServerByIdAndOrg(id, organizationId);
-    if (!current?.encryptedAuthConfig) return; // already cleared
-
-    const currentConfig = JSON.parse(
-      decrypt(current.encryptedAuthConfig),
-    ) as OAuthAuthConfig;
-
-    // Only clear if the refresh token hasn't been updated by a concurrent refresh
-    if (currentConfig.refreshToken === staleRefreshToken) {
-      await clearMcpServerAuth(id, organizationId);
-    }
-  } catch {
-    // Best-effort — if re-read fails, don't clear (fail-open)
-  }
-}

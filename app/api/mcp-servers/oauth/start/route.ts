@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { requireOrgAdmin } from "@/lib/auth/session";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { signMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { withEvlog } from "@/lib/evlog";
 
 export const GET = withEvlog(async (req: Request) => {
-  const { session, orgId } = await getSessionWithOrg();
+  const { session, orgId } = await requireOrgAdmin();
   const url = new URL(req.url);
   const serverId = url.searchParams.get("serverId");
 

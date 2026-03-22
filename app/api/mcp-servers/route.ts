@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { getSessionWithOrg, requireOrgAdmin } from "@/lib/auth/session";
 import { findMcpServersByOrg } from "@/lib/mcp-servers/queries";
 import { createMcpServer } from "@/lib/mcp-servers/actions";
 import { withEvlog } from "@/lib/evlog";
@@ -10,16 +10,52 @@ export const GET = withEvlog(async () => {
   return NextResponse.json({ servers });
 });
 
-function isValidUrl(urlStr: string): boolean {
+/** Check if a hostname looks like a private/internal target. */
+function isPrivateHostname(hostname: string): boolean {
+  // Loopback
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.endsWith(".localhost")
+  ) return true;
+
+  // RFC1918 private ranges
+  const parts = hostname.split(".").map(Number);
+  if (parts.length === 4 && parts.every((n) => !isNaN(n))) {
+    if (parts[0] === 10) return true; // 10.0.0.0/8
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12
+    if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0/16
+    if (parts[0] === 169 && parts[1] === 254) return true; // link-local
+    if (parts[0] === 0) return true; // 0.0.0.0
+  }
+
+  // Common internal DNS patterns
+  if (
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".corp") ||
+    hostname.endsWith(".lan")
+  ) return true;
+
+  return false;
+}
+
+/**
+ * Validate a URL for MCP server endpoints.
+ * - MCP server URLs: HTTPS required, HTTP allowed for localhost in dev only
+ * - OAuth endpoints (server-fetched): HTTPS required, private/internal hosts blocked
+ */
+function isValidUrl(urlStr: string, { allowLocalDev = false } = {}): boolean {
   try {
     const url = new URL(urlStr);
-    // Allow HTTP only for localhost/127.0.0.1 (local dev)
     if (url.protocol === "http:") {
-      return (
-        url.hostname === "localhost" || url.hostname === "127.0.0.1"
-      );
+      return allowLocalDev && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
     }
-    return url.protocol === "https:";
+    if (url.protocol !== "https:") return false;
+    // Block private/internal targets for HTTPS too
+    if (isPrivateHostname(url.hostname)) return false;
+    return true;
   } catch {
     return false;
   }
@@ -29,7 +65,7 @@ const VALID_TRANSPORTS = ["streamable-http", "sse"] as const;
 const VALID_AUTH_TYPES = ["static", "oauth"] as const;
 
 export const POST = withEvlog(async (req: Request) => {
-  const { session, orgId } = await getSessionWithOrg();
+  const { session, orgId } = await requireOrgAdmin();
   const body = await req.json();
 
   // Validate required fields
@@ -39,9 +75,9 @@ export const POST = withEvlog(async (req: Request) => {
   }
 
   const serverUrl = body.serverUrl?.trim();
-  if (!serverUrl || !isValidUrl(serverUrl)) {
+  if (!serverUrl || !isValidUrl(serverUrl, { allowLocalDev: true })) {
     return NextResponse.json(
-      { error: "serverUrl must be a valid HTTPS URL (HTTP allowed for localhost)" },
+      { error: "serverUrl must be a valid HTTPS URL (HTTP allowed for localhost). Private/internal hosts are blocked." },
       { status: 400 },
     );
   }

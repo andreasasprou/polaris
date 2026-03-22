@@ -57,6 +57,32 @@ export async function getSessionWithOrg() {
   return { session, orgId: activeOrgId };
 }
 
+/**
+ * Require the current user to be an owner or admin of the active org.
+ * Returns the session + orgId, or throws a 403 RequestError.
+ */
+export async function requireOrgAdmin() {
+  const { session, orgId } = await getSessionWithOrg();
+
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(
+        eq(member.userId, session.user.id),
+        eq(member.organizationId, orgId),
+      ),
+    )
+    .limit(1);
+
+  if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
+    const { RequestError } = await import("@/lib/errors/request-error");
+    throw new RequestError("Only organization owners and admins can manage MCP servers", 403);
+  }
+
+  return { session, orgId };
+}
+
 export async function hasOrganizationMembership(
   userId: string,
   organizationId: string,

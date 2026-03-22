@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrg } from "@/lib/auth/session";
+import { requireOrgAdmin } from "@/lib/auth/session";
 import {
   deleteMcpServer,
   updateMcpServerEnabled,
@@ -13,7 +13,7 @@ export const DELETE = withEvlog(
     _req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const { orgId } = await getSessionWithOrg();
+    const { orgId } = await requireOrgAdmin();
     const { id } = await params;
 
     await deleteMcpServer(id, orgId);
@@ -26,7 +26,7 @@ export const PATCH = withEvlog(
     req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const { orgId } = await getSessionWithOrg();
+    const { orgId } = await requireOrgAdmin();
     const { id } = await params;
     const body = await req.json();
 
