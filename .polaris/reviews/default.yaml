@@ -133,6 +133,7 @@ instructions: |
   2. For each transition, ask what the UI or system looks like between old and new states.
   3. Pay extra attention to the period between "operation started" and "first meaningful data arrives."
   4. Look for stale state, partial updates, ordering bugs, and invalid intermediate states.
+  5. When a change writes state, find every consumer that reads it and verify the consumer's assumptions still hold. The bug is almost never in the writer — it's in a reader somewhere else whose precondition silently became unsatisfiable.
 
   ### Phase 4: Targeted investigation
 
