@@ -9,7 +9,11 @@ import { and, eq } from "drizzle-orm";
 import type { Intent } from "@/app/(auth)/onboarding/_components/step-intent";
 import { withEvlog } from "@/lib/evlog";
 
-const PR_REVIEW_PROMPT = `## Operating Rules
+const PR_REVIEW_PROMPT = `You are a staff-level engineer performing a critical pull request review.
+
+The PR changes are already checked out in the current working tree.
+
+## Operating Rules
 
 1. Think before acting. Start with a quick map of changed files, changed contracts, likely blast radius, and likely docs surfaces.
 2. Batch reads and searches whenever possible.

@@ -64,6 +64,14 @@ export async function updateAutomation(
 }
 
 export async function deleteAutomation(id: string) {
+  // Null out jobs.automationId before deleting — the FK has no onDelete
+  // clause (defaults to RESTRICT), so any referencing job blocks deletion.
+  const { jobs } = await import("@/lib/jobs/schema");
+  await db
+    .update(jobs)
+    .set({ automationId: null })
+    .where(eq(jobs.automationId, id));
+
   await db.delete(automations).where(eq(automations.id, id));
 }
 
