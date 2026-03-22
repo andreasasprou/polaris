@@ -91,7 +91,7 @@ describe("reviews/diff", () => {
       const index = buildChangedLineIndex(diff);
 
       expect(index.get("src/new-name.ts")).toEqual([{ start: 1, end: 1 }]);
-      expect(index.has("src/old-name.ts")).toBe(false);
+      expect(index.get("src/old-name.ts")).toEqual([{ start: 1, end: 1 }]);
     });
 
     it("keeps disjoint changed regions separate within one file", () => {

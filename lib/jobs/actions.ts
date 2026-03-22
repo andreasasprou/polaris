@@ -187,7 +187,7 @@ export async function getStaleRunningJobs(staleMinutes: number = 5) {
           WHERE ja.job_id = ${jobs.id}
           AND ja.last_progress_at IS NOT NULL
           AND ja.last_progress_at < NOW() - (${staleMinutes} * INTERVAL '1 minute')
-          AND ja.status NOT IN ('waiting_human')
+          AND ja.status NOT IN ('waiting_human', 'completed', 'failed')
           AND ja.attempt_number = (
             SELECT MAX(ja2.attempt_number) FROM job_attempts ja2
             WHERE ja2.job_id = ${jobs.id}

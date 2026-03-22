@@ -34,6 +34,16 @@ function appendChangedLine(
   index.set(file, ranges);
 }
 
+function appendChangedLineForFiles(
+  index: ChangedLineIndex,
+  files: string[],
+  line: number,
+) {
+  for (const file of files) {
+    appendChangedLine(index, file, line);
+  }
+}
+
 /**
  * Fetch the PR diff and file list via GitHub API.
  * Truncates the diff to `maxBytes` (default 200KB) for prompt budget.
@@ -246,20 +256,22 @@ export async function fetchFullCommitRangeDiff(
  */
 export function buildChangedLineIndex(diff: string): ChangedLineIndex {
   const index: ChangedLineIndex = new Map();
-  let currentFile: string | null = null;
+  let currentFiles: string[] = [];
   let hunkState: ParsedHunkState | null = null;
 
   for (const line of diff.split("\n")) {
     const fileMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
     if (fileMatch) {
-      currentFile = fileMatch[2] ?? null;
+      const oldPath = fileMatch[1];
+      const newPath = fileMatch[2];
+      currentFiles = oldPath === newPath ? [newPath] : [oldPath, newPath];
       hunkState = null;
       continue;
     }
 
     const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (hunkMatch) {
-      if (!currentFile) {
+      if (currentFiles.length === 0) {
         hunkState = null;
         continue;
       }
@@ -276,10 +288,10 @@ export function buildChangedLineIndex(diff: string): ChangedLineIndex {
       continue;
     }
 
-    if (!currentFile || !hunkState) continue;
+    if (currentFiles.length === 0 || !hunkState) continue;
 
     if (line.startsWith("-") && !line.startsWith("---")) {
-      appendChangedLine(index, currentFile, hunkState.oldLine);
+      appendChangedLineForFiles(index, currentFiles, hunkState.oldLine);
       hunkState.oldLine += 1;
       continue;
     }

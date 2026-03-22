@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildChangedLineIndex } from "@/lib/reviews/diff";
 import {
   buildInlineCommentMapFromTrackedThreads,
   dedupeTrackedInlineThreads,
@@ -73,6 +74,33 @@ describe("inline thread reconciliation", () => {
     expect(result.autoResolve).toEqual([]);
     expect(result.overlapBlocked).toEqual([]);
     expect(result.carryForward.map((thread) => thread.threadId)).toEqual(["thread-1"]);
+  });
+
+  it("auto-resolves renamed threads when the touched lines move to a new path", () => {
+    const changedLineIndex = buildChangedLineIndex([
+      "diff --git a/src/old.ts b/src/new.ts",
+      "@@ -12,1 +12,1 @@",
+      "-broken()",
+      "+fixed()",
+    ].join("\n"));
+
+    const result = reconcileInlineThreads({
+      priorThreads: [
+        {
+          threadId: "thread-1",
+          commentId: 101,
+          issueId: "issue-1",
+          file: "src/old.ts",
+          line: 12,
+        },
+      ],
+      changedLineIndex,
+      currentInlineAnchors: [],
+    });
+
+    expect(result.autoResolve.map((thread) => thread.threadId)).toEqual(["thread-1"]);
+    expect(result.carryForward).toEqual([]);
+    expect(result.overlapBlocked).toEqual([]);
   });
 
   it("dedupes tracked threads by thread id and derives the comment map", () => {
