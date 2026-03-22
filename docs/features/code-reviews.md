@@ -171,3 +171,4 @@ If the label doesn't match any credential, the review fails with a clear error i
 
 - **One definition per repo** — multiple `.yaml` files in `.polaris/reviews/` produce an error. Multi-review fan-out is planned.
 - **Exact branch matching** — `branches: [main]` uses exact string match, not globs.
+- **Exact branch matching** — `branches: [main]` uses exact string match, not globs.
