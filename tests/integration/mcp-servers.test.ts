@@ -2,7 +2,7 @@
  * Integration test for MCP server CRUD and resolution.
  * Requires DATABASE_URL and ENCRYPTION_KEY env vars.
  */
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
 
 // Set env before importing db
@@ -29,6 +29,22 @@ describe("mcp-servers", async () => {
     findMcpServerByIdAndOrg,
     getResolvedMcpServers,
   } = await import("@/lib/mcp-servers/queries");
+
+  beforeAll(async () => {
+    await db.execute(sql`
+      ALTER TABLE mcp_servers
+      ADD COLUMN IF NOT EXISTS catalog_slug text,
+      ADD COLUMN IF NOT EXISTS last_test_status text,
+      ADD COLUMN IF NOT EXISTS last_test_error text,
+      ADD COLUMN IF NOT EXISTS last_tested_at timestamp with time zone,
+      ADD COLUMN IF NOT EXISTS last_discovered_tools jsonb
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_catalog_slug
+      ON mcp_servers (organization_id, catalog_slug)
+      WHERE catalog_slug IS NOT NULL
+    `);
+  });
 
   afterAll(async () => {
     // Clean up test data

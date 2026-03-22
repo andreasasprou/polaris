@@ -1,3 +1,5 @@
+import type { McpIntegrationTemplate } from "./catalog";
+
 /** Decrypted auth config for static-header servers. */
 export type StaticAuthConfig = {
   headers: Record<string, string>;
@@ -18,4 +20,52 @@ export type McpServerEntry = {
   url: string;
   transport?: "streamable-http" | "sse";
   headers?: Record<string, string>;
+};
+
+export type McpTestStatus = "ok" | "error";
+
+export type McpDiscoveredTool = {
+  name: string;
+  description?: string | null;
+  inputSchema?: Record<string, unknown> | null;
+};
+
+export type McpInstallStatus =
+  | "not_installed"
+  | "needs_auth"
+  | "misconfigured"
+  | "connected";
+
+export type McpServerStatus = Exclude<McpInstallStatus, "not_installed">;
+
+export type McpServerListItem = {
+  id: string;
+  name: string;
+  serverUrl: string;
+  transport: string;
+  authType: string;
+  enabled: boolean;
+  catalogSlug: string | null;
+  oauthClientId: string | null;
+  oauthAuthorizationEndpoint: string | null;
+  oauthTokenEndpoint: string | null;
+  oauthScopes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  lastTestStatus: McpTestStatus | null;
+  lastTestError: string | null;
+  lastTestedAt: Date | null;
+  lastDiscoveredTools: McpDiscoveredTool[] | null;
+  connected: boolean;
+  status: McpServerStatus;
+};
+
+export type CatalogInstallationView = {
+  template: McpIntegrationTemplate;
+  server: McpServerListItem | null;
+  status: McpInstallStatus;
+  toolCount: number;
+  lastTestedAt: Date | null;
+  lastTestError: string | null;
+  discoveredTools: McpDiscoveredTool[] | null;
 };

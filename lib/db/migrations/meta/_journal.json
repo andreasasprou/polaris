@@ -50,6 +50,13 @@
       "when": 1774415505872,
       "tag": "0006_mixed_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1774204088027,
+      "tag": "0007_mcp-marketplace",
+      "breakpoints": true
     }
   ]
 }

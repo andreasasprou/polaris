@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrgAdmin, getOrgSlugById } from "@/lib/auth/session";
-import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
+import { and, eq } from "drizzle-orm";
+import { getOrgSlugById, getSessionWithOrg } from "@/lib/auth/session";
 import { updateMcpServerAuth } from "@/lib/mcp-servers/actions";
 import { verifyMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
+import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { safeFetch } from "@/lib/mcp-servers/url-validation";
-import { getAppBaseUrl } from "@/lib/config/urls";
+import { orgPath, getAppBaseUrl } from "@/lib/config/urls";
+import { db } from "@/lib/db";
+import { member } from "@/lib/db/auth-schema";
 import { withEvlog } from "@/lib/evlog";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -14,77 +17,110 @@ const ERROR_MESSAGES: Record<string, string> = {
   temporarily_unavailable: "The provider is temporarily unavailable",
 };
 
+async function isOrgAdmin(userId: string, orgId: string) {
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(eq(member.userId, userId), eq(member.organizationId, orgId)),
+    )
+    .limit(1);
+
+  return membership?.role === "owner" || membership?.role === "admin";
+}
+
+function getMarketplacePath(orgSlug: string) {
+  return orgPath(orgSlug, "/integrations/mcp");
+}
+
+function getServerPath(
+  orgSlug: string,
+  server: { catalogSlug: string | null } | null,
+) {
+  if (!server?.catalogSlug) {
+    return orgPath(orgSlug, "/integrations/mcp/custom");
+  }
+
+  return orgPath(orgSlug, `/integrations/mcp/${server.catalogSlug}`);
+}
+
+function redirectWithQuery(
+  baseUrl: string,
+  path: string,
+  key: "error" | "success",
+  value: string,
+) {
+  const location = new URL(path, baseUrl);
+  location.searchParams.set(key, value);
+  return NextResponse.redirect(location);
+}
+
 export const GET = withEvlog(async (req: Request) => {
-  const admin = await getSessionWithOrgAdmin();
-  if (!admin) return NextResponse.redirect(new URL("/settings/mcp?error=unauthorized", req.url));
-  const { session, orgId } = admin;
+  const { session, orgId } = await getSessionWithOrg();
+  const orgSlug = await getOrgSlugById(orgId);
+  const baseUrl = getAppBaseUrl();
+  const marketplacePath = getMarketplacePath(orgSlug);
+
+  if (!(await isOrgAdmin(session.user.id, orgId))) {
+    return redirectWithQuery(baseUrl, marketplacePath, "error", "unauthorized");
+  }
+
   const url = new URL(req.url);
 
-  // Check for OAuth error response — normalize to safe error codes
   const oauthError = url.searchParams.get("error");
   if (oauthError) {
     const safeMessage =
       ERROR_MESSAGES[oauthError] ?? `OAuth error: ${oauthError}`;
-    return NextResponse.redirect(
-      new URL(
-        `/settings/mcp?error=${encodeURIComponent(safeMessage)}`,
-        req.url,
-      ),
-    );
+    return redirectWithQuery(baseUrl, marketplacePath, "error", safeMessage);
   }
 
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!code || !state) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=missing+code+or+state", req.url),
+    return redirectWithQuery(
+      baseUrl,
+      marketplacePath,
+      "error",
+      "missing code or state",
     );
   }
 
-  // Verify state
   const payload = verifyMcpOAuthState(state);
   if (!payload) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=invalid+state", req.url),
-    );
+    return redirectWithQuery(baseUrl, marketplacePath, "error", "invalid state");
   }
   if (payload.userId !== session.user.id) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=user+mismatch", req.url),
-    );
+    return redirectWithQuery(baseUrl, marketplacePath, "error", "user mismatch");
   }
   if (payload.orgId !== orgId) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=org+mismatch", req.url),
-    );
+    return redirectWithQuery(baseUrl, marketplacePath, "error", "org mismatch");
   }
 
-  // Load server to get OAuth endpoints
   const server = await findMcpServerByIdAndOrg(payload.serverId, orgId);
+  const targetPath = getServerPath(orgSlug, server);
+
   if (!server || !server.oauthTokenEndpoint || !server.oauthClientId) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=server+not+found", req.url),
-    );
+    return redirectWithQuery(baseUrl, targetPath, "error", "server not found");
   }
 
-  // Read PKCE verifier from cookie (no regex — split and match by prefix)
   const cookiePrefix = `mcp_oauth_verifier_${payload.serverId}=`;
   const codeVerifier = (req.headers.get("cookie") ?? "")
     .split("; ")
-    .find((c) => c.startsWith(cookiePrefix))
+    .find((cookie) => cookie.startsWith(cookiePrefix))
     ?.slice(cookiePrefix.length);
   if (!codeVerifier) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=missing+verifier", req.url),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      "missing verifier",
     );
   }
 
-  // Token exchange
   const callbackUrl = `${getAppBaseUrl()}/api/mcp-servers/oauth/callback`;
 
   let tokenRes: Response;
   try {
-    // Use safeFetch to re-validate DNS + block redirect-based SSRF
     tokenRes = await safeFetch(server.oauthTokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -98,34 +134,33 @@ export const GET = withEvlog(async (req: Request) => {
       signal: AbortSignal.timeout(15_000),
     });
   } catch {
-    return NextResponse.redirect(
-      new URL(
-        "/settings/mcp?error=Token+exchange+request+failed",
-        req.url,
-      ),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      "Token exchange request failed",
     );
   }
 
   if (!tokenRes.ok) {
-    return NextResponse.redirect(
-      new URL(
-        `/settings/mcp?error=${encodeURIComponent(`Token exchange failed: ${tokenRes.status}`)}`,
-        req.url,
-      ),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      `Token exchange failed: ${tokenRes.status}`,
     );
   }
 
   const tokens = await tokenRes.json();
   if (!tokens.access_token) {
-    return NextResponse.redirect(
-      new URL(
-        "/settings/mcp?error=no+access+token+in+response",
-        req.url,
-      ),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      "no access token in response",
     );
   }
 
-  // Store tokens
   const now = Math.floor(Date.now() / 1000);
   await updateMcpServerAuth(payload.serverId, orgId, {
     accessToken: tokens.access_token,
@@ -133,23 +168,15 @@ export const GET = withEvlog(async (req: Request) => {
     expiresAt: tokens.expires_in ? now + tokens.expires_in : now + 3600,
   });
 
-  // Clear verifier cookie and redirect
-  let successPath = "/settings/mcp?success=connected";
-  try {
-    const slug = await getOrgSlugById(orgId);
-    successPath = `/${slug}/settings/mcp?success=connected`;
-  } catch {
-    // Fall back to bare path — proxy will handle legacy redirect
-  }
-
   const headers = new Headers();
   headers.append(
     "Set-Cookie",
     `mcp_oauth_verifier_${payload.serverId}=; HttpOnly; Path=/api/mcp-servers/oauth; Max-Age=0`,
   );
-  headers.set(
-    "Location",
-    new URL(successPath, req.url).toString(),
-  );
+
+  const location = new URL(targetPath, baseUrl);
+  location.searchParams.set("success", "connected");
+  headers.set("Location", location.toString());
+
   return new Response(null, { status: 302, headers });
 });

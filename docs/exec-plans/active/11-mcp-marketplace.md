@@ -4,7 +4,7 @@ status: planned
 created: 2026-03-22
 owner: andreas
 related_prs: [110]
-domains: [lib/mcp-servers, app/api/mcp-servers, app/(dashboard)/integrations/mcp, lib/mcp-servers/catalog]
+domains: [lib/mcp-servers, app/api/mcp-servers, app/(dashboard)/[orgSlug]/integrations/mcp, app/(dashboard)/[orgSlug]/settings/mcp]
 ---
 
 # 11 — MCP Integration Marketplace
@@ -15,9 +15,9 @@ This ExecPlan is a living document. The sections Progress, Surprises & Discoveri
 
 PR #110 shipped the backend plumbing for org-level MCP servers: schema, dispatch threading, proxy integration, OAuth, and SSRF protection. But the UI is a raw developer form — users must manually enter URLs, transport types, OAuth endpoints, client IDs, and scopes. This is not a product UX.
 
-After this change, admins see a curated marketplace of integrations (Sentry, Datadog, Linear, etc.) with one-click "Enable" buttons. For OAuth integrations like Sentry, clicking "Enable" triggers auto-discovery of all OAuth endpoints from the MCP server URL alone (per the MCP spec's RFC 9728 + RFC 8414 requirements), then redirects to the provider's consent page. For API-key integrations like Datadog, the user sees only the fields that matter — a region dropdown and two key fields — not raw URLs or transport selectors. A "Test tools" button validates the connection and shows what tools the agent will have access to. The existing raw form becomes an "Add Your Own" escape hatch for custom/internal servers.
+After this change, admins see a curated marketplace of integrations (Sentry, Datadog, etc.) with one-click "Enable" flows. For OAuth integrations like Sentry, clicking "Enable" uses a template-owned MCP server URL and OAuth client ID, auto-discovers OAuth endpoints from the server URL (RFC 9728 + RFC 8414), then redirects to the provider's consent page. For API-key integrations like Datadog, the user sees only the fields that matter — a region dropdown and two key fields — not raw URLs or transport selectors. A "Test tools" button validates the connection, persists health state, and caches the discovered tool inventory. The existing raw form becomes an "Add Your Own" escape hatch for custom/internal servers, and the legacy settings page becomes a redirect into the new flow.
 
-To see it working: navigate to Settings > Integrations > MCP, see a grid of provider cards, click "Enable" on Sentry, complete the OAuth flow, see "Connected" with 16 tools listed. Then dispatch a prompt to any session — the agent sees Sentry's tools.
+To see it working: navigate to `/{orgSlug}/integrations/mcp`, see a grid of provider cards, click "Enable" on Sentry, complete the OAuth flow, see "Connected" with discovered tools listed, then dispatch a prompt to any session — the agent sees Sentry's tools.
 
 ## User Flows & Wireframes
 
@@ -27,7 +27,7 @@ From the dashboard sidebar or Settings page, the user navigates to the MCP integ
 
     Settings > MCP Integrations
     or
-    Sidebar > Integrations > MCP
+    Sidebar > Integrations > MCP card
 
 ### Flow 1: Marketplace Browse
 
@@ -106,7 +106,7 @@ User clicks "Enable" → security notice modal appears:
     │         Enable MCP Integration                          ✕      │
     │                                                                │
     │  Grant Polaris access to Sentry. You can disable this          │
-    │  integration at any time from settings.                        │
+    │  integration at any time from Integrations.                    │
     │                                                                │
     │  ┌───────────────────────────────────────────────────────┐     │
     │  │  ⚠️  Security Notice                                  │     │
@@ -173,12 +173,12 @@ User clicks "Approve" → redirected back to Polaris → integration page shows 
     │                                                                │
     │  Tools (25 available)                                          │
     │                                                                │
-    │  ☑ search_issues       Search and filter Sentry issues         │
-    │  ☑ get_issue_details   Get detailed info about an issue        │
-    │  ☑ get_event           Retrieve a specific event               │
-    │  ☑ list_projects       List projects in organization           │
-    │  ☑ get_trace           Get full distributed trace              │
-    │  ☑ analyze_with_seer   Use Sentry's AI to root-cause           │
+    │  • search_issues       Search and filter Sentry issues         │
+    │  • get_issue_details   Get detailed info about an issue        │
+    │  • get_event           Retrieve a specific event               │
+    │  • list_projects       List projects in organization           │
+    │  • get_trace           Get full distributed trace              │
+    │  • analyze_with_seer   Use Sentry's AI to root-cause           │
     │    ... 19 more                                     [Show all]  │
     │                                                                │
     │  Last tested: just now · 25 tools discovered                   │
@@ -190,7 +190,7 @@ User clicks "Approve" → redirected back to Polaris → integration page shows 
 
 User can:
 - **Test tools**: re-runs `tools/list` to verify connection is still working
-- **Toggle individual tools**: uncheck tools the agent shouldn't use
+- **Reconnect**: re-run OAuth if the provider token expires or is revoked
 - **Disable**: keeps config but stops injecting into sessions
 - **Remove**: deletes the integration entirely
 
@@ -272,6 +272,11 @@ User clicks the "Add Your Own" card → custom server form:
     │  Authorization endpoint: https://mcp.internal.company.com/...  │
     │  Token endpoint: https://mcp.internal.company.com/...          │
     │                                                                │
+    │  OAuth Client ID *                                             │
+    │  ┌──────────────────────────────────────────┐                  │
+    │  │ polaris-internal-client                  │                  │
+    │  └──────────────────────────────────────────┘                  │
+    │                                                                │
     │  ┌──────────────────────────────────┐                          │
     │  │ Connect with OAuth              │                          │
     │  └──────────────────────────────────┘                          │
@@ -291,7 +296,9 @@ User clicks the "Add Your Own" card → custom server form:
     │                              └──────────────┘                  │
     └─────────────────────────────────────────────────────────────────┘
 
-After enabling, the same security notice modal → same connected state with test tools and tool toggles.
+For custom OAuth servers, Polaris discovers endpoints automatically but still requires a client ID unless Polaris already ships a template-owned client for that provider.
+
+After enabling, the same security notice modal → same connected state with test tools and discovered tool inventory.
 
 ### Flow 5: Managing an installed integration
 
@@ -307,7 +314,7 @@ From the marketplace grid, installed integrations show their status:
     │ OAuth · Org-shared   │  │ API Keys · Org-shared│
     │                      │  │                      │
     │ ● Connected          │  │ ● Connected          │
-    │   25 tools enabled   │  │   12 tools enabled   │
+    │   25 tools discovered│  │   12 tools discovered│
     └──────────────────────┘  └──────────────────────┘
 
 Status chips on cards:
@@ -316,7 +323,7 @@ Status chips on cards:
 - **● Misconfigured** (red) — last test failed
 - **● Not installed** (gray) — not set up yet
 
-Clicking an installed card shows the manage view (same as the post-connect view above) where the admin can test tools, toggle individual tools, disable, or remove.
+Clicking an installed card shows the manage view (same as the post-connect view above) where the admin can test tools, reconnect if needed, disable, or remove.
 
 ### Flow Summary Diagram
 
@@ -357,9 +364,9 @@ Clicking an installed card shows the manage view (same as the post-connect view 
     │   ┌──────────────────────┐  │
     │   │   Test tools         │  │
     │   │   25 tools found     │  │
-    │   │   ☑ search_issues    │  │
-    │   │   ☑ get_event        │  │
-    │   │   ☐ delete_project   │  │
+    │   │   • search_issues    │  │
+    │   │   • get_event        │  │
+    │   │   • delete_project   │  │
     │   │   ...                │  │
     │   └──────────────────────┘  │
     │                             │
@@ -368,16 +375,15 @@ Clicking an installed card shows the manage view (same as the post-connect view 
 
 ## Progress
 
-- [ ] Milestone 1: Integration catalog data model + seed Sentry and Datadog
+- [ ] Milestone 1: Integration catalog + install status model
 - [ ] Milestone 2: Auto-discovery (RFC 9728 + RFC 8414 probing)
-- [ ] Milestone 3: Test tools endpoint (call tools/list on a configured server)
-- [ ] Milestone 4: Marketplace UI (grid, provider cards, enable flow)
+- [ ] Milestone 3: Test tools handshake + health persistence
+- [ ] Milestone 4: Marketplace UI + org-scoped routes
 - [ ] Milestone 5: Sentry one-click OAuth flow (auto-discovered, zero config)
 - [ ] Milestone 6: Datadog region + API key flow
 - [ ] Milestone 7: Security notice + credential ownership UX
-- [ ] Milestone 8: Tool-group controls (post-install tool enable/disable)
-- [ ] Milestone 9: "Add Your Own" custom server form (current UI, refined)
-- [ ] Milestone 10: End-to-end validation
+- [ ] Milestone 8: "Add Your Own" custom server form + legacy redirect
+- [ ] Milestone 9: End-to-end validation
 
 ## Surprises & Discoveries
 
@@ -409,6 +415,10 @@ Clicking an installed card shows the manage view (same as the post-connect view 
   Rationale: The table structure is correct — it stores the org-specific installation state. The template defines the defaults; the installed row stores the org's specific config (tokens, keys, which region). Adding a column is simpler than a new table + FK.
   Date/Author: 2026-03-22 / andreas
 
+- Decision: Marketplace status is derived in the data layer, not assembled ad hoc in React.
+  Rationale: This follows the repo's architecture rule that data produces correct state and the UI just renders. A single query helper should merge catalog templates with installed rows and derive `not_installed`, `needs_auth`, `misconfigured`, or `connected` from row presence, auth state, and last test result.
+  Date/Author: 2026-03-22 / andreas
+
 - Decision: Security notice modal before OAuth redirect, with human-readable permission summary and credential ownership disclosure.
   Rationale: Devin shows "You're about to give Devin significant access to Sentry" with an "I understand" checkbox before redirect. Cline warns users to trust the source. This is especially important because Polaris connections are org-wide — every agent session will use the same auth state. The notice must say what the integration can do (not OAuth jargon) and whether access is personal or org-shared.
   Date/Author: 2026-03-22 / andreas
@@ -417,12 +427,16 @@ Clicking an installed card shows the manage view (same as the post-connect view 
   Rationale: Devin says org-shared and recommends service accounts. Cursor says per-user for cloud agents. These are materially different security models. The user needs to see this before granting access, not after. Template declares `ownershipModel: "org-shared" | "per-user"` and the enable flow surfaces it.
   Date/Author: 2026-03-22 / andreas
 
-- Decision: Tool-group controls — allow users to enable/disable discovered tool groups after installation.
-  Rationale: Cursor's A/B test showed 46.9% token reduction when they added dynamic context discovery for MCP tools. Sentry lets users choose tool groups during OAuth consent. Flooding the agent with every tool is expensive and reduces quality. Polaris should store enabled tool names per installation and filter them at dispatch time.
+- Decision: V1 ships tool inventory and health status, not per-tool filtering.
+  Rationale: The current `mcp_servers` runtime contract and proxy payload do not support an allowlist of tool names. Showing toggles without enforcing them at dispatch would be deceptive. Ship read-only discovery in this plan; treat filtering as a separate end-to-end change once the proxy/runtime contract supports it.
+  Date/Author: 2026-03-22 / andreas
+
+- Decision: No dynamic client registration in this exec plan.
+  Rationale: The current OAuth model stores a client ID and uses PKCE public-client flow. It has no place for dynamically registered client metadata or secrets. Zero-config marketplace entries must provide a known client ID in the catalog; DCR is a separate feature.
   Date/Author: 2026-03-22 / andreas
 
 - Decision: This is not an MVP — ship a production-quality version with Sentry and Datadog as first-class citizens.
-  Rationale: User explicitly requested a strong, complete implementation. No shortcuts on UX, security notices, test tools, or tool controls. Two polished integrations > twenty half-baked ones.
+  Rationale: User explicitly requested a strong, complete implementation. No shortcuts on UX, security notices, test tools, install-state modeling, or route integration. Two polished integrations > twenty half-baked ones.
   Date/Author: 2026-03-22 / andreas
 
 ## Outcomes & Retrospective
@@ -448,13 +462,18 @@ This plan builds on the foundation from exec plan 10 (PR #110). All backend plum
 **What needs to change:**
 - New: `lib/mcp-servers/catalog.ts` — hardcoded integration templates (Sentry, Datadog, etc.)
 - New: `lib/mcp-servers/discovery.ts` — RFC 9728/8414 auto-discovery
-- New: `app/api/mcp-servers/test/route.ts` — test tools endpoint
-- New: `app/(dashboard)/integrations/mcp/page.tsx` — marketplace grid
-- New: `app/(dashboard)/integrations/mcp/[slug]/page.tsx` — per-integration install page
-- Modify: `lib/mcp-servers/schema.ts` — add `catalogSlug` column
+- New: `app/api/mcp-servers/[id]/test/route.ts` — test tools endpoint
+- New: `app/(dashboard)/[orgSlug]/integrations/mcp/page.tsx` — marketplace grid
+- New: `app/(dashboard)/[orgSlug]/integrations/mcp/[slug]/page.tsx` — per-integration install page
+- New: `app/(dashboard)/[orgSlug]/integrations/mcp/custom/page.tsx` — custom server list/create/manage page
+- Modify: `lib/mcp-servers/schema.ts` — add `catalogSlug`, test-status fields, discovered-tool cache, and a unique partial index for catalog installs
+- Modify: `lib/mcp-servers/actions.ts` / `queries.ts` — persist test results and expose a marketplace read model
 - Modify: `app/api/mcp-servers/route.ts` — POST can accept `catalogSlug` and merge template defaults
 - Modify: `app/api/mcp-servers/oauth/start/route.ts` — use auto-discovered endpoints when available
-- Modify: `app/(dashboard)/settings/page.tsx` — link to new integrations page
+- Modify: `app/api/mcp-servers/oauth/callback/route.ts` — redirect to org-scoped marketplace/custom views
+- Modify: `app/(dashboard)/[orgSlug]/integrations/page.tsx` — add MCP entry to the existing integrations overview
+- Modify: `app/(dashboard)/[orgSlug]/settings/page.tsx` — link to the new integrations page
+- Modify: `app/(dashboard)/[orgSlug]/settings/mcp/page.tsx` — redirect legacy traffic into the new marketplace/custom surface
 
 **MCP OAuth auto-discovery flow (verified against Sentry's live endpoints):**
 1. Client sends unauthenticated request to MCP server URL
@@ -468,16 +487,17 @@ This plan builds on the foundation from exec plan 10 (PR #110). All backend plum
    - `code_challenge_methods_supported`: `["plain", "S256"]`
    - `grant_types_supported`: `["authorization_code", "refresh_token"]`
 
-This means: for any spec-compliant OAuth MCP server, the user only needs to provide the server URL. Everything else is auto-discovered.
+This means: for any spec-compliant OAuth MCP server, the endpoints are discoverable from the server URL. Marketplace templates can therefore hide the OAuth plumbing entirely; custom servers still need a client ID unless Polaris has a template-owned one.
 
 **Existing UI patterns to follow:**
-- Integrations page: `app/(dashboard)/integrations/page.tsx` — card-based GitHub installation grid
-- Settings navigation: `app/(dashboard)/settings/page.tsx` — card grid with links to sub-pages
-- Environment page: `app/(dashboard)/settings/environment/page.tsx` — CRUD form + list
+- Integrations page: `app/(dashboard)/[orgSlug]/integrations/page.tsx` — card-based GitHub installation grid
+- Settings navigation: `app/(dashboard)/[orgSlug]/settings/page.tsx` — card grid with links to sub-pages
+- Environment page: `app/(dashboard)/[orgSlug]/settings/environment/page.tsx` — CRUD form + list
+- Legacy MCP page: `app/(dashboard)/[orgSlug]/settings/mcp/page.tsx` exists today, but do not copy its direct `useEffect` pattern. This repo's guidance is to use server-rendered data and explicit event handlers / query abstractions instead.
 
 ## Plan of Work
 
-### Milestone 1: Integration Catalog + Schema Extension
+### Milestone 1: Integration Catalog + Install Status Model
 
 **1a. Catalog definition** — Create `lib/mcp-servers/catalog.ts`. This is a hardcoded array of integration templates:
 
@@ -491,6 +511,7 @@ This means: for any spec-compliant OAuth MCP server, the user only needs to prov
       serverUrl: string | null;        // Fixed URL (Sentry) or null (built from region)
       transport: "streamable-http" | "sse";
       authType: "oauth-discovery" | "static-headers";
+      oauthClientId?: string;          // Required for zero-config OAuth templates
       // For oauth-discovery: endpoints are auto-discovered, no config needed
       // For static-headers: define required header names
       requiredHeaders?: string[];      // ["DD-API-KEY", "DD-APPLICATION-KEY"]
@@ -513,6 +534,7 @@ This means: for any spec-compliant OAuth MCP server, the user only needs to prov
         serverUrl: "https://mcp.sentry.dev/mcp",
         transport: "streamable-http",
         authType: "oauth-discovery",
+        oauthClientId: "<polaris-public-client-id>",
         scopes: "org:read project:write team:write event:write",
         docsUrl: "https://docs.sentry.io/product/sentry-mcp/",
         websiteUrl: "https://sentry.io",
@@ -550,13 +572,47 @@ This means: for any spec-compliant OAuth MCP server, the user only needs to prov
       return MCP_CATALOG.find(t => t.slug === slug);
     }
 
-**1b. Schema extension** — Add `catalogSlug` column to `mcp_servers` table:
+Zero-config OAuth entries must ship with a known `oauthClientId` in the catalog. Dynamic client registration is explicitly out of scope for this exec plan.
+
+**1b. Schema extension** — Extend `mcp_servers` to support marketplace installs and data-driven status:
 
     catalogSlug: text("catalog_slug"), // nullable — null for custom "Add Your Own" servers
+    lastTestStatus: text("last_test_status"), // nullable — "ok" | "error"
+    lastTestError: text("last_test_error"),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastDiscoveredTools: text("last_discovered_tools"), // JSON array cached from latest tools/list
 
-Generate and apply migration.
+Add a unique partial index on `(organizationId, catalogSlug)` for rows where `catalogSlug IS NOT NULL`. This is the real guardrail that enforces one marketplace install per template per org. Keep the existing `(organizationId, name)` uniqueness for custom entries.
 
-**1c. API extension** — Modify `POST /api/mcp-servers` to accept `catalogSlug`. When provided, merge template defaults (serverUrl, transport, authType) into the creation request. The user only provides org-specific values (API keys, region choice).
+Generate and apply migration with `drizzle-kit`; do not hand-write SQL.
+
+**1c. Marketplace read model** — Add a query helper that merges templates with installed rows and computes the card/detail status in one place.
+
+Suggested shape:
+
+    type CatalogInstallStatus =
+      | "not_installed"
+      | "needs_auth"
+      | "misconfigured"
+      | "connected";
+
+    type CatalogInstallationView = {
+      template: McpIntegrationTemplate;
+      server: typeof mcpServers.$inferSelect | null;
+      status: CatalogInstallStatus;
+      toolCount: number;
+      lastTestedAt: Date | null;
+      lastTestError: string | null;
+      discoveredTools: Array<{ name: string; description?: string }> | null;
+    };
+
+Status rules live in the data layer, not in React:
+- `not_installed`: no row for this `catalogSlug`
+- `needs_auth`: row exists, `authType === "oauth"`, and no stored auth tokens
+- `misconfigured`: row exists and `lastTestStatus === "error"`
+- `connected`: installed and no failing test state
+
+**1d. API extension** — Modify `POST /api/mcp-servers` to accept `catalogSlug` for marketplace installs. When provided, merge template defaults server-side (server URL, transport, auth type, OAuth client ID, docs metadata), derive the final URL from region if needed, and reject duplicate installs by `catalogSlug`. The existing raw request shape remains supported for the custom page.
 
 ### Milestone 2: Auto-Discovery (RFC 9728 + RFC 8414)
 
@@ -593,9 +649,9 @@ The function:
 5. Fetches `/.well-known/oauth-authorization-server` from the discovered auth server
 6. Returns the full OAuth config
 
-All fetches use `safeFetch` from url-validation.ts for SSRF protection. Discovery failures return null (non-blocking — template can still provide fallback endpoints).
+All fetches use `safeFetch` from `url-validation.ts` for SSRF protection. Discovery failures return null. Template-backed flows may still succeed if the template already contains the required endpoints; custom flows fall back to manual entry.
 
-### Milestone 3: Test Tools Endpoint
+### Milestone 3: Test Tools Handshake + Health Persistence
 
 Create `app/api/mcp-servers/[id]/test/route.ts`:
 
@@ -605,60 +661,68 @@ This endpoint:
 1. Requires admin auth (`getSessionWithOrgAdmin`)
 2. Loads the MCP server config by id + org
 3. Resolves auth (decrypts headers or OAuth token)
-4. Connects to the MCP server (using the sandbox-agent SDK or direct HTTP)
-5. Calls `tools/list` on the MCP server
+4. Performs a proper MCP handshake (`initialize` + `tools/list`) over the configured transport
+5. Persists `lastTestStatus`, `lastTestError`, `lastTestedAt`, and `lastDiscoveredTools`
 6. Returns the list of discovered tools: `{ tools: [{ name, description, inputSchema }] }`
 7. On failure, returns `{ error: "..." }` with the specific failure reason (auth, network, timeout)
 
 The test must use `safeFetch` for SSRF protection and have a 10-second timeout.
 
-For the actual MCP protocol call, we can use the `SandboxAgent` SDK's session creation + `tools/list` RPC, or implement a lightweight streamable-HTTP client that sends the JSON-RPC `tools/list` method directly. The lightweight approach is better — no sandbox needed, just a direct HTTP call to the MCP server.
+Do not fake this with a one-off raw `tools/list` POST. Reuse an existing MCP client if one is already available in the dependency graph; otherwise add a small server-side helper (for example `lib/mcp-servers/test-client.ts`) that implements the minimum compliant flow for `streamable-http` and `sse`.
 
-### Milestone 4: Marketplace UI
+### Milestone 4: Marketplace UI + Org-Scoped Routes
 
-**4a. Marketplace grid page** — Create `app/(dashboard)/integrations/mcp/page.tsx`:
+**4a. Org-scoped routes** — Create:
+
+- `app/(dashboard)/[orgSlug]/integrations/mcp/page.tsx`
+- `app/(dashboard)/[orgSlug]/integrations/mcp/[slug]/page.tsx`
+- `app/(dashboard)/[orgSlug]/integrations/mcp/custom/page.tsx`
+
+Use server components for initial data loading and small client components for interactive forms/actions. Do not copy the old `settings/mcp` page's direct `useEffect` pattern.
+
+**4b. Marketplace grid page** — `app/(dashboard)/[orgSlug]/integrations/mcp/page.tsx`:
 
 - Title: "MCP Integrations"
 - Subtitle: "Connect external tools to your agent sessions"
 - Filter tabs: All, Installed, Not Installed (+ category filters)
 - Grid of provider cards, each showing: icon, name, badge, description, auth type, category, install status
 - "Add Your Own" card at the end (links to the raw form)
-- Each card links to `/integrations/mcp/[slug]` for marketplace entries or `/integrations/mcp/custom` for Add Your Own
+- Each card links with `orgPath(orgSlug, ...)` to `/integrations/mcp/[slug]` for marketplace entries or `/integrations/mcp/custom` for Add Your Own
 
-**4b. Per-integration install page** — Create `app/(dashboard)/integrations/mcp/[slug]/page.tsx`:
+**4c. Per-integration install page** — `app/(dashboard)/[orgSlug]/integrations/mcp/[slug]/page.tsx`:
 
 For OAuth integrations (Sentry):
 - Shows: icon, name, badge, description, transport, auth type, docs link, website link
 - Permission summary: "This integration will allow agents to: read issues and stack traces, ..."
 - Ownership notice: "This connection is shared across your workspace. We recommend using a service account."
 - "Enable" button → security notice modal → starts OAuth flow
-- If already installed: shows "Connected" status, "Test tools" button, tool list, "Disable"/"Remove" buttons
+- If already installed: shows derived status, "Test tools" button, cached tool list, "Disable"/"Remove" buttons, and "Reconnect" when auth is missing/stale
 
 For API-key integrations (Datadog):
 - Shows: icon, name, badge, description, region dropdown (pre-filled options)
 - Required fields: DD-API-KEY (password input), DD-APPLICATION-KEY (password input)
 - "Enable" button → creates server with region-derived URL and headers
-- If already installed: shows "Enabled" status, "Test tools" button, tool list, "Disable"/"Remove"
+- If already installed: shows derived status, "Test tools" button, cached tool list, "Disable"/"Remove"
 
-**4c. Settings navigation** — Add "MCP Integrations" card to `app/(dashboard)/settings/page.tsx` or add a sidebar link under "Integrations" in the dashboard layout.
+**4d. Existing navigation surfaces** — Add an MCP card to `app/(dashboard)/[orgSlug]/integrations/page.tsx` and update `app/(dashboard)/[orgSlug]/settings/page.tsx` to link to the marketplace. Reuse the current information architecture rather than inventing a new sidebar subtree.
 
 ### Milestone 5: Sentry One-Click OAuth
 
 Wire up the Sentry template's `authType: "oauth-discovery"` to the auto-discovery flow:
 
-1. User clicks "Enable" on the Sentry card
+1. User clicks "Enable" on `/{orgSlug}/integrations/mcp/sentry`
 2. Frontend calls `POST /api/mcp-servers` with `{ catalogSlug: "sentry" }` — no URL, no auth config needed
-3. Backend loads the template, uses `serverUrl: "https://mcp.sentry.dev/mcp"`, creates the DB row with `authType: "oauth"`
+3. Backend loads the template, uses `serverUrl: "https://mcp.sentry.dev/mcp"` and the template-owned `oauthClientId`, creates the DB row with `authType: "oauth"`
 4. Backend calls `discoverOAuthConfig("https://mcp.sentry.dev/mcp")` to get OAuth endpoints
-5. Backend stores discovered endpoints in the DB row's OAuth columns
+5. Backend stores discovered endpoints (and discovered scopes if helpful) in the DB row's OAuth columns
 6. Frontend redirects to `GET /api/mcp-servers/oauth/start?serverId=<id>`
 7. OAuth start route reads endpoints from DB (populated by discovery) → redirects to Sentry's consent page
-8. User approves → callback → tokens stored → redirect to integration page with "Connected" status
+8. User approves → callback → tokens stored → redirect to `/{orgSlug}/integrations/mcp/sentry?success=connected`
 9. User clicks "Test tools" → shows Sentry's 16+ tools
 
-The key change from the current flow: **no manual endpoint entry**. The user never sees OAuth URLs, client IDs, or scopes. Everything is auto-discovered.
+The key change from the current flow: **no manual endpoint entry**. The user never sees OAuth URLs, client IDs, or scopes. Endpoints are auto-discovered; the client ID comes from the catalog template.
 
-For dynamic client registration: if the discovered server supports it (`registration_endpoint` in metadata), use it to register Polaris as a client. Otherwise, fall back to pre-registered client credentials from the template.
+If discovery unexpectedly fails for Sentry, surface an explicit setup error instead of redirecting into a broken OAuth flow.
 
 ### Milestone 6: Datadog Region + API Key Flow
 
@@ -670,7 +734,7 @@ Wire up the Datadog template's `authType: "static-headers"` with region selectio
 4. Frontend calls `POST /api/mcp-servers` with:
    `{ catalogSlug: "datadog", region: "us1", headers: { "DD-API-KEY": "...", "DD-APPLICATION-KEY": "..." } }`
 5. Backend loads template, resolves `serverUrl` from `regionOptions`, creates server with static auth
-6. Redirects to install page → "Enabled" status, "Test tools" button
+6. Redirects to `/{orgSlug}/integrations/mcp/datadog?success=connected` → "Connected" status, "Test tools" button
 
 ### Milestone 7: Security Notice + Credential Ownership UX
 
@@ -701,61 +765,40 @@ The template's `ownershipModel` field drives which notice is shown. The enable b
 
 This is visible on the marketplace card before the user clicks into the integration.
 
-### Milestone 8: Tool-Group Controls
+### Milestone 8: "Add Your Own" Custom Server + Legacy Redirect
 
-After an integration is connected and tools are discovered, allow admins to enable/disable individual tools or tool groups.
+Refine the existing raw form into a secondary path without losing the ability to manage multiple custom servers:
 
-**8a. Schema extension** — Add `enabledTools` column to `mcp_servers`:
-
-    enabledTools: text("enabled_tools"), // nullable — JSON array of enabled tool names, null = all enabled
-
-When null, all discovered tools are passed to the agent. When set, only the listed tools are included in `sessionInit.mcpServers` tool filtering.
-
-**8b. Tool list UI** — on the per-integration install page (after "Test tools" or on the "Manage" view):
-
-Show all discovered tools grouped logically (if the server provides grouping metadata) or as a flat list. Each tool shows:
-- Name
-- Description
-- Toggle (enabled/disabled)
-- "Select all" / "Deselect all" controls
-
-Default: all tools enabled. The toggle calls `PATCH /api/mcp-servers/:id` with `{ enabledTools: ["tool1", "tool2", ...] }`.
-
-**8c. Dispatch filtering** — In `getResolvedMcpServers()`, after resolving a server, if `enabledTools` is set, include it in the `McpServerEntry` so the proxy can filter tools. This requires a small extension to the SDK-side to pass tool filtering config.
-
-Note: Initial implementation can use the simpler approach of documenting which tools are available but not filtering at the SDK level — the MCP spec doesn't define per-client tool filtering. The UI shows the toggle state for transparency, and full filtering is a fast follow-up if the SDK supports it. This milestone should at minimum: discover tools, show them in the UI, and store the user's selection.
-
-### Milestone 9: "Add Your Own" Custom Server
-
-Refine the existing raw form into a secondary path:
-
-- Accessible via "Add Your Own" card at the end of the marketplace grid
-- Keep the current form structure but improve it:
-  - Try auto-discovery on URL blur (probe for `.well-known` endpoints)
-  - If OAuth is detected, pre-fill endpoints and offer one-click auth
+- `app/(dashboard)/[orgSlug]/integrations/mcp/custom/page.tsx` is the place for custom installs
+- The page lists existing custom servers and includes the create/manage form
+- Keep the current manual form structure but improve it:
+  - Try auto-discovery on URL blur (event handler, not `useEffect`)
+  - If OAuth is detected, pre-fill endpoints and offer OAuth auth with a client-ID field
   - If no OAuth, show the static headers form
   - Show the same security notice modal as marketplace integrations
-- Move from `/settings/mcp` to `/integrations/mcp/custom`
-- After enabling, show the same "Test tools" and tool-group controls as marketplace integrations
+- After enabling, show the same "Test tools" and discovered-tool inventory as marketplace integrations
+- `app/(dashboard)/[orgSlug]/settings/mcp/page.tsx` becomes a redirect to `/{orgSlug}/integrations/mcp/custom`
+- OAuth callback and all success/error redirects should target org-scoped marketplace/custom pages directly; the legacy settings path is only a compatibility redirect
 
-### Milestone 10: End-to-End Validation
+### Milestone 9: End-to-End Validation
 
 1. `pnpm typecheck` passes
 2. `pnpm test:unit` passes
-3. Integration tests pass
-4. Manual: navigate to `/integrations/mcp`, see Sentry and Datadog cards with badges, categories, and ownership labels
-5. Manual: click Enable on Sentry → see security notice modal with permission summary and ownership notice → check "I understand" → OAuth flow → Connected → Test tools shows 16+ tools with enable/disable toggles
-6. Manual: click Enable on Datadog → see security notice → select region, paste keys → Enabled → Test tools shows tools
-7. Manual: "Add Your Own" → enter custom URL → auto-discovery attempted → security notice → configure → test tools
-8. Manual: disable some tools on Sentry → dispatch a prompt → agent sees only enabled tools (or all tools if filtering not yet supported, with the UI state saved for future use)
-9. Dispatch a prompt to a session → agent sees configured MCP server tools
+3. Integration tests pass if the local DB environment is available
+4. Manual: navigate to `/{orgSlug}/integrations`, see the MCP entry, and navigate to `/{orgSlug}/integrations/mcp`
+5. Manual: marketplace cards show badges, ownership labels, and derived status chips from the read model
+6. Manual: click Enable on Sentry → see security notice modal with permission summary and ownership notice → check "I understand" → OAuth flow → Connected → Test tools shows discovered tools and persists status
+7. Manual: click Enable on Datadog → see security notice → select region, paste keys → Connected → Test tools shows discovered tools and persists status
+8. Manual: "Add Your Own" → enter custom URL → auto-discovery attempted → if OAuth, provide client ID → security notice → configure → test tools
+9. Manual: visit `/{orgSlug}/settings/mcp` and confirm it redirects to the new custom-server surface
+10. Dispatch a prompt to a session → agent sees configured MCP server tools
 
 ## Concrete Steps
 
 ### Milestone 1 Commands
 
     mkdir -p lib/mcp-servers
-    # After creating catalog.ts and adding catalogSlug to schema:
+    # After creating catalog.ts and extending schema fields/indexes:
     pnpm exec drizzle-kit generate
     DATABASE_URL=postgresql://polaris:polaris@localhost:5432/polaris pnpm exec drizzle-kit migrate
     pnpm typecheck
@@ -775,28 +818,30 @@ Refine the existing raw form into a secondary path:
 
     pnpm typecheck
     pnpm test:unit
-    # Visual verification in browser at http://localhost:3001/integrations/mcp
+    # Visual verification in browser at http://localhost:3001/<orgSlug>/integrations/mcp
 
 ## Validation and Acceptance
 
 The feature is complete when:
 
-1. **Marketplace works**: Navigate to `/integrations/mcp`. See Sentry and Datadog cards with logos, badges, descriptions, auth type labels, and ownership badges ("Org-shared").
-2. **Sentry zero-config**: Click "Enable" → security notice modal with permission summary + ownership disclosure + "I understand" checkbox → OAuth consent → "Connected" → Test shows 16+ tools with enable/disable toggles. User never enters a URL or OAuth endpoint.
-3. **Datadog region flow**: Click "Enable" → security notice → pick region, paste keys → "Enabled" → Test shows tools with toggles.
+1. **Marketplace works**: Navigate to `/{orgSlug}/integrations/mcp`. See Sentry and Datadog cards with logos, badges, descriptions, auth type labels, ownership badges, and derived status chips.
+2. **Sentry zero-config**: Click "Enable" → security notice modal with permission summary + ownership disclosure + "I understand" checkbox → OAuth consent → "Connected" → Test shows discovered tools. User never enters a URL, OAuth endpoint, or client ID.
+3. **Datadog region flow**: Click "Enable" → security notice → pick region, paste keys → "Connected" → Test shows discovered tools.
 4. **Security notice**: Every enable flow (marketplace + Add Your Own) shows the security notice modal with human-readable permissions and credential ownership before granting access.
-5. **Tool-group controls**: After enabling, admin can toggle individual tools on/off. Selection is persisted.
-6. **Add Your Own**: Enter a custom URL → auto-discovery probes for OAuth → security notice → fallback to manual → test tools → tool controls.
-7. **Test tools**: Shows tool name, description, and input schema for each discovered tool. Status chip on the integration card (Connected / Needs auth / Misconfigured).
-8. **Dispatch works**: Agent sessions include configured MCP servers with resolved auth.
-9. **Typecheck and tests pass**.
+5. **Install status is data-driven**: The marketplace read model derives `Connected` / `Needs auth` / `Misconfigured` / `Not installed` from stored installation state and latest test result. The UI does not invent its own status rules.
+6. **Add Your Own**: Enter a custom URL → auto-discovery probes for OAuth → if OAuth, provide a client ID → security notice → fallback to manual/static headers when needed → test tools → discovered tool inventory.
+7. **Legacy route compatibility**: `/{orgSlug}/settings/mcp` redirects cleanly to the new custom-server surface.
+8. **Test tools**: Shows tool name, description, and input schema for each discovered tool, and persists the latest health/test result.
+9. **Dispatch works**: Agent sessions include configured MCP servers with resolved auth.
+10. **Typecheck and tests pass**.
 
 ## Idempotence and Recovery
 
 - Catalog templates are hardcoded — no migration needed to update them.
 - `catalogSlug` on mcp_servers links installations to templates. If a template changes, existing installations keep their stored config.
 - OAuth auto-discovery is best-effort — if it fails, the system falls back to template-provided or manually-entered endpoints.
-- Test tools is non-destructive (read-only `tools/list` call).
+- Test tools is non-destructive (read-only `initialize` + `tools/list` flow).
+- Latest tool inventory and test status are cached on the row and overwritten on each re-test.
 
 ## Artifacts and Notes
 
@@ -804,17 +849,22 @@ The feature is complete when:
 
     Create: lib/mcp-servers/catalog.ts (integration templates)
     Create: lib/mcp-servers/discovery.ts (RFC 9728 + 8414 auto-discovery)
+    Create: lib/mcp-servers/test-client.ts (minimal MCP handshake for initialize + tools/list, if no reusable client is available)
     Create: app/api/mcp-servers/[id]/test/route.ts (test tools endpoint)
-    Create: app/(dashboard)/integrations/mcp/page.tsx (marketplace grid)
-    Create: app/(dashboard)/integrations/mcp/[slug]/page.tsx (per-integration install/manage)
-    Create: app/(dashboard)/integrations/mcp/custom/page.tsx (Add Your Own form)
+    Create: app/(dashboard)/[orgSlug]/integrations/mcp/page.tsx (marketplace grid)
+    Create: app/(dashboard)/[orgSlug]/integrations/mcp/[slug]/page.tsx (per-integration install/manage)
+    Create: app/(dashboard)/[orgSlug]/integrations/mcp/custom/page.tsx (Add Your Own list/create/manage)
     Create: public/integrations/sentry.svg (provider icon)
     Create: public/integrations/datadog.svg (provider icon)
-    Modify: lib/mcp-servers/schema.ts (add catalogSlug + enabledTools columns)
+    Modify: lib/mcp-servers/schema.ts (add catalogSlug, test-status fields, discovered-tool cache, catalog uniqueness)
+    Modify: lib/mcp-servers/actions.ts (persist latest test results and discovered tools)
+    Modify: lib/mcp-servers/queries.ts (marketplace read model + derived install statuses)
     Modify: app/api/mcp-servers/route.ts (accept catalogSlug, merge template defaults)
-    Modify: app/api/mcp-servers/[id]/route.ts (PATCH accepts enabledTools)
     Modify: app/api/mcp-servers/oauth/start/route.ts (use discovered endpoints)
-    Modify: app/(dashboard)/settings/page.tsx (add integrations link)
+    Modify: app/api/mcp-servers/oauth/callback/route.ts (redirect to org-scoped marketplace/custom views)
+    Modify: app/(dashboard)/[orgSlug]/integrations/page.tsx (add MCP entry)
+    Modify: app/(dashboard)/[orgSlug]/settings/page.tsx (add integrations link)
+    Modify: app/(dashboard)/[orgSlug]/settings/mcp/page.tsx (legacy redirect)
 
 ### Reference: Sentry MCP auto-discovery chain
 
@@ -844,7 +894,10 @@ The feature is complete when:
 ### Edge cases
 
 - **Discovery fails**: Auto-discovery is best-effort. If the server doesn't implement RFC 9728/8414, fall back to template-provided endpoints. If neither exists, show the manual form.
+- **Custom OAuth servers**: Auto-discovery can fill endpoints, but custom servers still require a client ID because dynamic client registration is out of scope.
 - **Template vs installed config divergence**: Once installed, the org's config is independent of the template. Template updates (e.g., new scopes) don't retroactively change existing installations. Users can "Reconnect" to pick up new scopes.
-- **Multiple installations of same template**: Prevented by the (organizationId, name) unique constraint. An org can have one Sentry integration. To connect multiple Sentry orgs, use "Add Your Own" with different names.
+- **Multiple installations of same template**: Prevented by a unique partial index on `(organizationId, catalogSlug)` where `catalogSlug IS NOT NULL`. Custom installs remain separate and can still use different names.
+- **Multiple custom servers**: Managed on the `/integrations/mcp/custom` page, which lists all custom rows and allows creating additional ones.
 - **Test tools timeout**: 10-second timeout on the test call. Show specific error: "Connection timed out", "Authentication failed", "Server returned error".
-- **Dynamic client registration**: If the server's metadata includes `registration_endpoint`, Polaris can register itself dynamically. If not, use pre-configured client ID from the template or prompt user to enter one.
+- **Unknown test state**: A newly connected integration may have no `lastTestStatus` yet. Treat that as connected but untested, and show "Never tested" in the detail view until the first successful or failed test.
+- **Dynamic client registration**: Explicitly out of scope. Marketplace OAuth entries must supply a known client ID in the catalog.

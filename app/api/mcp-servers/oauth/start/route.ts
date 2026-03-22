@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { updateMcpServerOAuthMetadata } from "@/lib/mcp-servers/actions";
+import { discoverOAuthConfig } from "@/lib/mcp-servers/discovery";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { signMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { getAppBaseUrl } from "@/lib/config/urls";
@@ -33,15 +35,44 @@ export const GET = withEvlog(async (req: Request) => {
       { status: 400 },
     );
   }
-  if (
-    !server.oauthClientId ||
-    !server.oauthAuthorizationEndpoint ||
-    !server.oauthTokenEndpoint
-  ) {
+
+  if (!server.oauthClientId) {
     return NextResponse.json(
-      { error: "OAuth metadata incomplete" },
+      { error: "OAuth client ID is missing" },
       { status: 400 },
     );
+  }
+
+  let authorizationEndpoint = server.oauthAuthorizationEndpoint;
+  let tokenEndpoint = server.oauthTokenEndpoint;
+
+  if (!authorizationEndpoint || !tokenEndpoint) {
+    const discovered = await discoverOAuthConfig(server.serverUrl);
+    if (!discovered) {
+      return NextResponse.json(
+        { error: "Could not discover OAuth metadata for this MCP server" },
+        { status: 400 },
+      );
+    }
+    if (
+      discovered.codeChallengeMethodsSupported?.length &&
+      !discovered.codeChallengeMethodsSupported.includes("S256")
+    ) {
+      return NextResponse.json(
+        { error: "OAuth provider does not support S256 PKCE" },
+        { status: 400 },
+      );
+    }
+
+    authorizationEndpoint = discovered.authorizationEndpoint;
+    tokenEndpoint = discovered.tokenEndpoint;
+
+    await updateMcpServerOAuthMetadata(server.id, orgId, {
+      oauthClientId: server.oauthClientId,
+      oauthAuthorizationEndpoint: authorizationEndpoint,
+      oauthTokenEndpoint: tokenEndpoint,
+      oauthScopes: server.oauthScopes,
+    });
   }
 
   // Generate PKCE
@@ -73,7 +104,7 @@ export const GET = withEvlog(async (req: Request) => {
   );
 
   // Build authorization URL
-  const authUrl = new URL(server.oauthAuthorizationEndpoint);
+  const authUrl = new URL(authorizationEndpoint);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", server.oauthClientId);
   authUrl.searchParams.set("redirect_uri", callbackUrl);

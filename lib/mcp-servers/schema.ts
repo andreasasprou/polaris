@@ -5,7 +5,10 @@ import {
   timestamp,
   boolean,
   unique,
+  uniqueIndex,
+  jsonb,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Org-level MCP server configuration.
@@ -23,6 +26,18 @@ export const mcpServers = pgTable(
     authType: text("auth_type").notNull(), // "static" | "oauth"
     encryptedAuthConfig: text("encrypted_auth_config"), // nullable — null for OAuth before authorization
     enabled: boolean("enabled").notNull().default(true),
+    catalogSlug: text("catalog_slug"),
+    lastTestStatus: text("last_test_status"), // "ok" | "error" | null
+    lastTestError: text("last_test_error"),
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastDiscoveredTools: jsonb("last_discovered_tools")
+      .$type<
+        Array<{
+          name: string;
+          description?: string | null;
+          inputSchema?: Record<string, unknown> | null;
+        }>
+      >(),
     // OAuth setup metadata (plaintext — not secrets)
     oauthClientId: text("oauth_client_id"),
     oauthAuthorizationEndpoint: text("oauth_authorization_endpoint"),
@@ -36,5 +51,10 @@ export const mcpServers = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (t) => [unique().on(t.organizationId, t.name)],
+  (t) => [
+    unique().on(t.organizationId, t.name),
+    uniqueIndex("idx_mcp_servers_catalog_slug")
+      .on(t.organizationId, t.catalogSlug)
+      .where(sql`${t.catalogSlug} IS NOT NULL`),
+  ],
 );
