@@ -7,6 +7,7 @@ import {
   casAttemptStatus,
   appendJobEvent,
   getJob,
+  touchAttemptProgress,
 } from "@/lib/jobs/actions";
 import type { CallbackType } from "@/lib/jobs/status";
 import { useLogger } from "@/lib/evlog";
@@ -123,6 +124,7 @@ async function processCallback(input: {
     case "prompt_accepted": {
       await casAttemptStatus(attemptId, ["dispatching"], "accepted", {
         acceptedAt: new Date(),
+        lastProgressAt: new Date(),
       });
       await casJobStatus(jobId, ["pending"], "accepted");
       await appendJobEvent(jobId, "accepted", attemptId);
@@ -278,7 +280,11 @@ async function processCallback(input: {
     }
 
     case "permission_requested": {
-      await casAttemptStatus(attemptId, ["running"], "waiting_human", {
+      // Include "accepted" — HITL callbacks fire immediately while
+      // session_events (which transitions accepted→running) is batched
+      // on a 250ms timer. Without this, the CAS is a no-op if the
+      // agent asks for permission before the first batch flushes.
+      await casAttemptStatus(attemptId, ["accepted", "running"], "waiting_human", {
         lastProgressAt: new Date(),
       });
       await appendJobEvent(jobId, "waiting_human", attemptId, {
@@ -289,7 +295,7 @@ async function processCallback(input: {
     }
 
     case "question_requested": {
-      await casAttemptStatus(attemptId, ["running"], "waiting_human", {
+      await casAttemptStatus(attemptId, ["accepted", "running"], "waiting_human", {
         lastProgressAt: new Date(),
       });
       await appendJobEvent(jobId, "waiting_human", attemptId, {
@@ -338,6 +344,19 @@ async function processCallback(input: {
           })),
         );
       }
+
+      // Update liveness — session_events prove the agent is alive
+      await touchAttemptProgress(attemptId);
+
+      // Transition accepted → running on first session_events batch
+      // (the agent is executing if it's producing events).
+      // CAS ensures this fires only once; subsequent calls are no-ops.
+      // Must transition BOTH attempt and job so downstream HITL CAS
+      // (permission_requested, question_requested) can find the attempt
+      // in "running" as expected.
+      await casAttemptStatus(attemptId, ["accepted"], "running");
+      await casJobStatus(jobId, ["accepted"], "running");
+
       break;
     }
   }

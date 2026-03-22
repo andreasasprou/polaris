@@ -34,6 +34,7 @@ const SWEEPER_LOCK_ID = 42_000_001; // Arbitrary advisory lock ID
  */
 export async function runSweep(): Promise<{
   timedOut: number;
+  staleKilled: number;
   unknownReconciled: number;
   postprocessRetried: number;
   staleSessionsHealed: number;
@@ -58,6 +59,7 @@ export async function runSweep(): Promise<{
     log.set({ sweep: { skipped: true, reason: "lock_held" } });
     return {
       timedOut: 0,
+      staleKilled: 0,
       unknownReconciled: 0,
       postprocessRetried: 0,
       staleSessionsHealed: 0,
@@ -94,6 +96,7 @@ export async function runSweep(): Promise<{
     }
 
     const timedOut = await sweepTimedOutJobs();
+    const staleKilled = await sweepStaleRunningJobs();
     const unknownReconciled = await sweepDispatchUnknown();
     const postprocessRetried = await sweepStuckPostprocess();
     const staleSessionsHealed = await sweepStaleActiveSessions();
@@ -101,10 +104,11 @@ export async function runSweep(): Promise<{
     const stalePendingReplayed = await sweepStalePendingRequests();
     const retriedJobs = await sweepRetryableJobs();
 
-    log.set({ sweep: { timedOut, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, stalePendingReplayed, runtimeController, providerJanitor } });
+    log.set({ sweep: { timedOut, staleKilled, unknownReconciled, postprocessRetried, staleSessionsHealed, staleLocksReleased, stalePendingReplayed, runtimeController, providerJanitor } });
 
     return {
       timedOut,
+      staleKilled,
       unknownReconciled,
       postprocessRetried,
       staleSessionsHealed,
@@ -159,30 +163,132 @@ async function sweepTimedOutJobs(): Promise<number> {
         } catch {
           // Best-effort
         }
-
-        // Destroy sandbox — timed-out work means the sandbox is likely dead or stuck
-        try {
-          const { destroySandbox } = await import("./sandbox-lifecycle");
-          await destroySandbox(job.sessionId);
-        } catch {
-          // Best-effort — controller will catch it next cycle
-        }
       }
 
-      // Mark automation_run as failed so the UI shows the correct status.
-      // Without this, non-review timed-out jobs leave their automation_run
-      // stuck in 'running' forever.
-      if (job.automationRunId) {
-        try {
-          const { updateAutomationRun } = await import("@/lib/automations/actions");
-          await updateAutomationRun(job.automationRunId, {
-            status: "failed",
-            error: "Timed out",
-            completedAt: new Date(),
-          });
-        } catch {
-          // Best-effort
+      if (job.type === "review") {
+        // Review-specific: fail check, release lock, drain queue, destroy sandbox
+        await finalizeFailedReviewJob(job, "Review timed out");
+      } else {
+        // Non-review: generic cleanup
+        if (job.sessionId) {
+          try {
+            const { destroySandbox } = await import("./sandbox-lifecycle");
+            await destroySandbox(job.sessionId);
+          } catch {
+            // Best-effort — controller will catch it next cycle
+          }
         }
+
+        if (job.automationRunId) {
+          try {
+            const { updateAutomationRun } = await import("@/lib/automations/actions");
+            await updateAutomationRun(job.automationRunId, {
+              status: "failed",
+              error: "Timed out",
+              completedAt: new Date(),
+            });
+          } catch {
+            // Best-effort
+          }
+        }
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Detect jobs with no recent progress (sandbox likely dead).
+ * Probes sandbox health before killing — if sandbox is alive, it's a false alarm.
+ */
+async function sweepStaleRunningJobs(): Promise<number> {
+  const log = useLogger();
+  const { getStaleRunningJobs } = await import("@/lib/jobs/actions");
+  const staleJobs = await getStaleRunningJobs(5);
+  let count = 0;
+
+  for (const job of staleJobs) {
+    // Probe sandbox health with three-state result:
+    // "alive" = sandbox responded OK, "dead" = sandbox URL missing or
+    // responded with non-OK, "inconclusive" = network/DNS/timeout error.
+    // Only kill on "dead" — inconclusive could be a transient hiccup.
+    let probeResult: "alive" | "dead" | "inconclusive" = "dead";
+    if (job.sessionId) {
+      try {
+        const { getInteractiveSession } = await import("@/lib/sessions/actions");
+        const session = await getInteractiveSession(job.sessionId);
+        if (session?.sandboxBaseUrl) {
+          try {
+            const response = await fetch(`${session.sandboxBaseUrl}/health`, {
+              signal: AbortSignal.timeout(5_000),
+            });
+            if (response.ok) {
+              const body = await response.json().catch(() => null);
+              probeResult = body?.ok === true ? "alive" : "dead";
+            } else {
+              // Sandbox responded but not healthy — confirmed dead
+              probeResult = "dead";
+            }
+          } catch {
+            // Network error, DNS failure, timeout — inconclusive
+            probeResult = "inconclusive";
+          }
+        }
+        // No sandboxBaseUrl → confirmed dead (never provisioned or already cleaned up)
+      } catch {
+        probeResult = "inconclusive";
+      }
+    }
+
+    if (probeResult === "alive") {
+      log.set({ sweep: { [`staleButAlive_${job.id}`]: true } });
+      continue;
+    }
+
+    if (probeResult === "inconclusive") {
+      // Don't kill — log and retry on the next sweep cycle
+      log.set({ sweep: { [`staleProbeInconclusive_${job.id}`]: true } });
+      continue;
+    }
+
+    // Sandbox is confirmed dead — fail the job
+    const updated = await casJobStatus(
+      job.id,
+      ["accepted", "running"],
+      "failed_terminal",
+    );
+    if (!updated) continue;
+
+    await appendJobEvent(job.id, "timeout", undefined, {
+      reason: "sweeper_stale_progress",
+    });
+    count++;
+    log.set({ sweep: { [`staleKilled_${job.id}`]: true } });
+
+    // Heal session
+    if (job.sessionId) {
+      const { casSessionStatus } = await import("@/lib/sessions/actions");
+      await casSessionStatus(job.sessionId, ["active"], "idle").catch(() => {});
+
+      const { releaseClaimsByClaimant } = await import("@/lib/compute/claims");
+      await releaseClaimsByClaimant(job.sessionId, job.id).catch(() => {});
+    }
+
+    if (job.type === "review") {
+      await finalizeFailedReviewJob(job, "Review stale — sandbox unresponsive");
+    } else {
+      if (job.sessionId) {
+        const { destroySandbox } = await import("./sandbox-lifecycle");
+        await destroySandbox(job.sessionId).catch(() => {});
+      }
+      if (job.automationRunId) {
+        const { updateAutomationRun } = await import("@/lib/automations/actions");
+        await updateAutomationRun(job.automationRunId, {
+          status: "failed",
+          error: "Job stale — sandbox unresponsive",
+          completedAt: new Date(),
+        }).catch(() => {});
       }
     }
   }
@@ -695,6 +801,7 @@ async function sweepStalePendingRequests(): Promise<number> {
  */
 async function finalizeFailedReviewJob(
   job: { id: string; sessionId: string | null; automationId: string | null; automationRunId: string | null; payload: Record<string, unknown>; organizationId: string },
+  errorMessage: string = "Max retry attempts exhausted",
 ): Promise<void> {
   const payload = job.payload;
   const automationSessionId = payload.automationSessionId as string;
@@ -719,7 +826,7 @@ async function finalizeFailedReviewJob(
     const { updateAutomationRun } = await import("@/lib/automations/actions");
     await updateAutomationRun(automationRunId, {
       status: "failed",
-      error: "Max retry attempts exhausted",
+      error: errorMessage,
       completedAt: new Date(),
     }).catch(() => {});
   }
@@ -733,7 +840,7 @@ async function finalizeFailedReviewJob(
         owner,
         repo,
         checkRunId,
-        error: "Review failed after retries",
+        error: errorMessage,
       });
     } catch { /* best-effort */ }
   }
