@@ -197,6 +197,107 @@ describe("parseReviewOutput", () => {
     expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ✅ Polaris Review #4: APPROVE"));
   });
 
+  // ── Regression: Codex reasoning summaries leaked into PR comment ──
+
+  it("strips Codex reasoning summaries that appear as prose paragraphs before the review header", () => {
+    // Exact format from production: Codex emits reasoning summaries as plain
+    // prose paragraphs (not prefixed with thinking markers). These appear in
+    // allOutput before the review header and must be stripped.
+    const codexReasoning = [
+      "Reviewing the scoped diff first to map what changed, what doc contract it touches, and whether any neighboring behavior or guidance needs to move with it. After that I'll dispatch the required docs-only subagent and wait for its result before finalizing the review.",
+      "The diff is tiny but I'm checking the rendered file and git state carefully because the patch as shown adds a duplicate limitation line. I'm dispatching the required docs-only subagent now with a narrow scope: documentation completeness and correctness only.",
+      "The dedicated `codex` CLI isn't installed in this sandbox, so I'm checking what alternate agent tooling is available to satisfy the mandatory docs-only delegation without broadening scope.",
+      "The local worktree doesn't have the advertised head commit yet, and the checked-in file already matches the base doc tail. I'm fetching the PR head commit so I can verify whether the prepared patch is stale or whether the PR actually introduces a duplicate line.",
+      "I've confirmed the PR head now: the only change is a second identical \"Exact branch matching\" bullet at the end of the limitations list.",
+      "The surrounding docs already mention exact matching in two other places, which makes the current change look like an accidental duplicate rather than a missing clarification. There's no evidence of a broader doc omission beyond that.",
+    ].join("\n\n");
+
+    const reviewBody = `## ⚠️ Polaris Review Pass 1: ATTENTION\n\nThis PR is scoped to a single docs change.\n\n🔵 [P2] Duplicate limitation entry\n**File:** \`docs/features/code-reviews.md\` · **Category:** Documentation\n\nDuplicate bullet found.\n\n<sub>Polaris Review Pass 1 · 3d7ccd5 · Automated by Polaris</sub>`;
+
+    const output = codexReasoning + "\n" + makeAgentOutput({
+      verdict: "ATTENTION",
+      body: reviewBody,
+      severityCounts: { P0: 0, P1: 0, P2: 1 },
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.metadata.verdict).toBe("ATTENTION");
+    // Reasoning must NOT appear in comment body
+    expect(result!.commentBody).not.toContain("Reviewing the scoped diff first");
+    expect(result!.commentBody).not.toContain("codex CLI isn't installed");
+    expect(result!.commentBody).not.toContain("I've confirmed the PR head");
+    // Review content must be preserved
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review Pass 1: ATTENTION"));
+    expect(result!.commentBody).toContain("Duplicate limitation entry");
+  });
+
+  it("strips reasoning when header is concatenated without line break (Codex single-chunk regression)", () => {
+    // Codex can emit reasoning + header in a single agent_message_chunk,
+    // so they get joined without \n\n between them. The ## header is NOT
+    // at the start of a line — it follows the last reasoning sentence.
+    const reasoningAndHeader = "The surrounding docs already mention exact matching in two other places.## ⚠️ Polaris Review Pass 1: ATTENTION\n\nThis PR has an issue.\n\n<sub>Polaris Review Pass 1 · abc · Automated by Polaris</sub>";
+
+    const output = makeAgentOutput({
+      verdict: "ATTENTION",
+      body: reasoningAndHeader,
+      severityCounts: { P0: 0, P1: 0, P2: 1 },
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    // Reasoning before ## must be stripped even without a line break
+    expect(result!.commentBody).not.toContain("surrounding docs");
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review Pass 1"));
+  });
+
+  it("uses exact metadata-aware header match over quoted headers in preamble (different verdict)", () => {
+    // Preamble quotes an APPROVE header, but the actual review is ATTENTION.
+    // The exact-match regex targets ATTENTION, skipping the APPROVE quote.
+    const preambleWithQuotedHeader = [
+      "The prompt says to use `## ✅ Polaris Review Pass 1: APPROVE` as the header.",
+      "I'll follow that format for this review.",
+    ].join("\n\n");
+
+    const reviewBody = `## ⚠️ Polaris Review Pass 1: ATTENTION\n\nActual review content here.\n\n<sub>Polaris Review Pass 1 · abc · Automated by Polaris</sub>`;
+
+    const output = preambleWithQuotedHeader + "\n\n" + makeAgentOutput({
+      verdict: "ATTENTION",
+      body: reviewBody,
+      severityCounts: { P0: 0, P1: 0, P2: 1 },
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    expect(result!.commentBody).not.toContain("The prompt says");
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review Pass 1: ATTENTION"));
+  });
+
+  it("uses last match when preamble quotes the SAME verdict/pass header", () => {
+    // Preamble quotes the exact same header as the real review.
+    // The parser must use the LAST match (closest to metadata marker).
+    const preambleWithSameHeader = [
+      "I will write the review as: ## ⚠️ Polaris Review Pass 1: ATTENTION",
+      "Now analyzing the changes...",
+    ].join("\n\n");
+
+    const reviewBody = `## ⚠️ Polaris Review Pass 1: ATTENTION\n\nReal review content.\n\n<sub>Polaris Review Pass 1 · abc · Automated by Polaris</sub>`;
+
+    const output = preambleWithSameHeader + "\n\n" + makeAgentOutput({
+      verdict: "ATTENTION",
+      body: reviewBody,
+      severityCounts: { P0: 0, P1: 0, P2: 1 },
+    });
+
+    const result = parseReviewOutput(output);
+    expect(result).not.toBeNull();
+    // Must use the LAST match — the real header, not the quoted one
+    expect(result!.commentBody).not.toContain("I will write");
+    expect(result!.commentBody).not.toContain("Now analyzing");
+    expect(result!.commentBody).toSatisfy((s: string) => s.startsWith("## ⚠️ Polaris Review Pass 1: ATTENTION"));
+    expect(result!.commentBody).toContain("Real review content");
+  });
+
   it("falls back to full text before marker when no review header found", () => {
     // Edge case: agent wrote a review without the standard header format
     const body = "This PR looks fine. No major issues.\n\n<sub>Footer</sub>";

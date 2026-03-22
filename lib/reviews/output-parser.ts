@@ -1,25 +1,54 @@
-import type { ParsedReviewOutput } from "./types";
+import type { ParsedReviewOutput, ReviewVerdict } from "./types";
 import { ReviewMetadataSchema } from "./types";
 
 const METADATA_MARKER = "<!-- polaris:metadata -->";
 
+const VERDICT_EMOJI: Record<ReviewVerdict, string> = {
+  APPROVE: "✅",
+  ATTENTION: "⚠️",
+  BLOCK: "🚫",
+};
+
 /**
- * Regex matching the review header line the agent is instructed to write.
- * Matches both:
- * - ## ✅ Polaris Review Pass N: APPROVE
- * - ## ✅ Polaris Review #N: APPROVE
+ * Build a regex that matches the exact expected review header for a given
+ * verdict and pass number. This is metadata-aware: we parse metadata first,
+ * then search for the precise header the agent should have written.
+ *
+ * Falls back to a loose pattern if verdict/passNumber aren't available.
  */
-const REVIEW_HEADER_RE =
-  /^##\s+(?:✅|⚠️|🚫|[\u{1F7E0}-\u{1F7FF}])\s+Polaris Review(?:\s+Pass\s+\d+|\s+#\d+)/mu;
+function buildHeaderRegex(verdict?: ReviewVerdict, passNumber?: number): RegExp {
+  if (verdict && passNumber != null) {
+    const emoji = VERDICT_EMOJI[verdict];
+    const escaped = `##\\s+${emoji}\\s+Polaris Review(?:\\s+Pass\\s+${passNumber}|\\s+#${passNumber})`;
+    return new RegExp(escaped, "gu");
+  }
+  // Fallback: any Polaris Review header
+  return /##\s+(?:✅|⚠️|🚫)\s+Polaris Review(?:\s+Pass\s+\d+|\s+#\d+)/gu;
+}
+
+/**
+ * Find the LAST match of a regex in a string.
+ * The real review header is closest to the metadata marker — any earlier
+ * matches are likely quoted headers in reasoning/preamble text.
+ */
+function findLastMatch(text: string, re: RegExp): RegExpMatchArray | null {
+  let last: RegExpMatchArray | null = null;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    last = match;
+  }
+  return last;
+}
 
 /**
  * Parse the agent's review output.
  *
  * Strategy:
  * 1. Find the `<!-- polaris:metadata -->` marker and extract JSON metadata.
- * 2. For the comment body, try to find the review header (`## ✅ Polaris Review Pass N`)
- *    to trim any pre-review text (thinking, tool call output, etc.).
- * 3. If no header is found, use everything before the marker as-is.
+ * 2. Build an exact header regex from the parsed metadata (verdict + pass number).
+ * 3. Find the LAST matching header in the raw body — the real review is closest
+ *    to the metadata marker; earlier matches are likely quoted in preamble text.
+ * 4. If no header is found, use everything before the marker as-is.
  */
 export function parseReviewOutput(
   output: string,
@@ -42,12 +71,15 @@ export function parseReviewOutput(
     return null;
   }
 
-  // Extract comment body: everything before the metadata marker.
   const rawBody = output.slice(0, markerIdx).trim();
 
-  // Try to find the review header to strip any pre-review text
-  // (e.g., thinking output, tool call results from earlier segments).
-  const headerMatch = rawBody.match(REVIEW_HEADER_RE);
+  // Build a precise header regex from parsed metadata, then fall back to loose.
+  const passNumber = metadata.reviewState.reviewCount;
+  const exactRe = buildHeaderRegex(metadata.verdict as ReviewVerdict, passNumber);
+  const fallbackRe = buildHeaderRegex();
+
+  // Use LAST match — the real header is closest to the metadata marker.
+  const headerMatch = findLastMatch(rawBody, exactRe) ?? findLastMatch(rawBody, fallbackRe);
   const commentBody = headerMatch
     ? rawBody.slice(headerMatch.index!).trim()
     : rawBody;
