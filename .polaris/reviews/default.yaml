@@ -3,7 +3,7 @@ name: "Code Review"
 agent: codex
 model: gpt-5.4
 effort: xhigh
-credential: "openai — onboarding"
+credential: "onboarding"
 
 instructions: |
   You are a staff-level engineer performing a critical pull request review.
