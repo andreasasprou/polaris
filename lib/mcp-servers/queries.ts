@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { mcpServers } from "./schema";
 import { decrypt } from "@/lib/credentials/encryption";
@@ -64,6 +64,7 @@ export async function getResolvedMcpServers(
         and(
           eq(mcpServers.organizationId, organizationId),
           eq(mcpServers.enabled, true),
+          isNotNull(mcpServers.encryptedAuthConfig),
         ),
       );
 
@@ -84,9 +85,23 @@ export async function getResolvedMcpServers(
   }
 }
 
+function buildEntry(
+  row: typeof mcpServers.$inferSelect,
+  headers: Record<string, string>,
+): McpServerEntry {
+  return {
+    name: row.name,
+    url: row.serverUrl,
+    transport: row.transport as McpServerEntry["transport"],
+    headers,
+  };
+}
+
 async function resolveServer(
   row: typeof mcpServers.$inferSelect,
 ): Promise<McpServerEntry | null> {
+  // encryptedAuthConfig is pre-filtered to NOT NULL by the SQL query,
+  // but guard defensively in case resolveServer is called directly.
   if (!row.encryptedAuthConfig) return null;
 
   try {
@@ -94,13 +109,7 @@ async function resolveServer(
     const config = JSON.parse(configStr);
 
     if (row.authType === "static") {
-      const staticConfig = config as StaticAuthConfig;
-      return {
-        name: row.name,
-        url: row.serverUrl,
-        transport: row.transport as McpServerEntry["transport"],
-        headers: staticConfig.headers,
-      };
+      return buildEntry(row, (config as StaticAuthConfig).headers);
     }
 
     if (row.authType === "oauth") {
@@ -116,13 +125,11 @@ async function resolveServer(
         const originalEncryptedBlob = row.encryptedAuthConfig!;
 
         if (!oauthConfig.refreshToken || !row.oauthTokenEndpoint) {
-          // No refresh token or endpoint — atomically clear auth (only if blob unchanged)
           await clearMcpServerAuthIfStale(row.id, row.organizationId, originalEncryptedBlob);
           return null;
         }
 
         try {
-          // Use safeFetch: re-validates DNS on every hop, blocks redirects to private IPs
           const { safeFetch } = await import("./url-validation");
           const refreshRes = await safeFetch(row.oauthTokenEndpoint, {
             method: "POST",
@@ -136,23 +143,14 @@ async function resolveServer(
           });
 
           if (!refreshRes.ok) {
-            // Fatal: token revoked or invalid — but only clear if the stored
-            // refresh token still matches the stale one we used. A concurrent
-            // dispatch may have already refreshed successfully.
             if (refreshRes.status === 401 || refreshRes.status === 400) {
               await clearMcpServerAuthIfStale(row.id, row.organizationId, originalEncryptedBlob);
               return null;
             }
             // Non-fatal: use cached token if not yet expired
-            if (oauthConfig.expiresAt > now) {
-              return {
-                name: row.name,
-                url: row.serverUrl,
-                transport: row.transport as McpServerEntry["transport"],
-                headers: { Authorization: `Bearer ${accessToken}` },
-              };
-            }
-            return null;
+            return oauthConfig.expiresAt > now
+              ? buildEntry(row, { Authorization: `Bearer ${accessToken}` })
+              : null;
           }
 
           const tokens = await refreshRes.json();
@@ -161,30 +159,17 @@ async function resolveServer(
           await updateMcpServerAuth(row.id, row.organizationId, {
             accessToken,
             refreshToken: tokens.refresh_token ?? oauthConfig.refreshToken,
-            expiresAt: tokens.expires_in
-              ? now + tokens.expires_in
-              : now + 3600,
+            expiresAt: tokens.expires_in ? now + tokens.expires_in : now + 3600,
           });
         } catch {
           // Timeout or network error — use cached token if valid
-          if (oauthConfig.expiresAt > now) {
-            return {
-              name: row.name,
-              url: row.serverUrl,
-              transport: row.transport as McpServerEntry["transport"],
-              headers: { Authorization: `Bearer ${accessToken}` },
-            };
-          }
-          return null;
+          return oauthConfig.expiresAt > now
+            ? buildEntry(row, { Authorization: `Bearer ${accessToken}` })
+            : null;
         }
       }
 
-      return {
-        name: row.name,
-        url: row.serverUrl,
-        transport: row.transport as McpServerEntry["transport"],
-        headers: { Authorization: `Bearer ${accessToken}` },
-      };
+      return buildEntry(row, { Authorization: `Bearer ${accessToken}` });
     }
 
     return null;
