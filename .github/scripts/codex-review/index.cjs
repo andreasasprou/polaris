@@ -732,10 +732,9 @@ async function postResults({
         state: {
           ...reviewState,
           ...buildInlineReviewTrackingState(activeInlineReviewIds),
-          inlineCommentMap: {
-            ...prevCommentMap,
-            ...newInlineCommentMap,
-          },
+          inlineCommentMap: Object.keys(newInlineCommentMap).length > 0
+            ? { ...prevCommentMap, ...newInlineCommentMap }
+            : prevCommentMap,
         },
         stateCommentId: previousState?.stateCommentId,
       });
