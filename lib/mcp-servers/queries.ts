@@ -96,6 +96,7 @@ async function resolveServer(
     if (row.authType === "static") {
       const staticConfig = config as StaticAuthConfig;
       return {
+        name: row.name,
         url: row.serverUrl,
         transport: row.transport as McpServerEntry["transport"],
         headers: staticConfig.headers,
@@ -115,6 +116,10 @@ async function resolveServer(
           return null;
         }
 
+        // Remember the refresh token we're about to use — needed for
+        // concurrency-safe clearing (only clear if nobody else refreshed).
+        const staleRefreshToken = oauthConfig.refreshToken;
+
         try {
           const refreshRes = await fetch(row.oauthTokenEndpoint, {
             method: "POST",
@@ -128,14 +133,17 @@ async function resolveServer(
           });
 
           if (!refreshRes.ok) {
-            // Fatal: token revoked or invalid
+            // Fatal: token revoked or invalid — but only clear if the stored
+            // refresh token still matches the stale one we used. A concurrent
+            // dispatch may have already refreshed successfully.
             if (refreshRes.status === 401 || refreshRes.status === 400) {
-              await clearMcpServerAuth(row.id, row.organizationId);
+              await conditionalClearAuth(row.id, row.organizationId, staleRefreshToken);
               return null;
             }
             // Non-fatal: use cached token if not yet expired
             if (oauthConfig.expiresAt > now) {
               return {
+                name: row.name,
                 url: row.serverUrl,
                 transport: row.transport as McpServerEntry["transport"],
                 headers: { Authorization: `Bearer ${accessToken}` },
@@ -158,6 +166,7 @@ async function resolveServer(
           // Timeout or network error — use cached token if valid
           if (oauthConfig.expiresAt > now) {
             return {
+              name: row.name,
               url: row.serverUrl,
               transport: row.transport as McpServerEntry["transport"],
               headers: { Authorization: `Bearer ${accessToken}` },
@@ -168,6 +177,7 @@ async function resolveServer(
       }
 
       return {
+        name: row.name,
         url: row.serverUrl,
         transport: row.transport as McpServerEntry["transport"],
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -181,5 +191,33 @@ async function resolveServer(
       err,
     );
     return null;
+  }
+}
+
+/**
+ * Concurrency-safe clear: re-read the row and only clear auth if
+ * the stored refresh token still matches the stale one we tried.
+ * This prevents a concurrent dispatch that successfully refreshed
+ * from having its fresh tokens wiped out.
+ */
+async function conditionalClearAuth(
+  id: string,
+  organizationId: string,
+  staleRefreshToken: string,
+): Promise<void> {
+  try {
+    const current = await findMcpServerByIdAndOrg(id, organizationId);
+    if (!current?.encryptedAuthConfig) return; // already cleared
+
+    const currentConfig = JSON.parse(
+      decrypt(current.encryptedAuthConfig),
+    ) as OAuthAuthConfig;
+
+    // Only clear if the refresh token hasn't been updated by a concurrent refresh
+    if (currentConfig.refreshToken === staleRefreshToken) {
+      await clearMcpServerAuth(id, organizationId);
+    }
+  } catch {
+    // Best-effort — if re-read fails, don't clear (fail-open)
   }
 }

@@ -37,10 +37,8 @@ export const PATCH = withEvlog(
       );
     }
 
-    if (typeof body.enabled === "boolean") {
-      await updateMcpServerEnabled(id, orgId, body.enabled);
-    }
-
+    // Validate all mutations before applying any — prevents partial updates
+    // on requests that will ultimately fail.
     if (body.headers && typeof body.headers === "object") {
       const server = await findMcpServerByIdAndOrg(id, orgId);
       if (!server) {
@@ -55,6 +53,13 @@ export const PATCH = withEvlog(
           { status: 400 },
         );
       }
+    }
+
+    // All validations passed — apply mutations
+    if (typeof body.enabled === "boolean") {
+      await updateMcpServerEnabled(id, orgId, body.enabled);
+    }
+    if (body.headers && typeof body.headers === "object") {
       await updateMcpServerHeaders(id, orgId, body.headers);
     }
 

@@ -36,7 +36,7 @@ function toSdkMcpServers(
   return servers.map((s, i) => {
     const type = s.transport === "sse" ? ("sse" as const) : ("http" as const);
     return {
-      name: new URL(s.url).hostname || `mcp-server-${i}`,
+      name: s.name || `mcp-server-${i}`,
       url: s.url,
       type,
       headers: s.headers

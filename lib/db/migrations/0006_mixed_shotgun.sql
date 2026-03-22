@@ -16,5 +16,3 @@ CREATE TABLE "mcp_servers" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "mcp_servers_organization_id_name_unique" UNIQUE("organization_id","name")
 );
---> statement-breakpoint
-ALTER TABLE "interactive_session_runtimes" ADD COLUMN "agent_server_url" text;

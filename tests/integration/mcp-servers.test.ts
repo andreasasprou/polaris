@@ -150,6 +150,7 @@ describe("mcp-servers", async () => {
 
     // Only the static server should resolve (OAuth has no auth config yet)
     expect(entries.length).toBe(1);
+    expect(entries[0].name).toBe("Test Sentry");
     expect(entries[0].url).toBe("https://mcp.sentry.dev/sse");
     expect(entries[0].transport).toBe("sse");
     expect(entries[0].headers).toBeDefined();
