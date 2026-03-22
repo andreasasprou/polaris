@@ -299,7 +299,9 @@ export async function dispatchPrReview(
           }),
     ]);
 
-    const filteredFiles = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []);
+    // Cap the file list for prompt rendering (separate from the uncapped list used for filters/guidelines)
+    const maxPromptFiles = config.maxPromptFiles ?? 150;
+    const filteredFiles = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []).slice(0, maxPromptFiles);
     const fileClassifications = classifyFiles(filteredFiles, config);
 
     // 8. Build prompt

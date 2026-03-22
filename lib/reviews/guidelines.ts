@@ -1,6 +1,21 @@
 import type { Octokit } from "octokit";
 import type { RepoGuidelines } from "./types";
-import { fetchFileContent } from "./repo-content";
+import { fetchFileContent as fetchFileContentStrict } from "./repo-content";
+
+/**
+ * Best-effort file fetch for guidelines — swallows all errors.
+ * Guidelines are optional; a transient GitHub API error (rate limit, 500)
+ * on AGENTS.md must not abort the entire review.
+ */
+async function fetchFileContent(
+  ...args: Parameters<typeof fetchFileContentStrict>
+): Promise<string | null> {
+  try {
+    return await fetchFileContentStrict(...args);
+  } catch {
+    return null;
+  }
+}
 
 const GUIDELINE_FILES = [
   "AGENTS.md",
