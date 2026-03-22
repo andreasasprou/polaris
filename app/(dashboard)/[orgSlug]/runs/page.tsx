@@ -84,7 +84,7 @@ export default function RunsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-medium">Runs</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Runs</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           All automation runs across your organization.
         </p>

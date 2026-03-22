@@ -143,7 +143,7 @@ export default function RunDetailPage() {
           Runs
         </Link>
         <span className="text-muted-foreground">/</span>
-        <h1 className="text-2xl font-medium">
+        <h1 className="text-xl font-semibold tracking-tight">
           {run.automationName ?? "Run"}
         </h1>
         <StatusBadge status={run.status} />

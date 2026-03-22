@@ -88,7 +88,7 @@ export default function AutomationRunsPage() {
           Automation
         </Link>
         <span className="text-muted-foreground">/</span>
-        <h1 className="text-2xl font-medium">Run History</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Run History</h1>
       </div>
 
       {loading ? (

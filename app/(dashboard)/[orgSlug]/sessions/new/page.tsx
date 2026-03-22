@@ -105,7 +105,7 @@ export default function NewSessionPage() {
   return (
     <div className="mx-auto max-w-xl flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-medium">New Session</h1>
+        <h1 className="text-xl font-semibold tracking-tight">New Session</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Start an interactive agent session.
         </p>

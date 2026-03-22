@@ -23,7 +23,7 @@ export default async function NewAutomationPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-medium">New automation</h1>
+        <h1 className="text-xl font-semibold tracking-tight">New automation</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Set up a new agent workflow triggered by GitHub events.
         </p>

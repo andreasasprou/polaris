@@ -12,7 +12,7 @@ export default async function SettingsPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-medium">Settings</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Manage your workspace settings.
         </p>

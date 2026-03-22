@@ -43,7 +43,7 @@ export default function SessionsPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-medium">Sessions</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Sessions</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Interactive agent sessions.
           </p>

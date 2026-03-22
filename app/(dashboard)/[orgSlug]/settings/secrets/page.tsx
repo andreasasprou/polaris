@@ -251,7 +251,7 @@ export default function SecretsPage() {
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-medium">API Keys</h1>
+        <h1 className="text-xl font-semibold tracking-tight">API Keys</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Manage your AI provider API keys and key pools. Keys are encrypted at rest.
         </p>

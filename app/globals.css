@@ -4,73 +4,117 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Color system: Pure Cursor Glass product tokens.
+ * Base: #141414 (neutral near-black), Chrome: #F7F7F7 (neutral near-white)
+ * All surfaces/text/borders derived via color-mix(in oklab, base N%, ...)
+ * Status colors: exact Cursor hex values.
+ * Ref: docs/references/cursor-glass-product-colors.md
+ */
+
+/* ── Light mode ── */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.58 0.22 27);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --background: #F7F7F7;
+    --foreground: #141414;
+    --card: #FCFCFC;
+    --card-foreground: #141414;
+    --popover: #FCFCFC;
+    --popover-foreground: #141414;
+    --primary: #141414;
+    --primary-foreground: #FCFCFC;
+    --secondary: color-mix(in oklab, #141414 8%, transparent);
+    --secondary-foreground: #141414;
+    --muted: color-mix(in oklab, #141414 6%, transparent);
+    --muted-foreground: color-mix(in oklab, #141414 48%, transparent);
+    --accent: color-mix(in oklab, #141414 6%, transparent);
+    --accent-foreground: #141414;
+    --destructive: #CF2D56;
+    --border: color-mix(in oklab, #141414 8%, transparent);
+    --input: color-mix(in oklab, #141414 12%, transparent);
+    --ring: #3C7CAB;
     --chart-1: oklch(0.809 0.105 251.813);
     --chart-2: oklch(0.623 0.214 259.815);
     --chart-3: oklch(0.546 0.245 262.881);
     --chart-4: oklch(0.488 0.243 264.376);
     --chart-5: oklch(0.424 0.199 265.638);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --radius: 0.5rem;
+    --sidebar: #F3F3F3;
+    --sidebar-foreground: #141414;
+    --sidebar-primary: #141414;
+    --sidebar-primary-foreground: #FCFCFC;
+    --sidebar-accent: color-mix(in oklab, #141414 8%, transparent);
+    --sidebar-accent-foreground: #141414;
+    --sidebar-border: color-mix(in oklab, #141414 8%, transparent);
+    --sidebar-ring: #3C7CAB;
+
+    /* ── Status colors (exact Cursor hex values) ── */
+    --status-active: #3C7CAB;
+    --status-success: #1F8A65;
+    --status-warning: #C08532;
+    --status-error: #CF2D56;
+    --status-info: #7754D9;
+    --status-idle: color-mix(in oklab, #141414 48%, transparent);
+    --status-active-dim: color-mix(in oklab, #3C7CAB 12%, transparent);
+    --status-success-dim: color-mix(in oklab, #1F8A65 12%, transparent);
+    --status-warning-dim: color-mix(in oklab, #C08532 12%, transparent);
+    --status-error-dim: color-mix(in oklab, #CF2D56 12%, transparent);
+    --status-info-dim: color-mix(in oklab, #7754D9 12%, transparent);
+
+    /* ── Brand (Cursor orange #F54E00) ── */
+    --brand: #F54E00;
+    --brand-dim: color-mix(in oklab, #F54E00 12%, transparent);
 }
 
+/* ── Dark mode ── */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.87 0.00 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.371 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --background: #141414;
+    --foreground: #FCFCFC;
+    --card: color-mix(in oklab, #FCFCFC 8%, #141414);
+    --card-foreground: #FCFCFC;
+    --popover: color-mix(in oklab, #FCFCFC 8%, #141414);
+    --popover-foreground: #FCFCFC;
+    --primary: #FCFCFC;
+    --primary-foreground: #141414;
+    --secondary: color-mix(in oklab, #FCFCFC 8%, transparent);
+    --secondary-foreground: #FCFCFC;
+    --muted: color-mix(in oklab, #FCFCFC 8%, transparent);
+    --muted-foreground: color-mix(in oklab, #FCFCFC 48%, transparent);
+    --accent: color-mix(in oklab, #FCFCFC 6%, transparent);
+    --accent-foreground: #FCFCFC;
+    --destructive: #CF2D56;
+    --border: color-mix(in oklab, #FCFCFC 8%, transparent);
+    --input: color-mix(in oklab, #FCFCFC 12%, transparent);
+    --ring: #3C7CAB;
     --chart-1: oklch(0.809 0.105 251.813);
     --chart-2: oklch(0.623 0.214 259.815);
     --chart-3: oklch(0.546 0.245 262.881);
     --chart-4: oklch(0.488 0.243 264.376);
     --chart-5: oklch(0.424 0.199 265.638);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar: #141414;
+    --sidebar-foreground: #FCFCFC;
+    --sidebar-primary: #FCFCFC;
+    --sidebar-primary-foreground: #141414;
+    --sidebar-accent: color-mix(in oklab, #FCFCFC 8%, transparent);
+    --sidebar-accent-foreground: #FCFCFC;
+    --sidebar-border: color-mix(in oklab, #FCFCFC 8%, transparent);
+    --sidebar-ring: #3C7CAB;
+
+    /* ── Status colors (same hex, brighter variants for dark bg) ── */
+    --status-active: #5AA0D0;
+    --status-success: #3CB88A;
+    --status-warning: #D4A24A;
+    --status-error: #E06C75;
+    --status-info: #9580E0;
+    --status-idle: color-mix(in oklab, #FCFCFC 48%, transparent);
+    --status-active-dim: color-mix(in oklab, #5AA0D0 12%, transparent);
+    --status-success-dim: color-mix(in oklab, #3CB88A 12%, transparent);
+    --status-warning-dim: color-mix(in oklab, #D4A24A 12%, transparent);
+    --status-error-dim: color-mix(in oklab, #E06C75 12%, transparent);
+    --status-info-dim: color-mix(in oklab, #9580E0 12%, transparent);
+
+    /* ── Brand (dark) ── */
+    --brand: #F54E00;
+    --brand-dim: color-mix(in oklab, #F54E00 12%, transparent);
 }
 
 @theme inline {
@@ -113,6 +157,21 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+
+    /* ── Status color tokens ── */
+    --color-status-active: var(--status-active);
+    --color-status-success: var(--status-success);
+    --color-status-warning: var(--status-warning);
+    --color-status-error: var(--status-error);
+    --color-status-info: var(--status-info);
+    --color-status-idle: var(--status-idle);
+    --color-status-active-dim: var(--status-active-dim);
+    --color-status-success-dim: var(--status-success-dim);
+    --color-status-warning-dim: var(--status-warning-dim);
+    --color-status-error-dim: var(--status-error-dim);
+    --color-status-info-dim: var(--status-info-dim);
+    --color-brand: var(--brand);
+    --color-brand-dim: var(--brand-dim);
 }
 
 @layer base {
@@ -125,6 +184,66 @@
   html {
     @apply font-sans;
     }
+}
+
+/* ── Autofill override (prevent Chrome's light blue autofill background in dark mode) ── */
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--card) inset !important;
+  -webkit-text-fill-color: var(--foreground) !important;
+  caret-color: var(--foreground) !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* ── Scrollbar styling (Cursor-inspired: near-invisible, reveal on hover) ── */
+
+::-webkit-scrollbar {
+  width: 14px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--foreground) 20%, transparent);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--foreground) 30%, transparent);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--foreground) 40%, transparent);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Liveness animations ── */
+
+@keyframes breathing-glow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.68 0.12 230 / 0); }
+  50% { box-shadow: 0 0 12px 2px oklch(0.68 0.12 230 / 0.12); }
+}
+
+@keyframes attention-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.75 0.14 75 / 0); }
+  50% { box-shadow: 0 0 10px 2px oklch(0.75 0.14 75 / 0.15); }
+}
+
+.animate-breathing-glow {
+  animation: breathing-glow 2.5s ease-in-out infinite;
+}
+
+.animate-attention-pulse {
+  animation: attention-pulse 1.8s ease-in-out infinite;
 }
 
 /* ── Session chat animations ── */
@@ -174,7 +293,9 @@
     color: var(--muted-foreground);
   }
   .animate-pulse-bright,
-  .animate-pulse-dim {
+  .animate-pulse-dim,
+  .animate-breathing-glow,
+  .animate-attention-pulse {
     animation: none;
     opacity: 0.4;
   }
