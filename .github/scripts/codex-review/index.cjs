@@ -452,7 +452,7 @@ async function resolveCommentThreads({
         `, { threadId: thread.id });
         resolvedCount++;
       } catch (e) {
-        log(`Failed to resolve thread ${thread.id}: ${e.message}`);
+        log(`Failed to resolve thread ${thread.id}: ${e.message} ${JSON.stringify(e.errors || [])}`);
       }
     }
 
