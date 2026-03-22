@@ -6,6 +6,8 @@
  * the same lock/queue/cleanup path.
  */
 
+import { useLogger } from "@/lib/evlog";
+
 export async function finalizeReviewRun(input: {
   automationSessionId: string;
   automationRunId: string;
@@ -17,6 +19,7 @@ export async function finalizeReviewRun(input: {
   const {
     releaseAutomationSessionLock,
     clearPendingReviewRequest,
+    setPendingReviewRequest,
     createAutomationRun,
     getAutomationSession,
   } = await import("@/lib/automations/actions");
@@ -41,6 +44,7 @@ export async function finalizeReviewRun(input: {
 
   // 3. Dispatch queued review if pending
   if (pending && automationId) {
+    const log = useLogger();
     try {
       const session = await getAutomationSession(automationSessionId);
 
@@ -52,6 +56,8 @@ export async function finalizeReviewRun(input: {
         automationSessionId,
         interactiveSessionId: session?.interactiveSessionId,
       });
+
+      log.set({ queueReplay: { automationSessionId, headSha: pending.headSha, runId: run.id } });
 
       const { dispatchPrReview } = await import(
         "@/lib/orchestration/pr-review"
@@ -70,9 +76,21 @@ export async function finalizeReviewRun(input: {
         } as never,
       });
     } catch (err) {
-      console.error(
-        `[review-lifecycle] Failed to dispatch queued review: ${err instanceof Error ? err.message : err}`,
-      );
+      // Re-queue the pending request so the next webhook or sweeper can retry.
+      // Without this, a transient failure permanently loses the queued review.
+      try {
+        await setPendingReviewRequest(automationSessionId, pending);
+      } catch {
+        // Last resort — if re-queue also fails, at least log it
+      }
+      log.set({
+        queueReplay: {
+          automationSessionId,
+          headSha: pending.headSha,
+          error: err instanceof Error ? err.message : String(err),
+          requeued: true,
+        },
+      });
     }
   }
 }
