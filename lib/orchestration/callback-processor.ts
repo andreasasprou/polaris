@@ -347,6 +347,10 @@ async function processCallback(input: {
       // Transition accepted → running on first session_events batch
       // (the agent is executing if it's producing events).
       // CAS ensures this fires only once; subsequent calls are no-ops.
+      // Must transition BOTH attempt and job so downstream HITL CAS
+      // (permission_requested, question_requested) can find the attempt
+      // in "running" as expected.
+      await casAttemptStatus(attemptId, ["accepted"], "running");
       await casJobStatus(jobId, ["accepted"], "running");
 
       break;
