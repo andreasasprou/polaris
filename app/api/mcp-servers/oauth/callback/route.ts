@@ -1,6 +1,8 @@
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
-import { getOrgSlugById, getSessionWithOrg } from "@/lib/auth/session";
+import { auth } from "@/lib/auth";
+import { getOrgSlugById, hasOrganizationMembership } from "@/lib/auth/session";
 import { updateMcpServerAuth } from "@/lib/mcp-servers/actions";
 import { verifyMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
@@ -55,30 +57,51 @@ function redirectWithQuery(
   return NextResponse.redirect(location);
 }
 
-export const GET = withEvlog(async (req: Request) => {
-  const { session, orgId } = await getSessionWithOrg();
-  const orgSlug = await getOrgSlugById(orgId);
-  const baseUrl = getAppBaseUrl();
-  const marketplacePath = getMarketplacePath(orgSlug);
-
-  if (!(await isOrgAdmin(session.user.id, orgId))) {
-    return redirectWithQuery(baseUrl, marketplacePath, "error", "unauthorized");
+async function getFallbackMarketplacePath(activeOrgId: string | null | undefined) {
+  if (!activeOrgId) {
+    return "/onboarding";
   }
 
+  const activeOrgSlug = await getOrgSlugById(activeOrgId).catch(() => null);
+  return activeOrgSlug ? getMarketplacePath(activeOrgSlug) : "/integrations";
+}
+
+export const GET = withEvlog(async (req: Request) => {
+  const baseUrl = getAppBaseUrl();
+  const reqHeaders = await headers();
+  const session = await auth.api.getSession({ headers: reqHeaders }).catch(() => null);
+
+  if (!session) {
+    return NextResponse.redirect(new URL("/login", baseUrl));
+  }
+
+  const fallbackMarketplacePath = await getFallbackMarketplacePath(
+    session.session.activeOrganizationId,
+  );
   const url = new URL(req.url);
   const state = url.searchParams.get("state");
   let trustedPayload = state ? verifyMcpOAuthState(state) : null;
-  if (
-    trustedPayload &&
-    (trustedPayload.userId !== session.user.id || trustedPayload.orgId !== orgId)
-  ) {
+  if (trustedPayload && trustedPayload.userId !== session.user.id) {
     trustedPayload = null;
   }
 
-  let errorPath = marketplacePath;
-  if (trustedPayload) {
-    const stateServer = await findMcpServerByIdAndOrg(trustedPayload.serverId, orgId);
-    errorPath = getServerPath(orgSlug, stateServer);
+  let trustedOrgSlug: string | null = null;
+  let trustedServer: Awaited<ReturnType<typeof findMcpServerByIdAndOrg>> | null = null;
+  let errorPath = fallbackMarketplacePath;
+  if (
+    trustedPayload
+    && await hasOrganizationMembership(session.user.id, trustedPayload.orgId)
+  ) {
+    trustedOrgSlug = await getOrgSlugById(trustedPayload.orgId).catch(() => null);
+    if (trustedOrgSlug) {
+      trustedServer = await findMcpServerByIdAndOrg(
+        trustedPayload.serverId,
+        trustedPayload.orgId,
+      );
+      errorPath = getServerPath(trustedOrgSlug, trustedServer);
+    }
+  } else {
+    trustedPayload = null;
   }
 
   const oauthError = url.searchParams.get("error");
@@ -92,19 +115,32 @@ export const GET = withEvlog(async (req: Request) => {
   if (!code || !state) {
     return redirectWithQuery(
       baseUrl,
-      marketplacePath,
+      fallbackMarketplacePath,
       "error",
       "missing code or state",
     );
   }
 
   const payload = trustedPayload;
-  if (!payload) {
-    return redirectWithQuery(baseUrl, marketplacePath, "error", "invalid state");
+  if (!payload || !trustedOrgSlug) {
+    return redirectWithQuery(
+      baseUrl,
+      fallbackMarketplacePath,
+      "error",
+      "invalid state",
+    );
   }
 
-  const server = await findMcpServerByIdAndOrg(payload.serverId, orgId);
-  const targetPath = getServerPath(orgSlug, server);
+  const targetPath = getServerPath(trustedOrgSlug, trustedServer);
+
+  if (!(await isOrgAdmin(session.user.id, payload.orgId))) {
+    return redirectWithQuery(baseUrl, targetPath, "error", "unauthorized");
+  }
+
+  const server = trustedServer ?? await findMcpServerByIdAndOrg(
+    payload.serverId,
+    payload.orgId,
+  );
 
   if (!server || !server.oauthTokenEndpoint || !server.oauthClientId) {
     return redirectWithQuery(baseUrl, targetPath, "error", "server not found");
@@ -169,21 +205,21 @@ export const GET = withEvlog(async (req: Request) => {
   }
 
   const now = Math.floor(Date.now() / 1000);
-  await updateMcpServerAuth(payload.serverId, orgId, {
+  await updateMcpServerAuth(payload.serverId, payload.orgId, {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token ?? "",
     expiresAt: tokens.expires_in ? now + tokens.expires_in : now + 3600,
   });
 
-  const headers = new Headers();
-  headers.append(
+  const responseHeaders = new Headers();
+  responseHeaders.append(
     "Set-Cookie",
     `mcp_oauth_verifier_${payload.serverId}=; HttpOnly; Path=/api/mcp-servers/oauth; Max-Age=0`,
   );
 
   const location = new URL(targetPath, baseUrl);
   location.searchParams.set("success", "connected");
-  headers.set("Location", location.toString());
+  responseHeaders.set("Location", location.toString());
 
-  return new Response(null, { status: 302, headers });
+  return new Response(null, { status: 302, headers: responseHeaders });
 });

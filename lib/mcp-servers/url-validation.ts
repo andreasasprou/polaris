@@ -3,6 +3,11 @@ import https from "node:https";
 import net from "node:net";
 import { Readable } from "node:stream";
 
+const CROSS_ORIGIN_REDIRECT_HEADER_ALLOWLIST = new Set([
+  "accept",
+  "content-type",
+]);
+
 function normalizeHostname(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1)
@@ -189,6 +194,8 @@ export async function safeFetch(
 ): Promise<Response> {
   const MAX_REDIRECTS = 3;
   let currentUrl = url;
+  let currentHeaders = new Headers(init.headers);
+  const body = init.body ? await bodyToString(init.body) : undefined;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (!isValidUrl(currentUrl)) {
@@ -207,11 +214,8 @@ export async function safeFetch(
       servername: originalHostname,
       method: (init.method ?? "GET") as string,
       path: parsed.pathname + parsed.search,
-      headers: {
-        ...Object.fromEntries(new Headers(init.headers).entries()),
-        Host: parsed.port ? `${originalHostname}:${parsed.port}` : originalHostname,
-      },
-      body: init.body ? await bodyToString(init.body) : undefined,
+      headers: buildRequestHeaders(currentHeaders, originalHostname, parsed.port),
+      body,
       signal: init.signal as AbortSignal | undefined,
     });
 
@@ -228,7 +232,9 @@ export async function safeFetch(
     if (!location) {
       throw new Error(`Redirect ${res.statusCode} without Location header`);
     }
-    currentUrl = new URL(location, currentUrl).toString();
+    const nextUrl = new URL(location, currentUrl).toString();
+    currentHeaders = getRedirectHeaders(currentHeaders, currentUrl, nextUrl);
+    currentUrl = nextUrl;
   }
 
   throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
@@ -240,6 +246,8 @@ export async function safeStreamingFetch(
 ): Promise<Response> {
   const MAX_REDIRECTS = 3;
   let currentUrl = url;
+  let currentHeaders = new Headers(init.headers);
+  const body = init.body ? await bodyToString(init.body) : undefined;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (!isValidUrl(currentUrl)) {
@@ -258,11 +266,8 @@ export async function safeStreamingFetch(
       servername: originalHostname,
       method: (init.method ?? "GET") as string,
       path: parsed.pathname + parsed.search,
-      headers: {
-        ...Object.fromEntries(new Headers(init.headers).entries()),
-        Host: parsed.port ? `${originalHostname}:${parsed.port}` : originalHostname,
-      },
-      body: init.body ? await bodyToString(init.body) : undefined,
+      headers: buildRequestHeaders(currentHeaders, originalHostname, parsed.port),
+      body,
       signal: init.signal as AbortSignal | undefined,
     });
 
@@ -278,7 +283,9 @@ export async function safeStreamingFetch(
     if (!location) {
       throw new Error(`Redirect ${res.statusCode} without Location header`);
     }
-    currentUrl = new URL(location, currentUrl).toString();
+    const nextUrl = new URL(location, currentUrl).toString();
+    currentHeaders = getRedirectHeaders(currentHeaders, currentUrl, nextUrl);
+    currentUrl = nextUrl;
   }
 
   throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
@@ -291,6 +298,37 @@ async function bodyToString(body: BodyInit | null | undefined): Promise<string |
   if (body instanceof URLSearchParams) return body.toString();
   if (body instanceof ArrayBuffer) return Buffer.from(body).toString();
   return String(body);
+}
+
+function buildRequestHeaders(
+  headers: Headers,
+  hostname: string,
+  port: string,
+): Record<string, string> {
+  return {
+    ...Object.fromEntries(headers.entries()),
+    Host: port ? `${hostname}:${port}` : hostname,
+  };
+}
+
+function getRedirectHeaders(
+  headers: Headers,
+  currentUrl: string,
+  nextUrl: string,
+): Headers {
+  if (new URL(currentUrl).origin === new URL(nextUrl).origin) {
+    return new Headers(headers);
+  }
+
+  const redirectHeaders = new Headers();
+  for (const [key, value] of headers.entries()) {
+    if (!CROSS_ORIGIN_REDIRECT_HEADER_ALLOWLIST.has(key.toLowerCase())) {
+      continue;
+    }
+    redirectHeaders.set(key, value);
+  }
+
+  return redirectHeaders;
 }
 
 /** Low-level HTTPS request that connects to a specific IP with TLS SNI override. */

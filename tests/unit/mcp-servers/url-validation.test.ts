@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { resolve4Mock, resolve6Mock, httpsRequestMock } = vi.hoisted(() => ({
@@ -23,6 +24,7 @@ vi.mock("node:https", () => ({
 const {
   isPrivateHostname,
   safeFetch,
+  safeStreamingFetch,
   validateOAuthEndpoints,
   validateServerFetchUrl,
 } = await import("@/lib/mcp-servers/url-validation");
@@ -123,5 +125,145 @@ describe("mcp URL validation", () => {
     ).rejects.toThrow(
       "oauthTokenEndpoint must be a valid HTTPS URL that does not resolve to a private/internal address",
     );
+  });
+
+  it("drops auth headers on cross-origin redirects in safeFetch", async () => {
+    resolve4Mock.mockResolvedValue(["203.0.113.10"]);
+    httpsRequestMock
+      .mockImplementationOnce((options, callback) => {
+        const req = new EventEmitter() as EventEmitter & {
+          write: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+
+        req.write = vi.fn();
+        req.end = vi.fn(() => {
+          const res = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            headers: Record<string, string>;
+          };
+
+          res.statusCode = 302;
+          res.headers = { location: "https://redirect.example.com/token" };
+          callback(res);
+          res.emit("end");
+        });
+        req.destroy = vi.fn();
+
+        return req;
+      })
+      .mockImplementationOnce((options, callback) => {
+        expect(options.headers).not.toHaveProperty("authorization");
+        expect(options.headers).not.toHaveProperty("x-api-key");
+        expect(options.headers).toMatchObject({
+          accept: "application/json",
+          "content-type": "application/json",
+          Host: "redirect.example.com",
+        });
+
+        const req = new EventEmitter() as EventEmitter & {
+          write: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+
+        req.write = vi.fn();
+        req.end = vi.fn(() => {
+          const res = new EventEmitter() as EventEmitter & {
+            statusCode: number;
+            headers: Record<string, string>;
+          };
+
+          res.statusCode = 200;
+          res.headers = { "content-type": "application/json" };
+          callback(res);
+          res.emit("data", Buffer.from('{"ok":true}'));
+          res.emit("end");
+        });
+        req.destroy = vi.fn();
+
+        return req;
+      });
+
+    const response = await safeFetch("https://oauth.example.com/token", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: "Bearer secret-token",
+        "X-Api-Key": "secret-api-key",
+      },
+      body: JSON.stringify({ hello: "world" }),
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("drops auth headers on cross-origin redirects in safeStreamingFetch", async () => {
+    resolve4Mock.mockResolvedValue(["203.0.113.10"]);
+    httpsRequestMock
+      .mockImplementationOnce((options, callback) => {
+        const req = new EventEmitter() as EventEmitter & {
+          write: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+
+        req.write = vi.fn();
+        req.end = vi.fn(() => {
+          const res = Readable.from([]) as Readable & {
+            statusCode: number;
+            headers: Record<string, string>;
+          };
+
+          res.statusCode = 307;
+          res.headers = { location: "https://stream.example.com/sse" };
+          callback(res);
+        });
+        req.destroy = vi.fn();
+
+        return req;
+      })
+      .mockImplementationOnce((options, callback) => {
+        expect(options.headers).not.toHaveProperty("authorization");
+        expect(options.headers).not.toHaveProperty("x-api-key");
+        expect(options.headers).toMatchObject({
+          accept: "text/event-stream",
+          Host: "stream.example.com",
+        });
+
+        const req = new EventEmitter() as EventEmitter & {
+          write: ReturnType<typeof vi.fn>;
+          end: ReturnType<typeof vi.fn>;
+          destroy: ReturnType<typeof vi.fn>;
+        };
+
+        req.write = vi.fn();
+        req.end = vi.fn(() => {
+          const res = Readable.from(["data: ready\n\n"]) as Readable & {
+            statusCode: number;
+            headers: Record<string, string>;
+          };
+
+          res.statusCode = 200;
+          res.headers = { "content-type": "text/event-stream" };
+          callback(res);
+        });
+        req.destroy = vi.fn();
+
+        return req;
+      });
+
+    const response = await safeStreamingFetch("https://oauth.example.com/sse", {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: "Bearer secret-token",
+        "X-Api-Key": "secret-api-key",
+      },
+    });
+
+    expect(response.status).toBe(200);
   });
 });

@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
-  getSessionWithOrgMock,
+  headersMock,
+  getSessionMock,
+  hasOrganizationMembershipMock,
   getOrgSlugByIdMock,
   updateMcpServerAuthMock,
   verifyMcpOAuthStateMock,
   findMcpServerByIdAndOrgMock,
   dbSelectMock,
 } = vi.hoisted(() => ({
-  getSessionWithOrgMock: vi.fn(),
+  headersMock: vi.fn(),
+  getSessionMock: vi.fn(),
+  hasOrganizationMembershipMock: vi.fn(),
   getOrgSlugByIdMock: vi.fn(),
   updateMcpServerAuthMock: vi.fn(),
   verifyMcpOAuthStateMock: vi.fn(),
@@ -16,8 +20,20 @@ const {
   dbSelectMock: vi.fn(),
 }));
 
+vi.mock("next/headers", () => ({
+  headers: headersMock,
+}));
+
+vi.mock("@/lib/auth", () => ({
+  auth: {
+    api: {
+      getSession: getSessionMock,
+    },
+  },
+}));
+
 vi.mock("@/lib/auth/session", () => ({
-  getSessionWithOrg: getSessionWithOrgMock,
+  hasOrganizationMembership: hasOrganizationMembershipMock,
   getOrgSlugById: getOrgSlugByIdMock,
 }));
 
@@ -67,11 +83,13 @@ const { GET } = await import("@/app/api/mcp-servers/oauth/callback/route");
 describe("GET /api/mcp-servers/oauth/callback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getSessionWithOrgMock.mockResolvedValue({
-      orgId: "org-1",
-      session: { user: { id: "user-1" } },
+    headersMock.mockResolvedValue(new Headers());
+    getSessionMock.mockResolvedValue({
+      user: { id: "user-1" },
+      session: { activeOrganizationId: "org-2" },
     });
     getOrgSlugByIdMock.mockResolvedValue("acme");
+    hasOrganizationMembershipMock.mockResolvedValue(true);
     dbSelectMock.mockReturnValue({
       from: () => ({
         where: () => ({
@@ -105,5 +123,37 @@ describe("GET /api/mcp-servers/oauth/callback", () => {
       "https://polaris.example.com/acme/integrations/mcp/sentry?error=Access+was+denied+by+the+provider",
     );
     expect(updateMcpServerAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the signed state org even when the active org changed before callback", async () => {
+    getOrgSlugByIdMock
+      .mockResolvedValueOnce("beta")
+      .mockResolvedValueOnce("acme");
+    verifyMcpOAuthStateMock.mockReturnValue({
+      orgId: "org-1",
+      userId: "user-1",
+      serverId: "server-1",
+      nonce: "nonce-1",
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    findMcpServerByIdAndOrgMock.mockResolvedValue({
+      id: "server-1",
+      catalogSlug: "sentry",
+      oauthTokenEndpoint: null,
+      oauthClientId: null,
+    });
+
+    const response = await GET(
+      new Request(
+        "https://polaris.example.com/api/mcp-servers/oauth/callback?code=code-123&state=signed-state",
+      ),
+    );
+
+    expect(hasOrganizationMembershipMock).toHaveBeenCalledWith("user-1", "org-1");
+    expect(findMcpServerByIdAndOrgMock).toHaveBeenCalledWith("server-1", "org-1");
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://polaris.example.com/acme/integrations/mcp/sentry?error=server+not+found",
+    );
   });
 });
