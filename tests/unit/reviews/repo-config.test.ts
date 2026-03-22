@@ -172,6 +172,30 @@ describe("RepoReviewDefinitionSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("rejects invalid effort level", () => {
+    const result = RepoReviewDefinitionSchema.safeParse({
+      name: "Test",
+      effort: "turbo",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown top-level keys", () => {
+    const result = RepoReviewDefinitionSchema.safeParse({
+      name: "Test",
+      unknownField: "value",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown filter keys (catches typos)", () => {
+    const result = RepoReviewDefinitionSchema.safeParse({
+      name: "Test",
+      filters: { skipLables: ["no-review"] }, // typo: "skipLables"
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ── mergeWithConnector ──
@@ -273,15 +297,17 @@ describe("mergeWithConnector", () => {
   });
 
   it("overrides agentType from YAML", () => {
-    const def: RepoReviewDefinition = { name: "Test", agent: "codex" };
+    const def: RepoReviewDefinition = { name: "Test", agent: "claude" };
     const result = mergeWithConnector(def, baseAutomation);
-    expect(result.agentType).toBe("codex");
+    // baseAutomation.agentType is "codex", YAML overrides to "claude"
+    expect(result.agentType).toBe("claude");
   });
 
   it("overrides model from YAML", () => {
-    const def: RepoReviewDefinition = { name: "Test", model: "gpt-5.4" };
+    const def: RepoReviewDefinition = { name: "Test", model: "o3" };
     const result = mergeWithConnector(def, baseAutomation);
-    expect(result.model).toBe("gpt-5.4");
+    // baseAutomation.model is "gpt-5.4", YAML overrides to "o3"
+    expect(result.model).toBe("o3");
   });
 
   it("overrides effort from YAML", () => {

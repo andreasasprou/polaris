@@ -159,10 +159,10 @@ export async function dispatchPrReview(
         modelParams: resolved.modelParams,
       };
 
-      // Resolve credential slug to actual ID
+      // Resolve credential slug to actual ID (scoped by agent type)
       if (repoConfigResult.definition.credential) {
         const { resolveCredentialSlug } = await import("@/lib/reviews/repo-config");
-        const credRef = await resolveCredentialSlug(orgId, repoConfigResult.definition.credential);
+        const credRef = await resolveCredentialSlug(orgId, repoConfigResult.definition.credential, resolvedRuntime.agentType);
         if (!credRef) {
           const errorMsg = `Review config error: credential "${repoConfigResult.definition.credential}" not found. Check that the key pool name or API key label exists in your organization settings.`;
           const { failCheck } = await import("@/lib/reviews/github");
@@ -301,7 +301,7 @@ export async function dispatchPrReview(
 
     // Cap the file list for prompt rendering (separate from the uncapped list used for filters/guidelines)
     const maxPromptFiles = config.maxPromptFiles ?? 150;
-    const filteredFiles = filterIgnoredPaths(allChangedFiles, config.ignorePaths ?? []).slice(0, maxPromptFiles);
+    const filteredFiles = reviewedPaths.slice(0, maxPromptFiles);
     const fileClassifications = classifyFiles(filteredFiles, config);
 
     // 8. Build prompt
@@ -337,21 +337,20 @@ export async function dispatchPrReview(
     // which violates the DB CHECK constraint (both cannot be set).
     const effectiveSecretId = resolvedRuntime?.credentialOverride
       ? resolvedRuntime.credentialOverride.agentSecretId
-      : automation.agentSecretId;
+      : automation.agentSecretId ?? null;
     const effectivePoolId = resolvedRuntime?.credentialOverride
       ? resolvedRuntime.credentialOverride.keyPoolId
-      : automation.keyPoolId;
+      : automation.keyPoolId ?? null;
 
     // Detect if YAML changed the agent or credential vs what the existing session was created with.
     // If so, we need a fresh session — the old sandbox, agent session IDs, and credentials are stale.
+    // Compare unconditionally — covers YAML added, changed, or removed (falling back to connector).
     const { getInteractiveSession: getSessionForDriftCheck } = await import("@/lib/sessions/actions");
     const currentSession = await getSessionForDriftCheck(targetSessionId);
-    const runtimeDrifted = currentSession && resolvedRuntime && (
+    const runtimeDrifted = currentSession && (
       currentSession.agentType !== effectiveAgentType ||
-      (resolvedRuntime.credentialOverride && (
-        currentSession.agentSecretId !== effectiveSecretId ||
-        currentSession.keyPoolId !== effectivePoolId
-      ))
+      (currentSession.agentSecretId ?? null) !== effectiveSecretId ||
+      (currentSession.keyPoolId ?? null) !== effectivePoolId
     );
 
     if (reviewScope === "reset" || runtimeDrifted) {

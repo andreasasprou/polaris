@@ -70,7 +70,7 @@ This is a load-bearing decision. If config were read from the PR head, a PR auth
 - A PR that modifies `.polaris/reviews/` is reviewed under the *current* rules, not the proposed ones
 - This matches how CI workflows work (`.github/workflows/` changes don't affect the current run)
 
-The same trust boundary must apply to `AGENTS.md` and `REVIEW_GUIDELINES.md`. **Current code does not do this yet** — `dispatchPrReview()` currently passes the PR head SHA into `loadRepoGuidelines()`. Phase 1 must move guideline loading to `event.baseRef` at the same time as repo-config loading so all repo-owned instructions are read from the same trusted ref.
+The same trust boundary applies to `AGENTS.md` and `REVIEW_GUIDELINES.md`. `dispatchPrReview()` now loads guidelines from `event.baseRef` (the base branch), alongside repo-config loading, so all repo-owned instructions are read from the same trusted ref.
 
 **Which ref exactly:** Use `event.baseRef` (the branch name, e.g. `"main"`), NOT `event.baseSha` (the commit SHA). The branch name gives the latest merged state of the config, which is what we want — if someone merges a config change between the PR being opened and a new push, the latest config should apply. `octokit.rest.repos.getContent({ ref: "main" })` resolves to the branch tip.
 

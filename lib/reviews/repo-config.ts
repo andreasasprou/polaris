@@ -7,12 +7,15 @@ import { fetchFileContent } from "./repo-content";
 
 // ── Zod schema (YAML keys normalized to camelCase at parse boundary) ──
 
+// Valid effort levels across all agents (union of Claude + Codex)
+const VALID_EFFORT_LEVELS = ["low", "medium", "high", "max", "xhigh"] as const;
+
 export const RepoReviewDefinitionSchema = z.object({
   name: z.string().min(1),
   instructions: z.string().optional(),
   agent: z.enum(["claude", "codex"]).optional(),
   model: z.string().optional(),
-  effort: z.string().optional(),
+  effort: z.enum(VALID_EFFORT_LEVELS).optional(),
   credential: z.string().optional(),
   filters: z
     .object({
@@ -22,14 +25,16 @@ export const RepoReviewDefinitionSchema = z.object({
       skipBots: z.boolean().optional(),
       skipLabels: z.array(z.string()).optional(),
     })
+    .strict()
     .optional(),
   fileClassification: z
     .object({
       production: z.array(z.string()),
       relaxed: z.array(z.string()),
     })
+    .strict()
     .optional(),
-});
+}).strict();
 
 export type RepoReviewDefinition = z.infer<typeof RepoReviewDefinitionSchema>;
 
@@ -270,12 +275,33 @@ export function mergeWithConnector(
 // ── Credential slug resolution ──
 
 /**
+ * Map agent type to compatible credential providers.
+ * Used to ensure credential resolution doesn't cross provider boundaries.
+ */
+function getCompatibleProviders(agentType: AgentType): string[] {
+  switch (agentType) {
+    case "claude":
+      return ["anthropic"];
+    case "codex":
+      return ["openai"];
+    case "opencode":
+      return ["anthropic", "openai"];
+    case "amp":
+      return ["anthropic"];
+  }
+}
+
+/**
  * Resolve a credential slug from YAML to a CredentialRef.
- * Tries key pool name first, then secret label. Returns null if not found.
+ * Tries key pool name first, then secret label.
+ * Scoped by agent type to prevent cross-provider resolution
+ * (e.g. resolving an Anthropic secret for a Codex review).
+ * Returns null if not found or incompatible.
  */
 export async function resolveCredentialSlug(
   organizationId: string,
   slug: string,
+  agentType: AgentType,
 ): Promise<
   | { type: "pool"; poolId: string }
   | { type: "secret"; secretId: string }
@@ -284,20 +310,26 @@ export async function resolveCredentialSlug(
   const { db } = await import("@/lib/db");
   const { keyPools } = await import("@/lib/key-pools/schema");
   const { secrets } = await import("@/lib/secrets/schema");
-  const { eq, and, isNull } = await import("drizzle-orm");
+  const { eq, and, isNull, inArray } = await import("drizzle-orm");
 
-  // 1. Try key pool by name
+  const providers = getCompatibleProviders(agentType);
+
+  // 1. Try key pool by name (scoped to compatible providers)
   const [pool] = await db
     .select({ id: keyPools.id })
     .from(keyPools)
-    .where(and(eq(keyPools.organizationId, organizationId), eq(keyPools.name, slug)))
+    .where(and(
+      eq(keyPools.organizationId, organizationId),
+      eq(keyPools.name, slug),
+      inArray(keyPools.provider, providers),
+    ))
     .limit(1);
 
   if (pool) {
     return { type: "pool", poolId: pool.id };
   }
 
-  // 2. Try secret by label (non-revoked only)
+  // 2. Try secret by label (non-revoked, scoped to compatible providers)
   const [secret] = await db
     .select({ id: secrets.id })
     .from(secrets)
@@ -306,6 +338,7 @@ export async function resolveCredentialSlug(
         eq(secrets.organizationId, organizationId),
         eq(secrets.label, slug),
         isNull(secrets.revokedAt),
+        inArray(secrets.provider, providers),
       ),
     )
     .limit(1);

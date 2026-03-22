@@ -61,6 +61,7 @@ vi.mock("@/lib/automations/actions", () => ({
   tryAcquireAutomationSessionLock: vi.fn().mockResolvedValue(true),
   releaseAutomationSessionLock: vi.fn().mockResolvedValue(undefined),
   setPendingReviewRequest: vi.fn().mockResolvedValue(undefined),
+  swapAutomationSessionInteractiveSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/automations/queries", () => ({
@@ -117,7 +118,7 @@ vi.mock("@/lib/reviews/repo-config", () => ({
 vi.mock("@/lib/reviews/diff", () => ({
   fetchFullFileList: vi.fn().mockImplementation((...args: unknown[]) => {
     calls.fetchFullFileList.push(args);
-    return Promise.resolve(["src/index.ts", "package-lock.json", "src/lib/utils.ts"]);
+    return Promise.resolve(["src/index.ts", "yarn.lock", "src/lib/utils.ts"]);
   }),
   fetchPRDiff: vi.fn().mockResolvedValue({
     diff: "diff content",
@@ -150,9 +151,9 @@ vi.mock("@/lib/reviews/classification", () => ({
   classifyFiles: vi.fn().mockReturnValue(new Map()),
   filterIgnoredPaths: vi.fn().mockImplementation(
     (files: string[], patterns: string[]) => {
-      // Simulate real filtering: remove *.lock
+      // Simulate real minimatch: *.lock matches yarn.lock but NOT package-lock.json
       if (patterns.includes("*.lock")) {
-        return files.filter((f: string) => !f.endsWith(".lock") && !f.endsWith(".json"));
+        return files.filter((f: string) => !f.endsWith(".lock"));
       }
       return files;
     },
@@ -173,8 +174,11 @@ vi.mock("@/lib/sessions/actions", () => ({
     sdkSessionId: "sdk-1",
     nativeAgentSessionId: null,
     agentType: "claude",
+    agentSecretId: null,
+    keyPoolId: null,
   }),
   casSessionStatus: vi.fn().mockResolvedValue(true),
+  createInteractiveSession: vi.fn().mockResolvedValue({ id: "isession-new" }),
 }));
 
 vi.mock("@/lib/jobs/callback-auth", () => ({
@@ -313,7 +317,7 @@ describe("dispatchPrReview wiring", () => {
     expect(calls.shouldReviewPR.length).toBe(1);
     const [_event, _config, changedFiles] = calls.shouldReviewPR[0];
     // Should be the full uncapped list, not a capped subset
-    expect(changedFiles).toEqual(["src/index.ts", "package-lock.json", "src/lib/utils.ts"]);
+    expect(changedFiles).toEqual(["src/index.ts", "yarn.lock", "src/lib/utils.ts"]);
   });
 
   it("loads guidelines from event.baseRef with reviewed paths", async () => {
