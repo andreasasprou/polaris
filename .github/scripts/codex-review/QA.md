@@ -43,8 +43,8 @@
 | S2 | Second review updates state | Same state comment updated (not a new one) | PASS |
 | S3 | State contains correct SHA | `last_reviewed_head_sha` matches HEAD after review | PASS |
 | S4 | Review count increments | `review_count` goes 1 → 2 → 3 → 4 | PASS |
-| S5 | Open issues persist | Issues raised in review #1 appear in state for review #2 | PASS |
-| S6 | Resolved issues tracked | When a fix is pushed, resolved issues appear in review | PASS — Review #4 noted "parseUserId now rejects invalid input" |
+| S5 | Open issues persist | Issues raised in review pass 1 appear in state for pass 2 | PASS |
+| S6 | Resolved issues tracked | When a fix is pushed, resolved issues appear in review | PASS — Review Pass 4 noted "parseUserId now rejects invalid input" |
 | S7 | `/codex-review reset` clears state | New state comment created, count resets to 1 | untested |
 
 ## Stale Comment Management
@@ -53,16 +53,16 @@
 |---|----------|----------|--------|
 | C1 | Second review marks first stale | First review gets "Superseded" banner + collapsed body | PASS |
 | C2 | Already-stale comment not double-marked | Re-running doesn't wrap in nested `<details>` | PASS |
-| C3 | Review #N references correct number | Stale banner says "See Review #N" | PASS |
-| C4 | Latest review is NOT stale | Only previous reviews are stale-marked | PASS — verified: reviews 1-3 stale, review 4 current |
+| C3 | Review pass label references correct number | Stale banner says "See Codex Review Pass N" | PASS |
+| C4 | Latest review is NOT stale | Only previous reviews are stale-marked | PASS — verified: review passes 1-3 stale, pass 4 current |
 
 ## Check Run
 
 | # | Scenario | Expected | Status |
 |---|----------|----------|--------|
-| K1 | Review succeeds with OK | Check: success, title "Review #N: OK" | PASS |
-| K2 | Review finds P0 | Check: failure, title "Review #N: BLOCK" | untested |
-| K3 | Review finds P1 only | Check: success, title "Review #N: ATTENTION" | PASS |
+| K1 | Review succeeds with OK | Check: success, title "Codex Review Pass N: OK" | PASS |
+| K2 | Review finds P0 | Check: failure, title "Codex Review Pass N: BLOCK" | untested |
+| K3 | Review finds P1 only | Check: success, title "Codex Review Pass N: ATTENTION" | PASS |
 | K4 | Codex fails to produce output | Check: failure, title "Review Failed" | untested |
 | K5 | Review skipped (bot) | Check: neutral, title "Review Skipped" | untested |
 | K6 | No new commits | Check: success, title "No New Commits" | untested |
@@ -72,12 +72,12 @@
 
 | # | Scenario | Expected | Status |
 |---|----------|----------|--------|
-| Q1 | Review header format | `## Codex Review #N — Verdict: [BLOCK|ATTENTION|OK]` | PASS |
+| Q1 | Review header format | `## Codex Review Pass N — Verdict: [BLOCK|ATTENTION|OK]` | PASS |
 | Q2 | Review has Scope section | Lists what was reviewed | PASS |
 | Q3 | Review has Summary section | 1-3 bullets of what changed | PASS |
 | Q4 | Issues have required fields | Severity, category, file:lines, failure scenario, fix | PASS |
-| Q5 | OK verdict skips issue sections | No empty P0/P1/P2 headers | PASS — Review #4 (OK) only shows P2 |
-| Q6 | Incremental review references prior issues | Mentions resolved/carried-forward issues | PASS — Review #4 notes both P1 fixes |
+| Q5 | OK verdict skips issue sections | No empty P0/P1/P2 headers | PASS — Review Pass 4 (OK) only shows P2 |
+| Q6 | Incremental review references prior issues | Mentions resolved/carried-forward issues | PASS — Review Pass 4 notes both P1 fixes |
 | Q7 | Guidelines loaded | If AGENTS.md exists, review references its rules | PASS |
 | Q8 | Real file paths | Review cites actual `file:line` not placeholders | PASS — after sandbox fix |
 
@@ -118,9 +118,9 @@
 | # | Scenario | Expected | Status |
 |---|----------|----------|--------|
 | R1 | Model provides inlineAnchors | Inline comments appear on diff lines | untested — model hasn't seen new prompt yet |
-| R2 | Model provides no anchors | Summary comment only, no inline review | PASS — graceful no-op |
+| R2 | Model provides no anchors | Summary comment only; previous inline review is cleared or retained for retry if dismissal fails | PASS — unit tested |
 | R3 | Invalid anchor lines (422) | Summary posted, inline fails silently | untested (code handles it) |
-| R4 | Previous inline review dismissed | Old inline review dismissed on new review | untested |
+| R4 | Previous inline review dismissed | Old inline review is dismissed before a replacement review is posted | PASS — unit tested |
 | R5 | lastCommentId is always issue comment ID | Never stores review ID in lastCommentId | PASS (by design) |
 | R6 | Anchor data not persisted in reviewState | openIssues has no line/startLine/body/suggestion | PASS (by design — extractInlineAnchors strips them) |
 | R7 | Multi-line comments include start_side | start_side: "RIGHT" when start_line present | PASS (unit tested via buildReviewComments) |
