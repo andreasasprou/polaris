@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useTheme } from "next-themes";
 import { ChevronRightIcon } from "lucide-react";
 import {
@@ -9,52 +9,49 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { DiffView, DiffModeEnum } from "@git-diff-view/react";
-import "@git-diff-view/react/styles/diff-view.css";
+import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 import type { FileChange } from "@/lib/diff/types";
 
 const MAX_DISPLAY_LINES = 5000;
 
-/** Map common file extensions to highlight.js language identifiers. */
-function langFromPath(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    mjs: "javascript",
-    cjs: "javascript",
-    json: "json",
-    md: "markdown",
-    mdx: "markdown",
-    css: "css",
-    scss: "scss",
-    html: "html",
-    yaml: "yaml",
-    yml: "yaml",
-    py: "python",
-    rs: "rust",
-    go: "go",
-    rb: "ruby",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    sql: "sql",
-    graphql: "graphql",
-    gql: "graphql",
-    toml: "toml",
-    xml: "xml",
-    svg: "xml",
-    java: "java",
-    kt: "kotlin",
-    swift: "swift",
-    c: "c",
-    cpp: "cpp",
-    h: "c",
-    hpp: "cpp",
+/**
+ * Reconstruct old/new file content from a unified diff string.
+ * Walks each line and separates into old (deletions + context) and new (additions + context).
+ */
+function splitDiffToOldNew(diff: string): { oldValue: string; newValue: string } {
+  const lines = diff.split("\n");
+  const oldLines: string[] = [];
+  const newLines: string[] = [];
+
+  for (const line of lines) {
+    // Skip file headers and hunk headers
+    if (
+      line.startsWith("diff --git") ||
+      line.startsWith("index ") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ") ||
+      line.startsWith("@@ ") ||
+      line.startsWith("\\")
+    ) {
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      newLines.push(line.slice(1));
+    } else if (line.startsWith("-")) {
+      oldLines.push(line.slice(1));
+    } else {
+      // Context line
+      const content = line.startsWith(" ") ? line.slice(1) : line;
+      oldLines.push(content);
+      newLines.push(content);
+    }
+  }
+
+  return {
+    oldValue: oldLines.join("\n"),
+    newValue: newLines.join("\n"),
   };
-  return map[ext] ?? "";
 }
 
 export function DiffFileSection({ file }: { file: FileChange }) {
@@ -62,18 +59,10 @@ export function DiffFileSection({ file }: { file: FileChange }) {
   const { resolvedTheme } = useTheme();
 
   const fileName = file.path.split("/").pop() ?? file.path;
-  const lang = langFromPath(file.path);
-  const diffTheme = resolvedTheme === "dark" ? "dark" : "light";
   const tooLarge = file.parsedLines.length > MAX_DISPLAY_LINES;
+  const isDark = resolvedTheme === "dark";
 
-  const diffData = useMemo(
-    () => ({
-      oldFile: { fileName: file.path, fileLang: lang, content: "" },
-      newFile: { fileName: file.path, fileLang: lang, content: "" },
-      hunks: [file.diff],
-    }),
-    [file.path, file.diff, lang],
-  );
+  const { oldValue, newValue } = splitDiffToOldNew(file.diff);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -116,13 +105,20 @@ export function DiffFileSection({ file }: { file: FileChange }) {
               Diff too large to display ({file.parsedLines.length.toLocaleString()} lines)
             </div>
           ) : (
-            <DiffView
-              data={diffData}
-              diffViewMode={DiffModeEnum.Unified}
-              diffViewTheme={diffTheme}
-              diffViewHighlight
-              diffViewWrap
-              diffViewFontSize={12}
+            <ReactDiffViewer
+              oldValue={oldValue}
+              newValue={newValue}
+              splitView={false}
+              useDarkTheme={isDark}
+              compareMethod={DiffMethod.LINES}
+              hideLineNumbers={false}
+              styles={{
+                contentText: {
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontSize: "12px",
+                  lineHeight: "1.5",
+                },
+              }}
             />
           )}
         </div>
