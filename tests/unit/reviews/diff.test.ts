@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { buildChangedLineIndex } from "@/lib/reviews/diff";
 
 /**
  * Tests for lib/reviews/diff.ts
@@ -16,6 +17,109 @@ import { describe, it, expect } from "vitest";
  */
 
 describe("reviews/diff", () => {
+  describe("buildChangedLineIndex", () => {
+    it("tracks touched prior-side lines across multiple files", () => {
+      const diff = [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -10,3 +10,3 @@",
+        " line 10",
+        "-old line 11",
+        "+new line 11",
+        " line 12",
+        "diff --git a/src/b.ts b/src/b.ts",
+        "@@ -30,2 +30,0 @@",
+        "-old 30",
+        "-old 31",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/a.ts")).toEqual([{ start: 11, end: 11 }]);
+      expect(index.get("src/b.ts")).toEqual([{ start: 30, end: 31 }]);
+    });
+
+    it("excludes unchanged context lines within a changed hunk", () => {
+      const diff = [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -6,3 +6,3 @@",
+        " line 6",
+        "-line 7",
+        "+updated line 7",
+        " line 8",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/a.ts")).toEqual([{ start: 7, end: 7 }]);
+    });
+
+    it("tracks deletion-only hunks as touched prior-side lines", () => {
+      const diff = [
+        "diff --git a/src/deleted.ts b/src/deleted.ts",
+        "@@ -8,2 +8,0 @@",
+        "-old 1",
+        "-old 2",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/deleted.ts")).toEqual([{ start: 8, end: 9 }]);
+    });
+
+    it("ignores pure insertions that do not touch prior lines", () => {
+      const diff = [
+        "diff --git a/src/added.ts b/src/added.ts",
+        "@@ -8,0 +8,2 @@",
+        "+new 1",
+        "+new 2",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.has("src/added.ts")).toBe(false);
+    });
+
+    it("tracks renamed files by the new path", () => {
+      const diff = [
+        "diff --git a/src/old-name.ts b/src/new-name.ts",
+        "@@ -1 +1,2 @@",
+        "-old",
+        "+new",
+        "+added",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/new-name.ts")).toEqual([{ start: 1, end: 1 }]);
+      expect(index.get("src/old-name.ts")).toEqual([{ start: 1, end: 1 }]);
+    });
+
+    it("keeps disjoint changed regions separate within one file", () => {
+      const diff = [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "@@ -1,3 +1,3 @@",
+        " line 1",
+        "-line 2",
+        "+updated line 2",
+        " line 3",
+        "@@ -10,4 +10,5 @@",
+        " line 10",
+        "+inserted line 11",
+        " line 11",
+        "-line 12",
+        "+updated line 12",
+        " line 13",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.get("src/a.ts")).toEqual([
+        { start: 2, end: 2 },
+        { start: 12, end: 12 },
+      ]);
+    });
+  });
+
   describe("fetchPRDiff", () => {
     it.skip("fetches PR diff and file list via GitHub API (requires Octokit)", () => {
       // Expected behavior:

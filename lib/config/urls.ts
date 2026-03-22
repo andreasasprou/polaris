@@ -24,6 +24,14 @@ export function getCallbackUrl(): string {
   return `${getAppBaseUrl()}/api/callbacks`;
 }
 
+export function runUrl(runId: string, orgSlug?: string): string {
+  if (orgSlug) {
+    return orgUrl(orgSlug, `/runs/${runId}`);
+  }
+
+  return `${getAppBaseUrl()}/runs/${runId}`;
+}
+
 /** Build an org-scoped dashboard path: /acme/sessions/abc */
 export function orgPath(orgSlug: string, path: string): string {
   return `/${orgSlug}${path.startsWith("/") ? path : `/${path}`}`;

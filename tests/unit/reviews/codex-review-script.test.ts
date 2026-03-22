@@ -5,6 +5,16 @@ import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
+const codexReviewScriptPath = fs.existsSync(
+  path.resolve(process.cwd(), ".github/scripts/codex-review/index.cjs"),
+)
+  ? "../../../.github/scripts/codex-review/index.cjs"
+  : "../../../docs/open-review/scripts/index.cjs";
+const codexReviewPromptPath = fs.existsSync(
+  path.resolve(process.cwd(), ".github/scripts/codex-review/prompt.md"),
+)
+  ? path.resolve(".github/scripts/codex-review/prompt.md")
+  : path.resolve("docs/open-review/scripts/prompt.md");
 const {
   buildIssueSeverityMap,
   buildInlineReviewTrackingState,
@@ -14,7 +24,7 @@ const {
   normalizeActiveInlineReviewIds,
   postResults,
   summarizePreviousState,
-} = require("../../../.github/scripts/codex-review/index.cjs");
+} = require(codexReviewScriptPath);
 
 function writeReviewOutput(output: {
   review_markdown: string;
@@ -343,7 +353,7 @@ describe("codex review script helpers", () => {
 
   it("documents nullable inline comment fields as required keys", () => {
     const prompt = fs.readFileSync(
-      path.resolve(".github/scripts/codex-review/prompt.md"),
+      codexReviewPromptPath,
       "utf8",
     );
     expect(prompt).toContain(

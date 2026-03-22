@@ -251,12 +251,20 @@ export async function dispatchPrReview(
 
     let reviewScope: "full" | "incremental" | "since" | "reset" = "full";
     let fromSha: string | undefined;
+    let canAutoReconcileInlineThreads = false;
     const toSha = event.headSha;
 
     if (event.manualCommand) {
       reviewScope = event.manualCommand.mode;
       if (event.manualCommand.mode === "since" && event.manualCommand.sinceSha) {
         fromSha = event.manualCommand.sinceSha;
+        canAutoReconcileInlineThreads = await isAncestor({
+          installationId,
+          owner: event.owner,
+          repo: event.repo,
+          baseSha: event.manualCommand.sinceSha,
+          headSha: toSha,
+        });
       }
     } else if (sessionMetadata.lastReviewedSha) {
       const ancestorCheck = await isAncestor({
@@ -269,6 +277,7 @@ export async function dispatchPrReview(
       if (ancestorCheck) {
         reviewScope = "incremental";
         fromSha = sessionMetadata.lastReviewedSha;
+        canAutoReconcileInlineThreads = true;
       }
     }
 
@@ -284,7 +293,7 @@ export async function dispatchPrReview(
       loadRepoGuidelines(octokit, event.owner, event.repo, event.baseRef, reviewedPaths, {
         maxBytes: config.maxGuidelinesBytes,
       }),
-      reviewScope === "incremental" && fromSha
+      (reviewScope === "incremental" || reviewScope === "since") && fromSha
         ? fetchCommitRangeDiff(octokit, event.owner, event.repo, fromSha, toSha, {
             maxBytes: config.maxPromptDiffBytes,
           })
@@ -437,6 +446,8 @@ export async function dispatchPrReview(
         repo: event.repo,
         prNumber: event.prNumber,
         checkRunId,
+        fromSha,
+        canAutoReconcileInlineThreads,
         toSha,
         reviewSequence,
         reviewScope,

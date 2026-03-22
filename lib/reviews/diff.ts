@@ -10,6 +10,40 @@ export interface DiffResult {
   truncated: boolean;
 }
 
+export type ChangedLineIndex = Map<string, Array<{ start: number; end: number }>>;
+
+interface ParsedHunkState {
+  oldLine: number;
+  newLine: number;
+}
+
+function appendChangedLine(
+  index: ChangedLineIndex,
+  file: string,
+  line: number,
+) {
+  const ranges = index.get(file) ?? [];
+  const lastRange = ranges.at(-1);
+
+  if (lastRange && lastRange.end + 1 === line) {
+    lastRange.end = line;
+  } else {
+    ranges.push({ start: line, end: line });
+  }
+
+  index.set(file, ranges);
+}
+
+function appendChangedLineForFiles(
+  index: ChangedLineIndex,
+  files: string[],
+  line: number,
+) {
+  for (const file of files) {
+    appendChangedLine(index, file, line);
+  }
+}
+
 /**
  * Fetch the PR diff and file list via GitHub API.
  * Truncates the diff to `maxBytes` (default 200KB) for prompt budget.
@@ -190,4 +224,95 @@ export async function fetchCommitRangeDiff(
   }
 
   return { diff, files, truncated };
+}
+
+/**
+ * Fetch the full diff between two commits for reconciliation logic.
+ * Unlike prompt-oriented helpers, this never truncates silently.
+ */
+export async function fetchFullCommitRangeDiff(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  baseSha: string,
+  headSha: string,
+): Promise<string> {
+  const { data } = await octokit.rest.repos.compareCommits({
+    owner,
+    repo,
+    base: baseSha,
+    head: headSha,
+    mediaType: { format: "diff" },
+  });
+
+  return data as unknown as string;
+}
+
+/**
+ * Build an index of touched prior-side line ranges per file from a unified diff.
+ *
+ * This is used to decide whether an existing inline thread from the previously
+ * reviewed head was modified or deleted by follow-up commits.
+ */
+export function buildChangedLineIndex(diff: string): ChangedLineIndex {
+  const index: ChangedLineIndex = new Map();
+  let currentFiles: string[] = [];
+  let hunkState: ParsedHunkState | null = null;
+
+  for (const line of diff.split("\n")) {
+    const fileMatch = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (fileMatch) {
+      const oldPath = fileMatch[1];
+      const newPath = fileMatch[2];
+      currentFiles = oldPath === newPath ? [newPath] : [oldPath, newPath];
+      hunkState = null;
+      continue;
+    }
+
+    const hunkMatch = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunkMatch) {
+      if (currentFiles.length === 0) {
+        hunkState = null;
+        continue;
+      }
+
+      const oldLine = Number(hunkMatch[1]);
+      const newLine = Number(hunkMatch[2]);
+
+      if (!Number.isFinite(oldLine) || !Number.isFinite(newLine)) {
+        hunkState = null;
+        continue;
+      }
+
+      hunkState = { oldLine, newLine };
+      continue;
+    }
+
+    if (currentFiles.length === 0 || !hunkState) continue;
+
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      appendChangedLineForFiles(index, currentFiles, hunkState.oldLine);
+      hunkState.oldLine += 1;
+      continue;
+    }
+
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      hunkState.newLine += 1;
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      hunkState.oldLine += 1;
+      hunkState.newLine += 1;
+      continue;
+    }
+
+    if (line.startsWith("\\")) {
+      continue;
+    }
+
+    hunkState = null;
+  }
+
+  return index;
 }

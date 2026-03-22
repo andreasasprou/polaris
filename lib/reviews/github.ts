@@ -1,5 +1,5 @@
 import { getInstallationOctokitById } from "@/lib/integrations/github";
-import type { ReviewVerdict } from "./types";
+import type { InlineAnchor, ReviewVerdict, TrackedInlineThread } from "./types";
 import { formatReviewLabel } from "./formatting";
 import { useLogger } from "@/lib/evlog";
 
@@ -274,47 +274,393 @@ export async function dismissReview(input: {
   }
 }
 
-/**
- * Fetch individual comment IDs for a review, mapped to issue IDs by creation order.
- * Returns { issueId: commentDatabaseId } mapping for future reply-on-resolve.
- */
-export async function fetchInlineCommentMap(input: {
+type GithubReviewThread = {
+  id: string;
+  isResolved: boolean;
+  path: string | null;
+  line: number | null;
+  startLine: number | null;
+  comments: Array<{ databaseId: number; body?: string | null }>;
+};
+
+type GithubReviewThreadsPageResponse = {
+  repository: {
+    pullRequest: {
+      reviewThreads: {
+        nodes: Array<{
+          id: string;
+          isResolved: boolean;
+          path?: string | null;
+          line?: number | null;
+          startLine?: number | null;
+          comments: {
+            nodes: Array<{
+              databaseId: number;
+              body?: string | null;
+            }>;
+          };
+        }>;
+        pageInfo: {
+          hasNextPage: boolean;
+          endCursor: string | null;
+        };
+      };
+    };
+  };
+};
+
+function buildAnchorKey(input: {
+  file: string;
+  line: number;
+  startLine?: number | null;
+}) {
+  return `${input.file}::${input.line}::${input.startLine ?? ""}`;
+}
+
+function buildResolutionReplyBody(headSha: string, resolution?: string) {
+  const shortSha = headSha.slice(0, 8);
+  return `> **Resolved** in \`${shortSha}\`\n>\n> ${resolution || "Fixed"}`;
+}
+
+function hasResolutionReply(
+  comments: Array<{ body?: string | null }>,
+  headSha: string,
+) {
+  const marker = `**Resolved** in \`${headSha.slice(0, 8)}\``;
+  return comments.some((comment) => typeof comment.body === "string" && comment.body.includes(marker));
+}
+
+async function fetchAllReviewThreads(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+}): Promise<GithubReviewThread[]> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  const threads: GithubReviewThread[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const response: GithubReviewThreadsPageResponse = await octokit.graphql(`
+      query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $pr) {
+            reviewThreads(first: 100, after: $cursor) {
+              nodes {
+                id
+                isResolved
+                path
+                line
+                startLine
+                comments(first: 20) {
+                  nodes {
+                    databaseId
+                    body
+                  }
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        }
+      }
+    `, {
+      owner: input.owner,
+      repo: input.repo,
+      pr: input.prNumber,
+      cursor,
+    });
+
+    const repository = response.repository;
+    const reviewThreads = repository.pullRequest.reviewThreads;
+    threads.push(...reviewThreads.nodes.map((thread) => ({
+      id: thread.id,
+      isResolved: thread.isResolved,
+      path: thread.path ?? null,
+      line: thread.line ?? null,
+      startLine: thread.startLine ?? null,
+      comments: thread.comments.nodes,
+    })));
+
+    cursor = reviewThreads.pageInfo.hasNextPage
+      ? reviewThreads.pageInfo.endCursor
+      : null;
+  } while (cursor);
+
+  return threads;
+}
+
+async function fetchAllReviewCommentsForReview(input: {
   installationId: number;
   owner: string;
   repo: string;
   prNumber: number;
   reviewId: number;
-  inlineAnchors: Array<{ issueId: string; file: string }>;
-}): Promise<Record<string, number>> {
+}) {
   const octokit = await getInstallationOctokitById(input.installationId);
-  const commentMap: Record<string, number> = {};
+  const comments: Awaited<ReturnType<typeof octokit.rest.pulls.listCommentsForReview>>["data"] = [];
+  let page = 1;
 
-  try {
-    const { data: reviewComments } = await octokit.rest.pulls.listCommentsForReview({
+  while (true) {
+    const response = await octokit.rest.pulls.listCommentsForReview({
       owner: input.owner,
       repo: input.repo,
       pull_number: input.prNumber,
       review_id: input.reviewId,
       per_page: 100,
+      page,
     });
-
-    const thisReviewComments = reviewComments.filter(
-      (rc) => rc.pull_request_review_id === input.reviewId,
-    );
-
-    for (let i = 0; i < Math.min(thisReviewComments.length, input.inlineAnchors.length); i++) {
-      const rc = thisReviewComments[i]!;
-      const anchor = input.inlineAnchors[i]!;
-      if (rc.path === anchor.file && anchor.issueId) {
-        commentMap[anchor.issueId] = rc.id;
-      }
-    }
-  } catch (err) {
-    const log = useLogger();
-    log.set({ fetchCommentMap: { error: err instanceof Error ? err.message : String(err) } });
+    comments.push(...response.data);
+    if (response.data.length < 100) break;
+    page += 1;
   }
 
-  return commentMap;
+  return comments;
+}
+
+export async function findInlineReviewIdByMarker(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  headSha: string;
+  marker: string;
+}): Promise<number | null> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  let page = 1;
+
+  while (true) {
+    const response = await octokit.rest.pulls.listReviews({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      per_page: 100,
+      page,
+    });
+
+    for (const review of response.data) {
+      if (
+        review.commit_id === input.headSha &&
+        typeof review.body === "string" &&
+        review.body.includes(input.marker)
+      ) {
+        return review.id;
+      }
+    }
+
+    if (response.data.length < 100) break;
+    page += 1;
+  }
+
+  return null;
+}
+
+async function fetchReviewThreadState(input: {
+  installationId: number;
+  threadId: string;
+}): Promise<GithubReviewThread | null> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  const { node } = await octokit.graphql<{
+    node: {
+      id: string;
+      isResolved: boolean;
+      path?: string | null;
+      line?: number | null;
+      startLine?: number | null;
+      comments: {
+        nodes: Array<{
+          databaseId: number;
+          body?: string | null;
+        }>;
+      };
+    } | null;
+  }>(`
+    query($threadId: ID!) {
+      node(id: $threadId) {
+        ... on PullRequestReviewThread {
+          id
+          isResolved
+          path
+          line
+          startLine
+          comments(last: 20) {
+            nodes {
+              databaseId
+              body
+            }
+          }
+        }
+      }
+    }
+  `, {
+    threadId: input.threadId,
+  });
+
+  if (!node) return null;
+
+  return {
+    id: node.id,
+    isResolved: node.isResolved,
+    path: node.path ?? null,
+    line: node.line ?? null,
+    startLine: node.startLine ?? null,
+    comments: node.comments.nodes,
+  };
+}
+
+export async function fetchTrackedInlineThreadsForReview(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  reviewId: number;
+  reviewSequence: number;
+  inlineAnchors: InlineAnchor[];
+}): Promise<{
+  threads: TrackedInlineThread[];
+  commentMap: Record<string, number>;
+}> {
+  const log = useLogger();
+  const commentMap: Record<string, number> = {};
+
+  try {
+    const [reviewComments, reviewThreads] = await Promise.all([
+      fetchAllReviewCommentsForReview({
+        installationId: input.installationId,
+        owner: input.owner,
+        repo: input.repo,
+        prNumber: input.prNumber,
+        reviewId: input.reviewId,
+      }),
+      fetchAllReviewThreads({
+        installationId: input.installationId,
+        owner: input.owner,
+        repo: input.repo,
+        prNumber: input.prNumber,
+      }),
+    ]);
+
+    const threadsByRootCommentId = new Map<number, GithubReviewThread>();
+    for (const thread of reviewThreads) {
+      const rootCommentId = thread.comments[0]?.databaseId;
+      if (rootCommentId) {
+        threadsByRootCommentId.set(rootCommentId, thread);
+      }
+    }
+
+    const anchorQueues = new Map<string, InlineAnchor[]>();
+    for (const anchor of input.inlineAnchors) {
+      const key = buildAnchorKey({
+        file: anchor.file,
+        line: anchor.line,
+        startLine: anchor.startLine,
+      });
+      const queue = anchorQueues.get(key) ?? [];
+      queue.push(anchor);
+      anchorQueues.set(key, queue);
+    }
+
+    const trackedThreads: TrackedInlineThread[] = [];
+    const rootReviewComments = reviewComments.filter((comment) =>
+      comment.pull_request_review_id === input.reviewId && comment.in_reply_to_id == null,
+    );
+
+    for (const reviewComment of rootReviewComments) {
+      const line = reviewComment.line ?? reviewComment.original_line ?? null;
+      if (!reviewComment.path || line == null) continue;
+
+      const key = buildAnchorKey({
+        file: reviewComment.path,
+        line,
+        startLine: reviewComment.start_line ?? reviewComment.original_start_line ?? null,
+      });
+      const queue = anchorQueues.get(key);
+      const anchor = queue?.shift();
+      if (!anchor?.issueId) continue;
+
+      commentMap[anchor.issueId] = reviewComment.id;
+
+      const thread = threadsByRootCommentId.get(reviewComment.id);
+      if (!thread?.id || !thread.path || thread.line == null) {
+        log.set({
+          fetchTrackedInlineThreads: {
+            missingThread: reviewComment.id,
+            reviewId: input.reviewId,
+          },
+        });
+        continue;
+      }
+
+      trackedThreads.push({
+        threadId: thread.id,
+        commentId: reviewComment.id,
+        reviewId: input.reviewId,
+        issueId: anchor.issueId,
+        file: thread.path,
+        line: thread.line,
+        ...(thread.startLine != null ? { startLine: thread.startLine } : {}),
+        postedInPass: input.reviewSequence,
+      });
+    }
+
+    return { threads: trackedThreads, commentMap };
+  } catch (err) {
+    log.set({ fetchTrackedInlineThreads: { error: err instanceof Error ? err.message : String(err) } });
+    return { threads: [], commentMap };
+  }
+}
+
+export async function hydrateTrackedInlineThreadsFromCommentMap(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  inlineCommentMap: Record<string, number>;
+}): Promise<TrackedInlineThread[]> {
+  const log = useLogger();
+
+  try {
+    const reviewThreads = await fetchAllReviewThreads({
+      installationId: input.installationId,
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber,
+    });
+
+    const threadsByRootCommentId = new Map<number, GithubReviewThread>();
+    for (const thread of reviewThreads) {
+      const rootCommentId = thread.comments[0]?.databaseId;
+      if (rootCommentId) {
+        threadsByRootCommentId.set(rootCommentId, thread);
+      }
+    }
+
+    const hydrated: TrackedInlineThread[] = [];
+
+    for (const [issueId, commentId] of Object.entries(input.inlineCommentMap)) {
+      const thread = threadsByRootCommentId.get(commentId);
+      if (!thread || thread.isResolved || !thread.path || thread.line == null) continue;
+
+      hydrated.push({
+        threadId: thread.id,
+        commentId,
+        reviewId: null,
+        issueId,
+        file: thread.path,
+        line: thread.line,
+        ...(thread.startLine != null ? { startLine: thread.startLine } : {}),
+        postedInPass: null,
+      });
+    }
+
+    return hydrated;
+  } catch (err) {
+    log.set({ hydrateTrackedInlineThreads: { error: err instanceof Error ? err.message : String(err) } });
+    return [];
+  }
 }
 
 /**
@@ -328,11 +674,12 @@ export async function replyAndResolveInlineComments(input: {
   headSha: string;
   resolvedIssues: Array<{ id: string; resolution?: string }>;
   inlineCommentMap: Record<string, number>;
-}): Promise<{ repliedCount: number; resolvedCount: number }> {
+}): Promise<{ repliedCount: number; resolvedCount: number; resolvedIssueIds: string[] }> {
   const octokit = await getInstallationOctokitById(input.installationId);
   const log = useLogger();
   let repliedCount = 0;
   const commentIdsToResolve: number[] = [];
+  const issueIdByCommentId = new Map<number, string>();
 
   // Step 1: Reply to each resolved issue's inline comment
   for (const resolved of input.resolvedIssues) {
@@ -340,16 +687,16 @@ export async function replyAndResolveInlineComments(input: {
     if (!commentId) continue;
 
     try {
-      const shortSha = input.headSha.slice(0, 8);
       const resolution = resolved.resolution || "Fixed";
       await octokit.rest.pulls.createReplyForReviewComment({
         owner: input.owner,
         repo: input.repo,
         pull_number: input.prNumber,
         comment_id: commentId,
-        body: `> **Resolved** in \`${shortSha}\`\n>\n> ${resolution}`,
+        body: buildResolutionReplyBody(input.headSha, resolution),
       });
       commentIdsToResolve.push(commentId);
+      issueIdByCommentId.set(commentId, resolved.id);
       repliedCount++;
     } catch (err) {
       log.set({ replyResolved: { commentId, error: err instanceof Error ? err.message : String(err) } });
@@ -358,17 +705,90 @@ export async function replyAndResolveInlineComments(input: {
 
   // Step 2: Auto-resolve the threads via GraphQL
   let resolvedCount = 0;
+  let resolvedIssueIds: string[] = [];
   if (commentIdsToResolve.length > 0) {
-    resolvedCount = await resolveReviewThreads({
+    const resolved = await resolveReviewThreads({
       installationId: input.installationId,
       owner: input.owner,
       repo: input.repo,
       prNumber: input.prNumber,
       commentIds: commentIdsToResolve,
     });
+    resolvedCount = resolved.resolvedCount;
+    resolvedIssueIds = resolved.resolvedCommentIds
+      .map((commentId) => issueIdByCommentId.get(commentId))
+      .filter((issueId): issueId is string => Boolean(issueId));
   }
 
-  return { repliedCount, resolvedCount };
+  return { repliedCount, resolvedCount, resolvedIssueIds };
+}
+
+export async function resolveTrackedInlineThreads(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  headSha: string;
+  threads: Array<TrackedInlineThread & { resolution?: string }>;
+}): Promise<{ repliedCount: number; resolvedCount: number; resolvedThreadIds: string[] }> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  const log = useLogger();
+  let repliedCount = 0;
+  let resolvedCount = 0;
+  const resolvedThreadIds: string[] = [];
+
+  for (const thread of input.threads) {
+    try {
+      const state = await fetchReviewThreadState({
+        installationId: input.installationId,
+        threadId: thread.threadId,
+      });
+      if (!state) continue;
+
+      if (state.isResolved) {
+        resolvedCount++;
+        resolvedThreadIds.push(thread.threadId);
+        continue;
+      }
+
+      if (
+        Number.isInteger(thread.commentId) &&
+        thread.commentId > 0 &&
+        !hasResolutionReply(state.comments, input.headSha)
+      ) {
+        try {
+          await octokit.rest.pulls.createReplyForReviewComment({
+            owner: input.owner,
+            repo: input.repo,
+            pull_number: input.prNumber,
+            comment_id: thread.commentId,
+            body: buildResolutionReplyBody(input.headSha, thread.resolution),
+          });
+          repliedCount++;
+        } catch (err) {
+          log.set({ replyResolvedTracked: { threadId: thread.threadId, error: err instanceof Error ? err.message : String(err) } });
+        }
+      }
+
+      try {
+        await octokit.graphql(`
+          mutation($threadId: ID!) {
+            resolveReviewThread(input: { threadId: $threadId }) {
+              thread { isResolved }
+            }
+          }
+        `, { threadId: thread.threadId });
+        resolvedCount++;
+        resolvedThreadIds.push(thread.threadId);
+      } catch (err) {
+        log.set({ resolveTrackedThread: { threadId: thread.threadId, error: err instanceof Error ? err.message : String(err) } });
+      }
+    } catch (err) {
+      log.set({ resolveTrackedThread: { threadId: thread.threadId, error: err instanceof Error ? err.message : String(err) } });
+    }
+  }
+
+  return { repliedCount, resolvedCount, resolvedThreadIds };
 }
 
 /**
@@ -381,49 +801,27 @@ export async function resolveReviewThreads(input: {
   repo: string;
   prNumber: number;
   commentIds: number[];
-}): Promise<number> {
+}): Promise<{ resolvedCount: number; resolvedCommentIds: number[] }> {
   const octokit = await getInstallationOctokitById(input.installationId);
-  let resolvedCount = 0;
+  const resolvedCommentIds: number[] = [];
 
   try {
-    const { repository } = await octokit.graphql<{
-      repository: {
-        pullRequest: {
-          reviewThreads: {
-            nodes: Array<{
-              id: string;
-              isResolved: boolean;
-              comments: { nodes: Array<{ databaseId: number }> };
-            }>;
-          };
-        };
-      };
-    }>(`
-      query($owner: String!, $repo: String!, $pr: Int!) {
-        repository(owner: $owner, name: $repo) {
-          pullRequest(number: $pr) {
-            reviewThreads(first: 100) {
-              nodes {
-                id
-                isResolved
-                comments(first: 1) {
-                  nodes {
-                    databaseId
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `, { owner: input.owner, repo: input.repo, pr: input.prNumber });
-
     const commentIdSet = new Set(input.commentIds);
+    const reviewThreads = await fetchAllReviewThreads({
+      installationId: input.installationId,
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber,
+    });
 
-    for (const thread of repository.pullRequest.reviewThreads.nodes) {
-      if (thread.isResolved) continue;
-      const firstCommentId = thread.comments.nodes[0]?.databaseId;
+    for (const thread of reviewThreads) {
+      const firstCommentId = thread.comments[0]?.databaseId;
       if (!firstCommentId || !commentIdSet.has(firstCommentId)) continue;
+
+      if (thread.isResolved) {
+        resolvedCommentIds.push(firstCommentId);
+        continue;
+      }
 
       try {
         await octokit.graphql(`
@@ -433,7 +831,7 @@ export async function resolveReviewThreads(input: {
             }
           }
         `, { threadId: thread.id });
-        resolvedCount++;
+        resolvedCommentIds.push(firstCommentId);
       } catch (err) {
         const log = useLogger();
         log.set({ resolveThread: { threadId: thread.id, error: err instanceof Error ? err.message : String(err) } });
@@ -444,7 +842,10 @@ export async function resolveReviewThreads(input: {
     log.set({ resolveThreads: { error: err instanceof Error ? err.message : String(err) } });
   }
 
-  return resolvedCount;
+  return {
+    resolvedCount: resolvedCommentIds.length,
+    resolvedCommentIds,
+  };
 }
 
 /**

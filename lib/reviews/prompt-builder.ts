@@ -136,7 +136,7 @@ Your response will be posted **directly** as a GitHub PR comment. Write it as th
    \`\`\`
    Severity emoji mapping: 🔴 P0, 🟡 P1, 🔵 P2
 
-4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them with the original title for context: \`- ~~finding-id: Original title of the finding~~ ✅\`
+4. **Resolved Issues** (incremental reviews only) — If previously raised issues are now fixed, list them as human-readable bullets using the original title or summary for context: \`- Original title of the finding ✅\`
 
 5. **Footer** — End the visible comment with the review pass and the head commit SHA you reviewed (from Review Scope above):
    \`<sub>Polaris Review Pass N · \`<head-sha-short>\` · Automated by Polaris</sub>\`
@@ -183,6 +183,7 @@ After the footer, append a metadata block using this exact format:
 - The metadata block MUST use the \`<!-- polaris:metadata -->\` HTML comment as its delimiter.
 - The JSON must be valid and match the schema exactly.
 - Do NOT duplicate finding details in the metadata — findings only appear in the markdown body above.
+- Do NOT show internal finding IDs in the visible markdown comment. IDs belong only in the metadata block.
 - \`openIssues\` must include all unresolved findings from this review.
 - For incremental reviews, \`resolvedIssueIds\` must list IDs of previously raised issues that are now fixed.
 - \`inlineAnchors\` (optional): For findings you can confidently anchor to specific diff lines, provide:

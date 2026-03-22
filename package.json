@@ -60,6 +60,7 @@
   "devDependencies": {
     "@better-auth/cli": "^1.4.21",
     "@eslint/eslintrc": "^3",
+    "@openai/codex-sdk": "^0.116.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/js-yaml": "^4.0.9",
     "@types/mdast": "^4.0.4",

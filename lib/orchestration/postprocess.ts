@@ -11,6 +11,10 @@
 import { casJobStatus, getJob } from "@/lib/jobs/actions";
 import type { JobStatus } from "@/lib/jobs/status";
 import { useLogger } from "@/lib/evlog";
+import type {
+  AutomationSessionMetadata,
+  TrackedInlineThread,
+} from "@/lib/reviews/types";
 
 // ── Main Dispatch ──
 
@@ -81,7 +85,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
   const automationRunId = job.automationRunId;
-  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, boolean>;
+  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, unknown>;
 
   const branchName = payload.branchName as string;
   const baseSha = payload.baseSha as string;
@@ -304,8 +308,12 @@ async function postprocessReview(job: JobRow): Promise<void> {
     completeCheck,
     postInlineReview,
     dismissReview,
-    fetchInlineCommentMap,
+    findInlineReviewIdByMarker,
+    fetchTrackedInlineThreadsForReview,
+    hydrateTrackedInlineThreadsFromCommentMap,
     replyAndResolveInlineComments,
+    resolveTrackedInlineThreads,
+    getReviewOctokit,
   } = await import("@/lib/reviews/github");
   const {
     extractInlineAnchors,
@@ -320,10 +328,19 @@ async function postprocessReview(job: JobRow): Promise<void> {
     formatReviewHeading,
     formatReviewLabel,
   } = await import("@/lib/reviews/formatting");
+  const {
+    reconcileInlineThreads,
+    dedupeTrackedInlineThreads,
+    buildInlineCommentMapFromTrackedThreads,
+  } = await import("@/lib/reviews/inline-thread-reconciliation");
+  const {
+    fetchFullCommitRangeDiff,
+    buildChangedLineIndex,
+  } = await import("@/lib/reviews/diff");
 
   const payload = (job.payload ?? {}) as Record<string, unknown>;
   const result = (job.result ?? {}) as Record<string, unknown>;
-  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, boolean>;
+  const sideEffects = (job.sideEffectsCompleted ?? {}) as Record<string, unknown>;
   const automationRunId = job.automationRunId;
   const automationId = job.automationId;
 
@@ -333,6 +350,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const repo = payload.repo as string;
   const prNumber = payload.prNumber as number;
   const checkRunId = payload.checkRunId as string | undefined;
+  const fromSha = payload.fromSha as string | undefined;
+  const canAutoReconcileInlineThreads = payload.canAutoReconcileInlineThreads === true;
   const toSha = payload.toSha as string;
   const reviewSequence = (payload.reviewSequence as number) ?? 1;
   const reviewScope = (payload.reviewScope as string) ?? "full";
@@ -352,6 +371,9 @@ async function postprocessReview(job: JobRow): Promise<void> {
     // 1. Parse output
     const parsed = agentOutput ? parseReviewOutput(agentOutput) : null;
     const metadata = parsed?.metadata ?? null;
+    const anchors = parsed ? extractInlineAnchors(parsed.metadata) : [];
+    let trackedInlineThreadsForMetadata: TrackedInlineThread[] | null = null;
+    let legacyInlineCommentMapForMetadata: Record<string, number> | null = null;
 
     // 2. Mark previous comment stale
     if (lastCommentId && !sideEffects.stale_marked) {
@@ -420,42 +442,172 @@ async function postprocessReview(job: JobRow): Promise<void> {
       );
     }
 
-    // 2c. Reply to resolved inline comments + auto-resolve threads
-    if (parsed && automationSessionId && !sideEffects.inline_resolved) {
+    // 2c. Reply to resolved inline comments + auto-resolve tracked threads
+    if (parsed && automationSessionId) {
       try {
         const { getAutomationSession: getSessionForResolve } = await import(
           "@/lib/automations/actions"
         );
         const sessionForResolve = await getSessionForResolve(automationSessionId);
-        const prevCommentMap = sessionForResolve?.metadata?.inlineCommentMap ?? {};
-        const resolvedIssues = metadata?.reviewState?.resolvedIssues ?? [];
+        const sessionMetadata = sessionForResolve?.metadata as AutomationSessionMetadata | undefined;
+        const prevCommentMap = sessionMetadata?.inlineCommentMap ?? {};
+        let trackedThreads = dedupeTrackedInlineThreads(sessionMetadata?.inlineThreads ?? []);
+        let remainingLegacyCommentMap = { ...prevCommentMap };
 
-        // Find issues that were just resolved in this review
-        const newlyResolved = resolvedIssues.filter((ri) => prevCommentMap[ri.id]);
+        if (trackedThreads.length === 0 && Object.keys(prevCommentMap).length > 0) {
+          trackedThreads = dedupeTrackedInlineThreads(await hydrateTrackedInlineThreadsFromCommentMap({
+            installationId,
+            owner,
+            repo,
+            prNumber,
+            inlineCommentMap: prevCommentMap,
+          }));
+        }
 
-        if (newlyResolved.length > 0) {
-          const { repliedCount, resolvedCount } = await replyAndResolveInlineComments({
+        const resolutionSummaryByIssueId = new Map(
+          (metadata?.reviewState?.resolvedIssues ?? []).map((issue) => [issue.id, issue.summary]),
+        );
+        const explicitlyResolvedIssueIds = new Set(metadata?.resolvedIssueIds ?? []);
+
+        let repliedCount = 0;
+        let resolvedCount = 0;
+
+        const trackedThreadsForExplicitResolve = trackedThreads.filter((thread) =>
+          explicitlyResolvedIssueIds.has(thread.issueId),
+        );
+        if (trackedThreadsForExplicitResolve.length > 0) {
+          const trackedResolveResult = await resolveTrackedInlineThreads({
             installationId,
             owner,
             repo,
             prNumber,
             headSha: toSha,
-            resolvedIssues: newlyResolved.map((ri) => ({
-              id: ri.id,
-              resolution: ri.summary,
+            threads: trackedThreadsForExplicitResolve.map((thread) => ({
+              ...thread,
+              resolution: resolutionSummaryByIssueId.get(thread.issueId) ?? "Fixed",
             })),
-            inlineCommentMap: prevCommentMap,
           });
 
-          if (repliedCount > 0) {
-            const log = useLogger();
-            log.set({ postprocess: { inlineReplied: repliedCount, threadsResolved: resolvedCount } });
+          repliedCount += trackedResolveResult.repliedCount;
+          resolvedCount += trackedResolveResult.resolvedCount;
+
+          const resolvedTrackedThreadIds = new Set(trackedResolveResult.resolvedThreadIds);
+          const resolvedTrackedIssueIds = new Set(
+            trackedThreadsForExplicitResolve
+              .filter((thread) => resolvedTrackedThreadIds.has(thread.threadId))
+              .map((thread) => thread.issueId),
+          );
+
+          trackedThreads = trackedThreads.filter((thread) => !resolvedTrackedThreadIds.has(thread.threadId));
+          for (const issueId of resolvedTrackedIssueIds) {
+            delete remainingLegacyCommentMap[issueId];
           }
+        }
+
+        const trackedIssueIds = new Set(trackedThreads.map((thread) => thread.issueId));
+        const legacyResolvedIssues = (metadata?.reviewState?.resolvedIssues ?? []).filter((issue) =>
+          explicitlyResolvedIssueIds.has(issue.id) &&
+          Boolean(remainingLegacyCommentMap[issue.id]) &&
+          !trackedIssueIds.has(issue.id),
+        );
+
+        if (legacyResolvedIssues.length > 0) {
+          const legacyResolveResult = await replyAndResolveInlineComments({
+            installationId,
+            owner,
+            repo,
+            prNumber,
+            headSha: toSha,
+            resolvedIssues: legacyResolvedIssues.map((issue) => ({
+              id: issue.id,
+              resolution: issue.summary,
+            })),
+            inlineCommentMap: remainingLegacyCommentMap,
+          });
+
+          repliedCount += legacyResolveResult.repliedCount;
+          resolvedCount += legacyResolveResult.resolvedCount;
+          for (const issueId of legacyResolveResult.resolvedIssueIds) {
+            delete remainingLegacyCommentMap[issueId];
+          }
+        }
+
+        if (
+          (reviewScope === "incremental" || reviewScope === "since") &&
+          fromSha &&
+          canAutoReconcileInlineThreads &&
+          trackedThreads.length > 0
+        ) {
+          try {
+            const octokit = await getReviewOctokit(installationId);
+            const fullDiff = await fetchFullCommitRangeDiff(
+              octokit,
+              owner,
+              repo,
+              fromSha,
+              toSha,
+            );
+            const changedLineIndex = buildChangedLineIndex(fullDiff);
+            const reconciliation = reconcileInlineThreads({
+              priorThreads: trackedThreads,
+              changedLineIndex,
+              currentInlineAnchors: anchors,
+            });
+
+            const autoResolveResult = await resolveTrackedInlineThreads({
+              installationId,
+              owner,
+              repo,
+              prNumber,
+              headSha: toSha,
+              threads: reconciliation.autoResolve.map((thread) => ({
+                ...thread,
+                resolution: "Resolved by follow-up changes in this commit range.",
+              })),
+            });
+
+            repliedCount += autoResolveResult.repliedCount;
+            resolvedCount += autoResolveResult.resolvedCount;
+
+            const resolvedThreadIds = new Set(autoResolveResult.resolvedThreadIds);
+            const resolvedIssueIds = new Set(
+              reconciliation.autoResolve
+                .filter((thread) => resolvedThreadIds.has(thread.threadId))
+                .map((thread) => thread.issueId),
+            );
+
+            trackedThreads = dedupeTrackedInlineThreads([
+              ...reconciliation.carryForward,
+              ...reconciliation.overlapBlocked,
+              ...reconciliation.autoResolve.filter((thread) => !resolvedThreadIds.has(thread.threadId)),
+            ]);
+            for (const issueId of resolvedIssueIds) {
+              delete remainingLegacyCommentMap[issueId];
+            }
+          } catch (err) {
+            const log = useLogger();
+            log.set({
+              postprocess: {
+                inlineReconcileSkipped: err instanceof Error ? err.message : String(err),
+              },
+            });
+          }
+        }
+
+        trackedInlineThreadsForMetadata = dedupeTrackedInlineThreads(trackedThreads);
+        legacyInlineCommentMapForMetadata = remainingLegacyCommentMap;
+
+        if (repliedCount > 0 || resolvedCount > 0) {
+          const log = useLogger();
+          log.set({ postprocess: { inlineReplied: repliedCount, threadsResolved: resolvedCount } });
         }
       } catch {
         // Non-fatal — inline resolution is a UX enhancement
       }
-      await markSideEffect(job.id, "inline_resolved");
+
+      if (!sideEffects.inline_resolved) {
+        await markSideEffect(job.id, "inline_resolved");
+      }
     }
 
     // 3. Update session metadata (survives comment post failure)
@@ -464,15 +616,26 @@ async function postprocessReview(job: JobRow): Promise<void> {
         "@/lib/automations/actions"
       );
       const session = await getAutomationSession(automationSessionId);
-      const sessionMetadata = session?.metadata;
+      const sessionMetadata = session?.metadata as AutomationSessionMetadata | undefined;
 
       if (sessionMetadata) {
-        const newMetadata: import("@/lib/reviews/types").AutomationSessionMetadata = {
+        const nextInlineThreads = trackedInlineThreadsForMetadata ?? sessionMetadata.inlineThreads ?? null;
+        const nextInlineCommentMap = trackedInlineThreadsForMetadata
+          ? mergeInlineCommentMapWithTrackedThreads(
+              legacyInlineCommentMapForMetadata ?? {},
+              trackedInlineThreadsForMetadata,
+              buildInlineCommentMapFromTrackedThreads,
+            )
+          : sessionMetadata.inlineCommentMap ?? null;
+
+        const newMetadata: AutomationSessionMetadata = {
           ...sessionMetadata,
           headSha: toSha,
           reviewCount: reviewSequence,
           lastCompletedRunId: automationRunId ?? null,
           ...buildInlineReviewTrackingState(activeInlineReviewIds),
+          inlineThreads: nextInlineThreads,
+          inlineCommentMap: nextInlineCommentMap,
           ...(parsed
             ? {
                 lastReviewedSha: toSha,
@@ -541,63 +704,120 @@ async function postprocessReview(job: JobRow): Promise<void> {
     }
 
     // 5. Post inline review (best-effort, after summary comment)
-    if (parsed && !sideEffects.inline_review_posted) {
+    if (parsed && (sideEffects.inline_review_posted !== true || sideEffects.inline_review_tracked !== true)) {
       try {
-        const anchors = extractInlineAnchors(parsed.metadata);
         if (anchors.length > 0) {
           const issueSeverityById = buildIssueSeverityMap(
             parsed.metadata.reviewState.openIssues,
           );
           const comments = buildReviewComments(anchors, issueSeverityById);
-          if (comments.length > 0) {
-            const inlineResult = await postInlineReview({
-              installationId,
-              owner,
-              repo,
-              prNumber,
-              headSha: toSha,
-              body: `See ${formatReviewLabel(reviewSequence)} above for the full summary.`,
-              comments,
+          if (comments.length === 0) {
+            await markSideEffects(job.id, {
+              inline_review_posted: true,
+              inline_review_tracked: true,
             });
-            if (inlineResult && automationSessionId) {
-              activeInlineReviewIds = [
-                ...activeInlineReviewIds,
-                inlineResult.reviewId,
-              ];
+          } else {
+            const inlineReviewMarker = buildInlineReviewMarker(job.id);
+            let inlineReviewId = readInlineReviewId(sideEffects);
 
-              // Fetch individual comment IDs for reply-on-resolve
-              const newCommentMap = await fetchInlineCommentMap({
+            if (!inlineReviewId) {
+              inlineReviewId = await findInlineReviewIdByMarker({
                 installationId,
                 owner,
                 repo,
                 prNumber,
-                reviewId: inlineResult.reviewId,
-                inlineAnchors: anchors,
+                headSha: toSha,
+                marker: inlineReviewMarker,
+              });
+            }
+
+            if (!inlineReviewId) {
+              const inlineResult = await postInlineReview({
+                installationId,
+                owner,
+                repo,
+                prNumber,
+                headSha: toSha,
+                body: buildInlineReviewSummaryBody(
+                  formatReviewLabel(reviewSequence),
+                  inlineReviewMarker,
+                ),
+                comments,
+              });
+              inlineReviewId = inlineResult?.reviewId ?? null;
+            }
+
+            if (inlineReviewId) {
+              await markSideEffects(job.id, {
+                inline_review_posted: true,
+                inline_review_review_id: inlineReviewId,
               });
 
-              const { getAutomationSession: getSessionForInline } = await import(
-                "@/lib/automations/actions"
-              );
-              const sessionForInline = await getSessionForInline(automationSessionId);
-              if (sessionForInline?.metadata) {
-                const prevMap = sessionForInline.metadata.inlineCommentMap ?? {};
+              if (!automationSessionId) {
+                await markSideEffects(job.id, {
+                  inline_review_tracked: true,
+                });
+              } else if (sideEffects.inline_review_tracked !== true) {
+                activeInlineReviewIds = normalizeActiveInlineReviewIds({
+                  activeInlineReviewIds: [
+                    ...activeInlineReviewIds,
+                    inlineReviewId,
+                  ],
+                });
+
+                const { threads: newTrackedThreads, commentMap: newCommentMap } = await fetchTrackedInlineThreadsForReview({
+                  installationId,
+                  owner,
+                  repo,
+                  prNumber,
+                  reviewId: inlineReviewId,
+                  reviewSequence,
+                  inlineAnchors: anchors,
+                });
+
+                const { getAutomationSession: getSessionForInline } = await import(
+                  "@/lib/automations/actions"
+                );
+                const sessionForInline = await getSessionForInline(automationSessionId);
+                if (!sessionForInline?.metadata) {
+                  throw new Error(`Automation session metadata missing for inline review tracking: ${automationSessionId}`);
+                }
+
+                const metadataForInline = sessionForInline.metadata as AutomationSessionMetadata;
+                const prevMap = metadataForInline.inlineCommentMap ?? {};
+                const mergedTrackedThreads = dedupeTrackedInlineThreads([
+                  ...(metadataForInline.inlineThreads ?? []),
+                  ...newTrackedThreads,
+                ]);
                 await updateAutomationSession(automationSessionId, {
                   metadata: {
-                    ...sessionForInline.metadata,
+                    ...metadataForInline,
                     ...buildInlineReviewTrackingState(activeInlineReviewIds),
-                    inlineCommentMap: Object.keys(newCommentMap).length > 0
-                      ? { ...prevMap, ...newCommentMap }
-                      : prevMap,
+                    inlineThreads: mergedTrackedThreads,
+                    inlineCommentMap: mergeInlineCommentMapWithTrackedThreads(
+                      Object.keys(newCommentMap).length > 0
+                        ? { ...prevMap, ...newCommentMap }
+                        : prevMap,
+                      mergedTrackedThreads,
+                      buildInlineCommentMapFromTrackedThreads,
+                    ),
                   },
+                });
+                await markSideEffects(job.id, {
+                  inline_review_tracked: true,
                 });
               }
             }
           }
         }
-      } catch {
-        // Non-fatal — summary comment is already posted
+      } catch (err) {
+        const log = useLogger();
+        log.set({
+          postprocess: {
+            inlineReviewTrackingFailed: err instanceof Error ? err.message : String(err),
+          },
+        });
       }
-      await markSideEffect(job.id, "inline_review_posted");
     }
 
     // 6. Complete GitHub check
@@ -606,13 +826,12 @@ async function postprocessReview(job: JobRow): Promise<void> {
       if (automationRunId) {
         try {
           const { getOrgSlugById } = await import("@/lib/auth/session");
-          const { orgUrl } = await import("@/lib/config/urls");
+          const { runUrl } = await import("@/lib/config/urls");
           const slug = await getOrgSlugById(orgId);
-          detailsUrl = orgUrl(slug, `/runs/${automationRunId}`);
+          detailsUrl = runUrl(automationRunId, slug);
         } catch {
-          // Fallback: link without org slug
-          const { getAppBaseUrl } = await import("@/lib/config/urls");
-          detailsUrl = `${getAppBaseUrl()}/runs/${automationRunId}`;
+          const { runUrl } = await import("@/lib/config/urls");
+          detailsUrl = runUrl(automationRunId);
         }
       }
       try {
@@ -686,6 +905,42 @@ async function postprocessReview(job: JobRow): Promise<void> {
   }
 }
 
+function mergeInlineCommentMapWithTrackedThreads(
+  legacyMap: Record<string, number>,
+  trackedThreads: TrackedInlineThread[],
+  buildInlineCommentMapFromTrackedThreads: (threads: TrackedInlineThread[]) => Record<string, number>,
+) {
+  const trackedMap = buildInlineCommentMapFromTrackedThreads(trackedThreads);
+  const mergedLegacyEntries = Object.fromEntries(
+    Object.entries(legacyMap).filter(([issueId]) => trackedMap[issueId] == null),
+  );
+
+  return {
+    ...mergedLegacyEntries,
+    ...trackedMap,
+  };
+}
+
+function buildInlineReviewMarker(jobId: string) {
+  return `polaris-inline-review:${jobId}`;
+}
+
+function buildInlineReviewSummaryBody(
+  reviewLabel: string,
+  marker: string,
+) {
+  return `See ${reviewLabel} above for the full summary.\n\n<!-- ${marker} -->`;
+}
+
+function readInlineReviewId(
+  sideEffects: Record<string, unknown>,
+) {
+  const reviewId = sideEffects.inline_review_review_id;
+  return typeof reviewId === "number" && Number.isInteger(reviewId) && reviewId > 0
+    ? reviewId
+    : null;
+}
+
 // ── Side Effect Tracking ──
 
 /**
@@ -695,6 +950,13 @@ async function markSideEffect(
   jobId: string,
   effectName: string,
 ): Promise<void> {
+  await markSideEffects(jobId, { [effectName]: true });
+}
+
+async function markSideEffects(
+  jobId: string,
+  effects: Record<string, unknown>,
+): Promise<void> {
   const { db } = await import("@/lib/db");
   const { jobs } = await import("@/lib/jobs/schema");
   const { eq, sql } = await import("drizzle-orm");
@@ -702,7 +964,7 @@ async function markSideEffect(
   await db
     .update(jobs)
     .set({
-      sideEffectsCompleted: sql`COALESCE(${jobs.sideEffectsCompleted}, '{}'::jsonb) || ${JSON.stringify({ [effectName]: true })}::jsonb`,
+      sideEffectsCompleted: sql`COALESCE(${jobs.sideEffectsCompleted}, '{}'::jsonb) || ${JSON.stringify(effects)}::jsonb`,
     })
     .where(eq(jobs.id, jobId));
 }

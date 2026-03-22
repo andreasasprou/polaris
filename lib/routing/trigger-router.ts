@@ -229,12 +229,12 @@ async function dispatchContinuousReview(
   let runDetailsUrl: string | undefined;
   try {
     const { getOrgSlugById } = await import("@/lib/auth/session");
-    const { orgUrl } = await import("@/lib/config/urls");
+    const { runUrl } = await import("@/lib/config/urls");
     const slug = await getOrgSlugById(orgId);
-    runDetailsUrl = orgUrl(slug, `/runs/${run.id}`);
+    runDetailsUrl = runUrl(run.id, slug);
   } catch {
-    const { getAppBaseUrl } = await import("@/lib/config/urls");
-    runDetailsUrl = `${getAppBaseUrl()}/runs/${run.id}`;
+    const { runUrl } = await import("@/lib/config/urls");
+    runDetailsUrl = runUrl(run.id);
   }
 
   // Create GitHub check so it appears on the PR while the task queues
