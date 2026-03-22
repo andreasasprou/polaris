@@ -57,11 +57,39 @@ export function extractPrUrl(items: ChatItem[]): string | null {
  * a non-empty diff field), and diff content parts (oldText/newText converted
  * to unified diff via the `diff` package).
  *
- * Deduplicates by file path, keeping the last change per file.
+ * Accumulates hunks per file path — if the same file is edited multiple times,
+ * all hunks are concatenated in session order so the review pane shows every
+ * change, not just the last one.
  */
 export function extractFileChanges(items: ChatItem[]): DiffSummary {
-  // Use a map keyed by file path — last write wins
+  // Accumulate hunks per file path in session order
   const changesByPath = new Map<string, FileChange>();
+
+  function appendChange(path: string, action: string, diff: string) {
+    const parsedLines = parseUnifiedDiff(diff);
+    const additions = parsedLines.filter((l) => l.type === "addition").length;
+    const deletions = parsedLines.filter((l) => l.type === "deletion").length;
+
+    const existing = changesByPath.get(path);
+    if (existing) {
+      // Accumulate: append hunks, sum counts
+      existing.diff += "\n" + diff;
+      existing.parsedLines.push(...parsedLines);
+      existing.additions += additions;
+      existing.deletions += deletions;
+      // Keep the latest action (e.g., "write" supersedes "patch")
+      existing.action = action;
+    } else {
+      changesByPath.set(path, {
+        path,
+        action,
+        diff,
+        parsedLines,
+        additions,
+        deletions,
+      });
+    }
+  }
 
   for (const item of items) {
     if (item.type !== "tool_call") continue;
@@ -77,30 +105,16 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
         const action = part.action ?? "";
         // Skip read-only file refs (no meaningful change)
         if (action === "read" || !part.diff) {
-          // Still track the path for potential diff parts
           lastFileRefPath = part.path;
           continue;
         }
 
-        const parsedLines = parseUnifiedDiff(part.diff);
-        const additions = parsedLines.filter((l) => l.type === "addition").length;
-        const deletions = parsedLines.filter((l) => l.type === "deletion").length;
-
-        changesByPath.set(part.path, {
-          path: part.path,
-          action,
-          diff: part.diff,
-          parsedLines,
-          additions,
-          deletions,
-        });
-
+        appendChange(part.path, action, part.diff);
         lastFileRefPath = part.path;
         continue;
       }
 
       if (isDiffPart(part)) {
-        // Convert oldText/newText to unified diff using the `diff` package
         const filePath = part.path ?? lastFileRefPath ?? "unknown";
         const unifiedDiff = createTwoFilesPatch(
           filePath,
@@ -109,18 +123,7 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
           part.newText,
         );
 
-        const parsedLines = parseUnifiedDiff(unifiedDiff);
-        const additions = parsedLines.filter((l) => l.type === "addition").length;
-        const deletions = parsedLines.filter((l) => l.type === "deletion").length;
-
-        changesByPath.set(filePath, {
-          path: filePath,
-          action: "patch",
-          diff: unifiedDiff,
-          parsedLines,
-          additions,
-          deletions,
-        });
+        appendChange(filePath, "patch", unifiedDiff);
         continue;
       }
     }

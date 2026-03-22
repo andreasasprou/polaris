@@ -19,21 +19,29 @@ export function parseUnifiedDiff(diff: string): DiffLine[] {
 
   let oldLine = 0;
   let newLine = 0;
+  let inHunk = false;
 
   for (const line of rawLines) {
-    // Skip file header lines
+    // Skip file header lines — but only BEFORE the first hunk.
+    // Inside a hunk, lines like "--- TODO" or "+++counter" are real content.
     if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("---") ||
-      line.startsWith("+++") ||
-      line.startsWith("\\")
+      !inHunk &&
+      (line.startsWith("diff --git") ||
+        line.startsWith("index ") ||
+        line.startsWith("---") ||
+        line.startsWith("+++"))
     ) {
+      continue;
+    }
+
+    // "\ No newline at end of file" can appear anywhere — always skip
+    if (line.startsWith("\\")) {
       continue;
     }
 
     const hunkMatch = line.match(HUNK_HEADER_RE);
     if (hunkMatch) {
+      inHunk = true;
       oldLine = parseInt(hunkMatch[1], 10);
       newLine = parseInt(hunkMatch[2], 10);
       result.push({

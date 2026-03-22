@@ -103,9 +103,9 @@ describe("extractFileChanges", () => {
     expect(result.files[0].deletions).toBeGreaterThan(0);
   });
 
-  it("deduplicates by path (last change wins)", () => {
+  it("accumulates hunks when the same file is edited multiple times", () => {
     const diff1 = "@@ -1,1 +1,1 @@\n-old\n+mid";
-    const diff2 = "@@ -1,1 +1,1 @@\n-mid\n+final";
+    const diff2 = "@@ -10,1 +10,1 @@\n-mid\n+final";
 
     const items: ChatItem[] = [
       makeToolCall([
@@ -118,8 +118,14 @@ describe("extractFileChanges", () => {
 
     const result = extractFileChanges(items);
     expect(result.totalFiles).toBe(1);
-    // Last write wins — the diff should be diff2
-    expect(result.files[0].diff).toBe(diff2);
+    // Both hunks accumulated — 2 additions + 2 deletions total
+    expect(result.files[0].additions).toBe(2);
+    expect(result.files[0].deletions).toBe(2);
+    expect(result.totalAdditions).toBe(2);
+    expect(result.totalDeletions).toBe(2);
+    // Diff contains both hunks
+    expect(result.files[0].diff).toContain("old");
+    expect(result.files[0].diff).toContain("final");
   });
 
   it("aggregates multiple files correctly", () => {
