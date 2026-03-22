@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 import { ChevronRightIcon } from "lucide-react";
 import {
   Collapsible,
@@ -8,16 +9,68 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { DiffLine } from "./diff-line";
+import { DiffView, DiffModeEnum } from "@git-diff-view/react";
+import "@git-diff-view/react/styles/diff-view.css";
 import type { FileChange } from "@/lib/diff/types";
 
-const MAX_DISPLAY_LINES = 5000;
+/** Map common file extensions to highlight.js language identifiers. */
+function langFromPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    mjs: "javascript",
+    cjs: "javascript",
+    json: "json",
+    md: "markdown",
+    mdx: "markdown",
+    css: "css",
+    scss: "scss",
+    html: "html",
+    yaml: "yaml",
+    yml: "yaml",
+    py: "python",
+    rs: "rust",
+    go: "go",
+    rb: "ruby",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    sql: "sql",
+    graphql: "graphql",
+    gql: "graphql",
+    toml: "toml",
+    xml: "xml",
+    svg: "xml",
+    java: "java",
+    kt: "kotlin",
+    swift: "swift",
+    c: "c",
+    cpp: "cpp",
+    h: "c",
+    hpp: "cpp",
+  };
+  return map[ext] ?? "";
+}
 
 export function DiffFileSection({ file }: { file: FileChange }) {
   const [open, setOpen] = useState(true);
+  const { resolvedTheme } = useTheme();
 
   const fileName = file.path.split("/").pop() ?? file.path;
-  const tooLarge = file.parsedLines.length > MAX_DISPLAY_LINES;
+  const lang = langFromPath(file.path);
+  const diffTheme = resolvedTheme === "dark" ? "dark" : "light";
+
+  const diffData = useMemo(
+    () => ({
+      oldFile: { fileName: file.path, fileLang: lang, content: "" },
+      newFile: { fileName: file.path, fileLang: lang, content: "" },
+      hunks: [file.diff],
+    }),
+    [file.path, file.diff, lang],
+  );
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -54,18 +107,15 @@ export function DiffFileSection({ file }: { file: FileChange }) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="mt-1 overflow-hidden rounded-md border border-border bg-muted/10">
-          {tooLarge ? (
-            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-              Diff too large to display ({file.parsedLines.length.toLocaleString()} lines)
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              {file.parsedLines.map((line, i) => (
-                <DiffLine key={i} line={line} />
-              ))}
-            </div>
-          )}
+        <div className="mt-1 overflow-hidden rounded-md border border-border">
+          <DiffView
+            data={diffData}
+            diffViewMode={DiffModeEnum.Unified}
+            diffViewTheme={diffTheme}
+            diffViewHighlight
+            diffViewWrap
+            diffViewFontSize={12}
+          />
         </div>
       </CollapsibleContent>
     </Collapsible>
