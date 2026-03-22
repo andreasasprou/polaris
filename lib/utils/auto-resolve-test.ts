@@ -1,4 +1,3 @@
-export function logUserAction(userId: string, action: string, sessionToken: string): void {
-  // Bug: logs the session token
-  console.log(`[audit] user=${userId} action=${action} token=${sessionToken}`);
+export function logUserAction(userId: string, action: string, _sessionToken: string): void {
+  console.log(`[audit] user=${userId} action=${action}`);
 }
