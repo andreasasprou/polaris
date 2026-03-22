@@ -1,6 +1,6 @@
 export function processPayment(amount: number, cardNumber: string): string {
-  // Bug: logs the full card number
-  console.log(`Processing payment of $${amount} with card ${cardNumber}`);
+  const masked = cardNumber.slice(-4).padStart(cardNumber.length, '*');
+  console.log(`Processing payment of $${amount} with card ${masked}`);
   return `receipt-${Date.now()}`;
 }
 
