@@ -1,5 +1,5 @@
 ---
-title: PR Review UX Hardening — Guidance Loading, Prompt Quality, Inline Delivery, and GitHub Presentation
+title: PR Review UX Hardening — Prompt Quality, Inline Delivery, and GitHub Presentation
 status: planned
 created: 2026-03-22
 owner: andreas
@@ -7,7 +7,7 @@ related_prs: []
 domains: [reviews, github, orchestration, prompts]
 ---
 
-# 23 — PR Review UX Hardening — Guidance Loading, Prompt Quality, Inline Delivery, and GitHub Presentation
+# 23 — PR Review UX Hardening — Prompt Quality, Inline Delivery, and GitHub Presentation
 
 ## Problem
 ### What
@@ -18,14 +18,16 @@ Polaris already has the important review architecture:
 - structured review metadata with continuity state
 - platform-owned GitHub side effects
 - best-effort inline comment support
+- repo-owned review config from `.polaris/reviews/*.yaml` on the trusted base branch
+- changed-path scoped guideline loading
+- inline review lifecycle tracking (`activeInlineReviewIds`, `inlineCommentMap`, resolved-thread flow)
 
 The remaining gaps are mostly review ergonomics and rendering quality:
 
-- changed-path scoped repository guidance is not actually wired into the review path because `loadRepoGuidelines()` is called with `[]`
 - review prompts are solid but still too generic in a few high-value places
-- inline review comments exist, but the delivery path is still thin and not clearly hardened against bad anchors
+- inline review comments exist, but the delivery path still leans too heavily on GitHub rejecting bad anchors instead of local validation/degradation
 - GitHub check output is still sparse
-- stale/superseded review presentation can be clearer
+- failure/rejection diagnostics for inline rendering are still weak
 
 ### Why
 This is leverage on top of the existing architecture, not a replacement for it.
@@ -34,7 +36,6 @@ Improving review quality and GitHub delivery matters because:
 
 - review usefulness is perceived mainly through the PR comment, inline findings, and check output
 - weak review prompting creates trust problems even when orchestration is correct
-- guidance-loading bugs silently waste repo-specific review context
 - better GitHub presentation makes Polaris feel like a first-class autonomous review product without changing the control plane
 
 ## Non-Goals
@@ -56,62 +57,58 @@ Improving review quality and GitHub delivery matters because:
 | 2026-03-22 | Harden inline delivery through validation and graceful degradation | Bad anchors should reduce rendering fidelity, not break review completion |
 | 2026-03-22 | Keep manual reviewer steering out of scope for now | It adds product surface area without being the highest-leverage current gap |
 | 2026-03-22 | Keep repo-local skill loading out of scope for now | Guidance-loading correctness and prompt quality are more urgent and lower-risk |
+| 2026-03-22 | Treat review-config loading and changed-path guideline loading as already-landed prerequisites | This plan should only cover the remaining gaps, not re-plan shipped work |
 
 ## Current State vs Missing Work
 
 Already implemented:
 
 - structured review metadata parsing and persistence
+- repo-owned review config loading and merge on the trusted base branch
+- runtime coherence validation and credential-slug resolution
 - summary PR comment posting
 - stale-comment marking
 - GitHub check creation/completion
 - incremental/full/reset/since review scopes
 - optional inline anchors in prompt/schema/output
 - best-effort inline review posting
+- dismissal of superseded inline reviews
+- reply-on-resolve plus GraphQL thread resolution
+- changed-path guideline loading
 
 Still missing or incomplete:
 
-- changed-path guideline loading is not wired to actual changed files
 - prompt heuristics are not yet explicitly optimized for high-confidence, concrete findings
-- inline anchor delivery lacks a clearly defined validation/degradation layer
+- inline anchor delivery lacks a strong local validation/degradation layer
 - check summaries are too thin
-- stale review UX can be clearer
+- inline-render rejection diagnostics are still weak
 
 ## Program Shape
 
-Ship this as three sequential PRs:
+Ship this as two sequential PRs:
 
-1. guidance loading + prompt quality
-2. inline review delivery hardening
-3. GitHub check/comment polish
+1. prompt quality
+2. inline review delivery hardening + GitHub presentation polish
 
 Recommended PR boundaries:
 
 | PR | Scope | Must Land Before |
 |----|-------|------------------|
-| PR1 | fix guideline loading + tighten review prompt heuristics | PR2+ |
-| PR2 | harden inline anchor validation and delivery | PR3 |
-| PR3 | polish check summaries and supersession UX | final |
+| PR1 | tighten review prompt heuristics | PR2 |
+| PR2 | harden inline anchor validation/delivery and polish GitHub presentation | final |
 
 ## Implementation
 
-### Phase 1 — Guidance Loading and Prompt Quality
+### Phase 1 — Prompt Quality
 
-**Goal:** make sure the reviewer sees the right repo guidance and applies a more disciplined review heuristic.
+**Goal:** make the reviewer materially more disciplined without changing the durable review contract.
 
 **Modify**
 
-- `lib/orchestration/pr-review.ts`
-- `lib/reviews/guidelines.ts`
 - `lib/reviews/prompt-builder.ts`
 
 **Changes**
 
-- Pass the actual filtered changed file paths into `loadRepoGuidelines()` instead of `[]`.
-- Keep guideline loading deterministic and budgeted:
-  - root `AGENTS.md` / `.agents.md`
-  - scoped `AGENTS.md` / `.agents.md` for directories on changed-file paths
-  - `REVIEW_GUIDELINES.md` / `.review-guidelines.md`
 - Tighten prompt instructions around the existing structured output contract:
   - require a concrete failure scenario or concrete risk explanation for every finding
   - explicitly reject speculative or low-confidence findings
@@ -125,13 +122,12 @@ Recommended PR boundaries:
 
 **Acceptance criteria**
 
-- changed-directory guideline files appear in the built prompt when relevant files are touched
 - prompt text clearly biases toward concrete, high-confidence findings
 - current structured output schema remains valid and unchanged
 
-### Phase 2 — Inline Review Delivery Hardening
+### Phase 2 — Inline Review Delivery and GitHub Presentation
 
-**Goal:** make the existing inline comment path reliable enough to ship as a polished secondary rendering target.
+**Goal:** make the existing inline comment path reliable enough to ship as a polished secondary rendering target and improve the GitHub-facing output.
 
 **Modify**
 
@@ -139,6 +135,7 @@ Recommended PR boundaries:
 - `lib/reviews/inline-comments.ts`
 - `lib/reviews/github.ts`
 - `lib/orchestration/postprocess.ts`
+- `lib/reviews/prompt-builder.ts` if wording and rendered output need to stay aligned
 
 **Changes**
 
@@ -154,28 +151,7 @@ Recommended PR boundaries:
 - If GitHub rejects the final inline review payload, keep the summary comment and check result as the successful canonical rendering path and log the rejection reason.
 - Keep summary comment posting first; inline review remains best-effort and never blocks state persistence, stale marking, or check completion.
 
-**Important rule**
-
-- Do not move line anchors or suggestion text into durable `reviewState.openIssues`.
-- The durable contract remains verdict, summary, severity counts, open issues, resolved issues, and review count.
-
-**Acceptance criteria**
-
-- valid anchors render as inline review comments
-- invalid anchors degrade gracefully without blocking review completion
-- summary comment, review-state persistence, and check completion still succeed when inline posting fails
-
-### Phase 3 — GitHub Check and Comment Polish
-
-**Goal:** make the GitHub-facing result easier to scan and easier to trust.
-
-**Modify**
-
-- `lib/reviews/github.ts`
-- `lib/orchestration/postprocess.ts`
-- `lib/reviews/prompt-builder.ts` if footer/scope wording needs alignment
-
-**Changes**
+**GitHub presentation changes**
 
 - Improve check summaries so they include:
   - verdict
@@ -188,18 +164,23 @@ Recommended PR boundaries:
   - reviewed SHA range
 - Keep the top-level summary comment as the primary human-readable artifact.
 
+**Important rule**
+
+- Do not move line anchors or suggestion text into durable `reviewState.openIssues`.
+- The durable contract remains verdict, summary, severity counts, open issues, resolved issues, and review count.
+
 **Acceptance criteria**
 
+- valid anchors render as inline review comments
+- invalid anchors degrade gracefully without blocking review completion
+- summary comment, review-state persistence, and check completion still succeed when inline posting fails
 - the check run alone is enough to understand whether the PR is blocked and why
-- superseded reviews clearly point to the latest review
 - scope context is visible without reading raw metadata
 
 ## File Summary
 
 | Action | File |
 |--------|------|
-| Modify | `lib/orchestration/pr-review.ts` |
-| Modify | `lib/reviews/guidelines.ts` |
 | Modify | `lib/reviews/prompt-builder.ts` |
 | Modify | `lib/reviews/types.ts` |
 | Modify | `lib/reviews/inline-comments.ts` |
@@ -215,13 +196,12 @@ Recommended PR boundaries:
 
 ## Progress
 
-- [ ] Phase 1: wire changed-path guidance loading and improve review prompt discipline
-- [ ] Phase 2: harden inline anchor validation and delivery
-- [ ] Phase 3: improve GitHub check/comment presentation
+- [x] Repo-owned config and changed-path guideline loading landed
+- [ ] Phase 1: improve review prompt discipline
+- [ ] Phase 2: harden inline anchor validation/delivery and improve GitHub presentation
 
 ## Done When
 
-- [ ] changed-path scoped repository guidance is actually loaded into review prompts
 - [ ] review prompt heuristics explicitly require concrete, high-confidence findings
 - [ ] inline anchors are validated before posting
 - [ ] invalid inline anchors degrade gracefully without breaking review completion

@@ -133,15 +133,25 @@ how the current implementation works.
    - For `oneshot` mode: creates `automationRun`, calls `dispatchCodingTask()`.
 3. **`lib/orchestration/pr-review.ts` → `dispatchPrReview()`** —
    - Acquires review lock on `automationSession` (or queues the request).
-   - Applies filters (`lib/reviews/filters.ts`), fetches diff + guidelines,
-     classifies files (`lib/reviews/classification.ts`),
-     builds prompt (`lib/reviews/prompt-builder.ts`).
-   - CAS session to active, creates `review` job + attempt.
-   - Inline retry loop (up to 2 attempts): health-check + POST /prompt.
+   - Loads repo-owned review config from `.polaris/reviews/*.yaml` on the trusted
+     base branch (`lib/reviews/repo-config.ts`), merges it with connector defaults,
+     validates agent/model/effort coherence, and resolves any credential slug override.
+   - Fetches the raw changed-file list, applies review filters, and passes the
+     post-filter reviewed paths into `loadRepoGuidelines()` so scoped `AGENTS.md`
+     discovery follows the actual review surface.
+   - Detects runtime drift via `automationSession.metadata.lastRuntimeConfig`;
+     if the review runtime changed incompatibly, creates a fresh continuation
+     session instead of reusing stale agent context.
+   - Builds the prompt, resolves org-level MCP server config, CASes the target
+     session to active, creates the `review` job + attempt, then runs the inline
+     retry loop (up to 2 attempts): health-check + POST /prompt.
    - Lock ownership transfers to callback path on 202, or to sweeper on timeout.
 4. **Post-processing** (same callback path as Flow A) —
-   `postprocessReview()`: parse output → mark stale comment → update session metadata
-   → post review comment → complete GitHub check → update automation run →
+   `postprocessReview()`: parse output → mark stale comment → dismiss superseded
+   inline reviews → reply to newly resolved inline findings and resolve their
+   GitHub threads → update session metadata → post review comment → best-effort
+   post inline review with anchored findings → persist inline comment ID map for
+   future resolution → complete GitHub check → update automation run →
    `lib/orchestration/review-lifecycle.ts` → `finalizeReviewRun()` (release lock,
    drain pending queue, dispatch next queued review).
 
@@ -227,11 +237,13 @@ JSONB-friendly `StepMetrics` object stored on `automationRuns.metrics`.
 Layer 3 — multi-domain workflows that coordinate across sessions, jobs, sandbox,
 and automations. Contains:
 - `coding-task.ts` — provisions sandbox, bootstraps agent, creates job, POSTs /prompt.
-- `pr-review.ts` — lock acquisition, filtering, diff/guideline gathering, prompt building, dispatch with retry.
+- `pr-review.ts` — review lock acquisition, repo-config-as-code loading/validation,
+  runtime-drift handling, diff/guideline gathering, prompt building, and dispatch with retry.
 - `prompt-dispatch.ts` — two-tier session dispatch (alive sandbox vs. provision).
 - `sandbox-lifecycle.ts` — sandbox provisioning, snapshot-and-hibernate, destroy.
 - `callback-processor.ts` — epoch fence, callback ingestion, session healing.
-- `postprocess.ts` — coding task PR creation, review comment posting, check completion.
+- `postprocess.ts` — coding task PR creation, review summary/inline GitHub delivery,
+  inline-review dismissal/reply/resolve, and check completion.
 - `sweeper.ts` — job timeout, dispatch-unknown reconciliation, stale session healing, review lock release.
 - `credential-resolver.ts` — loads all credentials for an automation run.
 - `review-lifecycle.ts` — releases locks and drains queued reviews.
@@ -240,11 +252,12 @@ and automations. Contains:
 
 ### `lib/reviews`
 PR review domain logic: event normalization, diff fetching, file classification,
-path filtering, repo guidelines loading, structured prompt building, output
-parsing (verdict/severity/summary), comment rendering (Markdown), and GitHub
-API operations (post comment, mark stale, create/complete/fail checks, ancestor
-detection).
-**Key exports:** `normalizePREvent()`, `buildReviewPrompt()`, `parseReviewOutput()`, `renderReviewComment()`, `postReviewComment()`, `completeCheck()`.
+path filtering, repo guidelines loading, repo-config-as-code loading/validation,
+structured prompt building, output parsing (verdict/severity/summary), inline
+anchor formatting, inline-review tracking state, and GitHub API operations
+(post comment, mark stale, create/complete/fail checks, post inline reviews,
+reply+resolve review threads, ancestor detection).
+**Key exports:** `normalizePREvent()`, `loadRepoReviewConfig()`, `buildReviewPrompt()`, `parseReviewOutput()`, `buildReviewComments()`, `postReviewComment()`, `postInlineReview()`, `completeCheck()`, `resolveReviewThreads()`.
 **Depends on:** `lib/integrations` (Octokit factories).
 
 ### `lib/routing`
