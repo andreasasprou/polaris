@@ -67,18 +67,17 @@ export const GET = withEvlog(async (req: Request) => {
     );
   }
 
-  // Read PKCE verifier from cookie
-  const cookieName = `mcp_oauth_verifier_${payload.serverId}`;
-  const cookies = req.headers.get("cookie") ?? "";
-  const verifierMatch = cookies.match(
-    new RegExp(`${cookieName}=([^;]+)`),
-  );
-  if (!verifierMatch) {
+  // Read PKCE verifier from cookie (no regex — split and match by prefix)
+  const cookiePrefix = `mcp_oauth_verifier_${payload.serverId}=`;
+  const codeVerifier = (req.headers.get("cookie") ?? "")
+    .split("; ")
+    .find((c) => c.startsWith(cookiePrefix))
+    ?.slice(cookiePrefix.length);
+  if (!codeVerifier) {
     return NextResponse.redirect(
       new URL("/settings/mcp?error=missing+verifier", req.url),
     );
   }
-  const codeVerifier = verifierMatch[1];
 
   // Token exchange
   const callbackUrl = `${getAppBaseUrl()}/api/mcp-servers/oauth/callback`;
@@ -138,7 +137,7 @@ export const GET = withEvlog(async (req: Request) => {
   const headers = new Headers();
   headers.append(
     "Set-Cookie",
-    `${cookieName}=; HttpOnly; Path=/api/mcp-servers/oauth; Max-Age=0`,
+    `mcp_oauth_verifier_${payload.serverId}=; HttpOnly; Path=/api/mcp-servers/oauth; Max-Age=0`,
   );
   headers.set(
     "Location",
