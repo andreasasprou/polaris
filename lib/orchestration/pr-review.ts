@@ -332,8 +332,15 @@ export async function dispatchPrReview(
 
     // 9. Handle session creation — explicit "reset" or YAML runtime drift
     const effectiveAgentType = resolvedRuntime?.agentType ?? automation.agentType ?? "claude";
-    const effectiveSecretId = resolvedRuntime?.credentialOverride?.agentSecretId ?? automation.agentSecretId;
-    const effectivePoolId = resolvedRuntime?.credentialOverride?.keyPoolId ?? automation.keyPoolId;
+    // When YAML specifies a credential, use the entire override (not individual fields)
+    // to avoid mixing YAML's null agentSecretId with connector's agentSecretId,
+    // which violates the DB CHECK constraint (both cannot be set).
+    const effectiveSecretId = resolvedRuntime?.credentialOverride
+      ? resolvedRuntime.credentialOverride.agentSecretId
+      : automation.agentSecretId;
+    const effectivePoolId = resolvedRuntime?.credentialOverride
+      ? resolvedRuntime.credentialOverride.keyPoolId
+      : automation.keyPoolId;
 
     // Detect if YAML changed the agent or credential vs what the existing session was created with.
     // If so, we need a fresh session — the old sandbox, agent session IDs, and credentials are stale.
