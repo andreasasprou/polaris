@@ -110,7 +110,6 @@ vi.mock("@/lib/reviews/repo-config", () => ({
       agentType: "claude",
       model: "claude-sonnet-4-20250514",
       modelParams: {},
-      credentialRef: {},
     }),
   ),
   formatConfigError: vi.fn().mockReturnValue("Review config error: test"),

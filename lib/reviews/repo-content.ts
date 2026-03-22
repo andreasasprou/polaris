@@ -1,5 +1,15 @@
 import type { Octokit } from "octokit";
 
+/** Check if an error is a GitHub API 404 response. */
+export function isGitHub404(err: unknown): boolean {
+  return (
+    err != null &&
+    typeof err === "object" &&
+    "status" in err &&
+    (err as { status: number }).status === 404
+  );
+}
+
 /**
  * Fetch a single text file from a repo/ref via GitHub Contents API.
  * Returns `null` for 404/not-a-file and throws for unexpected transport/API failures.
@@ -25,14 +35,7 @@ export async function fetchFileContent(
 
     return null;
   } catch (err: unknown) {
-    if (
-      err &&
-      typeof err === "object" &&
-      "status" in err &&
-      (err as { status: number }).status === 404
-    ) {
-      return null;
-    }
+    if (isGitHub404(err)) return null;
     throw err;
   }
 }

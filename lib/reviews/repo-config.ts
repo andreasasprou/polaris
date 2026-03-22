@@ -3,7 +3,7 @@ import yaml from "js-yaml";
 import type { Octokit } from "octokit";
 import type { PRReviewConfig } from "./types";
 import type { AgentType, ModelParams } from "@/lib/sandbox-agent/types";
-import { fetchFileContent } from "./repo-content";
+import { fetchFileContent, isGitHub404 } from "./repo-content";
 
 // ── Zod schema (YAML keys normalized to camelCase at parse boundary) ──
 
@@ -55,7 +55,6 @@ export interface ResolvedReviewConfig {
   agentType: AgentType;
   model: string;
   modelParams: ModelParams;
-  credentialRef: { secretId?: string; keyPoolId?: string };
 }
 
 // ── YAML key normalization ──
@@ -106,14 +105,7 @@ export async function loadRepoReviewConfig(
       });
       dirData = response.data;
     } catch (err: unknown) {
-      if (
-        err &&
-        typeof err === "object" &&
-        "status" in err &&
-        (err as { status: number }).status === 404
-      ) {
-        return { status: "not_found" };
-      }
+      if (isGitHub404(err)) return { status: "not_found" };
       throw err;
     }
 
@@ -265,10 +257,6 @@ export function mergeWithConnector(
     agentType,
     model,
     modelParams,
-    credentialRef: {
-      secretId: automation.agentSecretId ?? undefined,
-      keyPoolId: automation.keyPoolId ?? undefined,
-    },
   };
 }
 

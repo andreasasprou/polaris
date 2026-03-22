@@ -1,4 +1,4 @@
-import { eq, and, or, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, isNull, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { automations, automationRuns, automationSessions } from "./schema";
 import type { AutomationSessionMetadata, QueuedReviewRequest } from "@/lib/reviews/types";
@@ -418,21 +418,16 @@ export async function clearPendingReviewRequest(
  * Used by the sweeper to drain queued reviews that got stuck after a failed replay.
  */
 export async function getAutomationSessionsWithStalePending() {
-  const all = await db
+  return db
     .select()
     .from(automationSessions)
     .where(
       and(
         isNull(automationSessions.reviewLockJobId),
         eq(automationSessions.status, "active"),
+        sql`${automationSessions.metadata}->>'pendingReviewRequest' IS NOT NULL`,
       ),
     );
-
-  // Filter in-memory for sessions with pending requests (JSONB field)
-  return all.filter((s) => {
-    const metadata = s.metadata as AutomationSessionMetadata;
-    return metadata.pendingReviewRequest != null;
-  });
 }
 
 /**

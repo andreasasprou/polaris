@@ -151,6 +151,17 @@ export async function dispatchPrReview(
       credentialOverride?: { agentSecretId: string | null; keyPoolId: string | null };
     } | null = null;
 
+    // Helper: fail config validation and return early
+    const failConfig = async (errorMsg: string) => {
+      const { failCheck } = await import("@/lib/reviews/github");
+      if (checkRunId) {
+        await failCheck({ installationId, owner: event.owner, repo: event.repo, checkRunId, error: errorMsg });
+      }
+      await updateAutomationRun(automationRunId, { status: "failed", summary: errorMsg, error: errorMsg, completedAt: new Date() });
+      await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
+      handedOff = true;
+    };
+
     if (repoConfigResult.status === "found") {
       const resolved = mergeWithConnector(repoConfigResult.definition, automation);
       config = resolved.reviewConfig;
@@ -164,14 +175,7 @@ export async function dispatchPrReview(
       const { validateRuntimeCoherence } = await import("@/lib/reviews/repo-config");
       const coherenceError = await validateRuntimeCoherence(resolved);
       if (coherenceError) {
-        const errorMsg = `Review config error: .polaris/reviews/${repoConfigResult.file} — ${coherenceError}`;
-        const { failCheck } = await import("@/lib/reviews/github");
-        if (checkRunId) {
-          await failCheck({ installationId, owner: event.owner, repo: event.repo, checkRunId, error: errorMsg });
-        }
-        await updateAutomationRun(automationRunId, { status: "failed", summary: errorMsg, error: errorMsg, completedAt: new Date() });
-        await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
-        handedOff = true;
+        await failConfig(`Review config error: .polaris/reviews/${repoConfigResult.file} — ${coherenceError}`);
         return { jobId: "" };
       }
 
@@ -180,14 +184,7 @@ export async function dispatchPrReview(
         const { resolveCredentialSlug } = await import("@/lib/reviews/repo-config");
         const credRef = await resolveCredentialSlug(orgId, repoConfigResult.definition.credential, resolvedRuntime.agentType);
         if (!credRef) {
-          const errorMsg = `Review config error: credential "${repoConfigResult.definition.credential}" not found. Check that the key pool name or API key label exists in your organization settings.`;
-          const { failCheck } = await import("@/lib/reviews/github");
-          if (checkRunId) {
-            await failCheck({ installationId, owner: event.owner, repo: event.repo, checkRunId, error: errorMsg });
-          }
-          await updateAutomationRun(automationRunId, { status: "failed", summary: errorMsg, error: errorMsg, completedAt: new Date() });
-          await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
-          handedOff = true;
+          await failConfig(`Review config error: credential "${repoConfigResult.definition.credential}" not found. Check that the key pool name or API key label exists in your organization settings.`);
           return { jobId: "" };
         }
         resolvedRuntime.credentialOverride = {
@@ -200,33 +197,15 @@ export async function dispatchPrReview(
       repoConfigResult.status === "multiple" ||
       repoConfigResult.status === "error"
     ) {
-      const errorMsg = formatConfigError(repoConfigResult);
-      const { failCheck } = await import("@/lib/reviews/github");
-      if (checkRunId) {
-        await failCheck({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          checkRunId,
-          error: errorMsg,
-        });
-      }
-      await updateAutomationRun(automationRunId, {
-        status: "failed",
-        summary: errorMsg,
-        error: errorMsg,
-        completedAt: new Date(),
-      });
-      await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
-      handedOff = true;
+      await failConfig(formatConfigError(repoConfigResult));
       return { jobId: "" };
     }
 
-    // 4. Fetch raw full file list for filters and guideline scoping
+    // 5. Fetch raw full file list for filters and guideline scoping
     const { fetchFullFileList } = await import("@/lib/reviews/diff");
     const allChangedFiles = await fetchFullFileList(octokit, event.owner, event.repo, event.prNumber);
 
-    // 5. Apply filters with the RAW full file list
+    // 6. Apply filters with the RAW full file list
     const { shouldReviewPR } = await import("@/lib/reviews/filters");
     const filterResult = shouldReviewPR(event, config, allChangedFiles);
     if (!filterResult.review) {
@@ -408,7 +387,10 @@ export async function dispatchPrReview(
 
     // 10. Dispatch prompt to session sandbox
     const { getInteractiveSession, casSessionStatus } = await import("@/lib/sessions/actions");
-    const session = await getInteractiveSession(targetSessionId);
+    // Reuse the drift-check fetch if targetSessionId didn't change (common path)
+    const session = (currentSession && currentSession.id === targetSessionId)
+      ? currentSession
+      : await getInteractiveSession(targetSessionId);
     if (!session) throw new Error(`Interactive session ${targetSessionId} not found`);
 
     // Heal stale active state before CAS — if sandbox died and session

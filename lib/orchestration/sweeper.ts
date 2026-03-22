@@ -575,6 +575,11 @@ async function sweepStalePendingRequests(): Promise<number> {
     updateAutomationRun,
   } = await import("@/lib/automations/actions");
   const { findAutomationById } = await import("@/lib/automations/queries");
+  const { db: database } = await import("@/lib/db");
+  const { repositories, githubInstallations } = await import("@/lib/integrations/schema");
+  const { eq } = await import("drizzle-orm");
+  const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
+
   const sessions = await getAutomationSessionsWithStalePending();
   let count = 0;
 
@@ -590,10 +595,6 @@ async function sweepStalePendingRequests(): Promise<number> {
       // Look up the automation to get the installationId via repository
       const automation = await findAutomationById(session.automationId);
       if (!automation?.repositoryId) continue;
-
-      const { db: database } = await import("@/lib/db");
-      const { repositories, githubInstallations } = await import("@/lib/integrations/schema");
-      const { eq } = await import("drizzle-orm");
 
       const [repo] = await database
         .select({
@@ -617,9 +618,10 @@ async function sweepStalePendingRequests(): Promise<number> {
 
       // Reconstruct full normalizedEvent from session metadata + repo data.
       // dispatchPrReview needs owner, repo, prNumber, baseRef, etc.
-      const replayEvent = {
+      // buildReplayEvent handles manualCommand/commentId reconstruction.
+      const { buildReplayEvent } = await import("./review-lifecycle");
+      const baseEvent = {
         eventType: "pull_request" as const,
-        action: popped.reason,
         installationId: repo.installationId,
         owner: metadata.repositoryOwner ?? repo.owner,
         repo: metadata.repositoryName ?? repo.name,
@@ -634,14 +636,10 @@ async function sweepStalePendingRequests(): Promise<number> {
         baseRef: metadata.baseRef,
         baseSha: metadata.baseSha,
         headRef: metadata.headRef,
-        headSha: popped.headSha,
         title: "",
         body: null,
-        ...(popped.reason === "manual" ? {
-          manualCommand: { mode: popped.mode, ...(popped.sinceSha ? { sinceSha: popped.sinceSha } : {}) },
-          commentId: popped.commentId,
-        } : {}),
       };
+      const replayEvent = buildReplayEvent(baseEvent, popped);
 
       const run = await createAutomationRun({
         automationId: session.automationId,
@@ -653,7 +651,6 @@ async function sweepStalePendingRequests(): Promise<number> {
       });
       replayRunId = run.id;
 
-      const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
       await dispatchPrReview({
         orgId: session.organizationId,
         automationId: session.automationId,

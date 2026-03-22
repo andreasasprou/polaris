@@ -104,8 +104,9 @@ function reconstructDiffFromPatches(
 }
 
 /**
- * Fetch just the file list for a PR (no diff content).
- * Lightweight alternative to fetchPRDiff when the agent will explore the code itself.
+ * Fetch the file list for a PR (no diff content).
+ * Pass `maxFiles: Infinity` (or omit) for an uncapped list.
+ * Default cap is 150 for prompt-budgeted usage.
  */
 export async function fetchPRFileList(
   octokit: Octokit,
@@ -119,36 +120,6 @@ export async function fetchPRFileList(
   let page = 1;
 
   while (files.length < maxFiles) {
-    const { data: fileList } = await octokit.rest.pulls.listFiles({
-      owner,
-      repo,
-      pull_number: prNumber,
-      per_page: 100,
-      page,
-    });
-    if (fileList.length === 0) break;
-    files.push(...fileList.map((f) => f.filename));
-    if (fileList.length < 100) break;
-    page++;
-  }
-
-  return files.slice(0, maxFiles);
-}
-
-/**
- * Fetch the complete list of changed file paths for a PR.
- * Paginates through all pages — no cap. Used for filter evaluation
- * and scoped guidelines, NOT for prompt rendering.
- */
-export async function fetchFullFileList(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  prNumber: number,
-): Promise<string[]> {
-  const files: string[] = [];
-  let page = 1;
-  while (true) {
     const { data } = await octokit.rest.pulls.listFiles({
       owner,
       repo,
@@ -161,7 +132,22 @@ export async function fetchFullFileList(
     if (data.length < 100) break;
     page++;
   }
-  return files;
+
+  return maxFiles === Infinity ? files : files.slice(0, maxFiles);
+}
+
+/**
+ * Fetch the complete list of changed file paths for a PR.
+ * Uncapped — used for filter evaluation and scoped guidelines,
+ * NOT for prompt rendering.
+ */
+export function fetchFullFileList(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<string[]> {
+  return fetchPRFileList(octokit, owner, repo, prNumber, { maxFiles: Infinity });
 }
 
 /**

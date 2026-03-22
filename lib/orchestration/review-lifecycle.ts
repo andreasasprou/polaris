@@ -138,7 +138,7 @@ export async function finalizeReviewRun(input: {
  * the base normalizedEvent snapshot. This ensures /review reset, /review since,
  * and manual commands replay correctly instead of defaulting to incremental.
  */
-function buildReplayEvent(
+export function buildReplayEvent(
   base: Record<string, unknown> | undefined,
   pending: { headSha: string; reason: string; mode: ManualReviewCommand["mode"]; sinceSha?: string; commentId?: string },
 ): Record<string, unknown> {

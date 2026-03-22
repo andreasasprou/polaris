@@ -290,10 +290,6 @@ describe("mergeWithConnector", () => {
     expect(result.agentType).toBe("codex");
     expect(result.model).toBe("gpt-5.4");
     expect(result.modelParams).toEqual({ effortLevel: "xhigh" });
-    expect(result.credentialRef).toEqual({
-      secretId: "secret-1",
-      keyPoolId: undefined,
-    });
   });
 
   it("overrides agentType from YAML", () => {
