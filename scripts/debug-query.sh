@@ -18,13 +18,16 @@ export PGHOST="$(op item get "$OP_ITEM" --fields label=hostname --reveal)"
 export PGDATABASE="$(op item get "$OP_ITEM" --fields label=database --reveal)"
 export PGSSLMODE=require
 export PGCONNECT_TIMEOUT=10
+export PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
+
+PSQL_ARGS=(-X -v ON_ERROR_STOP=1)
 
 if [[ "${1:-}" == "-f" && -n "${2:-}" ]]; then
-  psql -f "$2"
+  psql "${PSQL_ARGS[@]}" -f "$2"
 elif [[ -n "${1:-}" ]]; then
-  psql -c "$1"
+  psql "${PSQL_ARGS[@]}" -c "$1"
 elif [[ ! -t 0 ]]; then
-  psql
+  psql "${PSQL_ARGS[@]}"
 else
   echo "Usage:"
   echo "  $0 \"SELECT count(*) FROM sandbox_agent.events\""

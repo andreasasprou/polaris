@@ -768,10 +768,18 @@ async function postprocessReview(job: JobRow): Promise<void> {
 
     // 6. Complete GitHub check
     if (checkRunId && !sideEffects.check_completed) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
-      const detailsUrl = automationRunId && appUrl
-        ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/runs/${automationRunId}`
-        : undefined;
+      let detailsUrl: string | undefined;
+      if (automationRunId) {
+        try {
+          const { getOrgSlugById } = await import("@/lib/auth/session");
+          const { runUrl } = await import("@/lib/config/urls");
+          const slug = await getOrgSlugById(orgId);
+          detailsUrl = runUrl(automationRunId, slug);
+        } catch {
+          const { runUrl } = await import("@/lib/config/urls");
+          detailsUrl = runUrl(automationRunId);
+        }
+      }
       try {
         if (parsed) {
           await completeCheck({
