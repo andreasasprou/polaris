@@ -8,15 +8,12 @@ export function divideNumbers(a: number, b: number): number {
   return a / b;
 }
 
-export function getUserEmail(user: { name: string; email?: string }): string {
-  // Bug: email could be undefined, returning undefined as string
-  return user.email as string;
+export function getUserEmail(user: { name: string; email?: string }): string | undefined {
+  return user.email;
 }
 
 export async function deleteUser(userId: string): Promise<void> {
-  // Bug: SQL injection — userId is interpolated directly
-  const query = `DELETE FROM users WHERE id = '${userId}'`;
-  await executeQuery(query);
+  await executeQuery("DELETE FROM users WHERE id = $1", [userId]);
 }
 
 export function formatCurrency(amount: number): string {
@@ -26,4 +23,4 @@ export function formatCurrency(amount: number): string {
 }
 
 // Stub for the SQL example
-declare function executeQuery(query: string): Promise<void>;
+declare function executeQuery(query: string, params?: unknown[]): Promise<void>;
