@@ -18,25 +18,24 @@ import { buildChangedLineIndex } from "@/lib/reviews/diff";
 
 describe("reviews/diff", () => {
   describe("buildChangedLineIndex", () => {
-    it("tracks only actual changed right-side lines across multiple files", () => {
+    it("tracks touched prior-side lines across multiple files", () => {
       const diff = [
         "diff --git a/src/a.ts b/src/a.ts",
-        "@@ -10,2 +10,4 @@",
+        "@@ -10,3 +10,3 @@",
         " line 10",
-        "+line 11",
-        "+line 12",
+        "-old line 11",
+        "+new line 11",
+        " line 12",
         "diff --git a/src/b.ts b/src/b.ts",
-        "@@ -30,3 +40,2 @@",
-        "-old 1",
-        "-old 2",
-        "+new 1",
-        "+new 2",
+        "@@ -30,2 +30,0 @@",
+        "-old 30",
+        "-old 31",
       ].join("\n");
 
       const index = buildChangedLineIndex(diff);
 
-      expect(index.get("src/a.ts")).toEqual([{ start: 11, end: 12 }]);
-      expect(index.get("src/b.ts")).toEqual([{ start: 40, end: 41 }]);
+      expect(index.get("src/a.ts")).toEqual([{ start: 11, end: 11 }]);
+      expect(index.get("src/b.ts")).toEqual([{ start: 30, end: 31 }]);
     });
 
     it("excludes unchanged context lines within a changed hunk", () => {
@@ -54,7 +53,7 @@ describe("reviews/diff", () => {
       expect(index.get("src/a.ts")).toEqual([{ start: 7, end: 7 }]);
     });
 
-    it("skips pure deletions with no right-side lines", () => {
+    it("tracks deletion-only hunks as touched prior-side lines", () => {
       const diff = [
         "diff --git a/src/deleted.ts b/src/deleted.ts",
         "@@ -8,2 +8,0 @@",
@@ -64,7 +63,20 @@ describe("reviews/diff", () => {
 
       const index = buildChangedLineIndex(diff);
 
-      expect(index.has("src/deleted.ts")).toBe(false);
+      expect(index.get("src/deleted.ts")).toEqual([{ start: 8, end: 9 }]);
+    });
+
+    it("ignores pure insertions that do not touch prior lines", () => {
+      const diff = [
+        "diff --git a/src/added.ts b/src/added.ts",
+        "@@ -8,0 +8,2 @@",
+        "+new 1",
+        "+new 2",
+      ].join("\n");
+
+      const index = buildChangedLineIndex(diff);
+
+      expect(index.has("src/added.ts")).toBe(false);
     });
 
     it("tracks renamed files by the new path", () => {
@@ -78,7 +90,7 @@ describe("reviews/diff", () => {
 
       const index = buildChangedLineIndex(diff);
 
-      expect(index.get("src/new-name.ts")).toEqual([{ start: 1, end: 2 }]);
+      expect(index.get("src/new-name.ts")).toEqual([{ start: 1, end: 1 }]);
       expect(index.has("src/old-name.ts")).toBe(false);
     });
 
@@ -103,8 +115,7 @@ describe("reviews/diff", () => {
 
       expect(index.get("src/a.ts")).toEqual([
         { start: 2, end: 2 },
-        { start: 11, end: 11 },
-        { start: 13, end: 13 },
+        { start: 12, end: 12 },
       ]);
     });
   });

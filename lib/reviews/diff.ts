@@ -239,7 +239,10 @@ export async function fetchFullCommitRangeDiff(
 }
 
 /**
- * Build an index of changed right-side line ranges per file from a unified diff.
+ * Build an index of touched prior-side line ranges per file from a unified diff.
+ *
+ * This is used to decide whether an existing inline thread from the previously
+ * reviewed head was modified or deleted by follow-up commits.
  */
 export function buildChangedLineIndex(diff: string): ChangedLineIndex {
   const index: ChangedLineIndex = new Map();
@@ -275,14 +278,14 @@ export function buildChangedLineIndex(diff: string): ChangedLineIndex {
 
     if (!currentFile || !hunkState) continue;
 
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      appendChangedLine(index, currentFile, hunkState.newLine);
-      hunkState.newLine += 1;
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      appendChangedLine(index, currentFile, hunkState.oldLine);
+      hunkState.oldLine += 1;
       continue;
     }
 
-    if (line.startsWith("-") && !line.startsWith("---")) {
-      hunkState.oldLine += 1;
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      hunkState.newLine += 1;
       continue;
     }
 

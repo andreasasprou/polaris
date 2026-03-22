@@ -387,4 +387,46 @@ describe("dispatchPrReview wiring", () => {
     expect(calls.shouldReviewPR.length).toBe(1);
     expect(calls.loadRepoGuidelines.length).toBe(1);
   });
+
+  it("disables inline reconciliation for manual since reviews without ancestry", async () => {
+    const { isAncestor } = await import("@/lib/reviews/github");
+    const { createJob } = await import("@/lib/jobs/actions");
+    vi.mocked(isAncestor).mockResolvedValueOnce(false);
+
+    const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
+    await dispatchPrReview(
+      makeInput({
+        manualCommand: { mode: "since", sinceSha: "deadbeef" },
+      }),
+    );
+
+    expect(vi.mocked(createJob).mock.calls[0]?.[0]).toMatchObject({
+      payload: expect.objectContaining({
+        fromSha: "deadbeef",
+        reviewScope: "since",
+        canAutoReconcileInlineThreads: false,
+      }),
+    });
+  });
+
+  it("enables inline reconciliation for manual since reviews with ancestry", async () => {
+    const { isAncestor } = await import("@/lib/reviews/github");
+    const { createJob } = await import("@/lib/jobs/actions");
+    vi.mocked(isAncestor).mockResolvedValueOnce(true);
+
+    const { dispatchPrReview } = await import("@/lib/orchestration/pr-review");
+    await dispatchPrReview(
+      makeInput({
+        manualCommand: { mode: "since", sinceSha: "cafebabe" },
+      }),
+    );
+
+    expect(vi.mocked(createJob).mock.calls[0]?.[0]).toMatchObject({
+      payload: expect.objectContaining({
+        fromSha: "cafebabe",
+        reviewScope: "since",
+        canAutoReconcileInlineThreads: true,
+      }),
+    });
+  });
 });

@@ -350,6 +350,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
   const prNumber = payload.prNumber as number;
   const checkRunId = payload.checkRunId as string | undefined;
   const fromSha = payload.fromSha as string | undefined;
+  const canAutoReconcileInlineThreads = payload.canAutoReconcileInlineThreads === true;
   const toSha = payload.toSha as string;
   const reviewSequence = (payload.reviewSequence as number) ?? 1;
   const reviewScope = (payload.reviewScope as string) ?? "full";
@@ -530,7 +531,12 @@ async function postprocessReview(job: JobRow): Promise<void> {
           }
         }
 
-        if ((reviewScope === "incremental" || reviewScope === "since") && fromSha && trackedThreads.length > 0) {
+        if (
+          (reviewScope === "incremental" || reviewScope === "since") &&
+          fromSha &&
+          canAutoReconcileInlineThreads &&
+          trackedThreads.length > 0
+        ) {
           try {
             const octokit = await getReviewOctokit(installationId);
             const fullDiff = await fetchFullCommitRangeDiff(
