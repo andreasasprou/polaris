@@ -663,6 +663,7 @@ async function postResults({
   // Step 2b: Reply "Resolved" to inline comments for resolved issues
   const prevCommentMap = previousState?.state?.inlineCommentMap || {};
   const resolvedIssues = reviewState?.recently_resolved_issues || [];
+  log(`Resolve check: map=${JSON.stringify(prevCommentMap)}, resolved=${JSON.stringify(resolvedIssues.map(r => r.id))}`);
   if (resolvedIssues.length > 0 && Object.keys(prevCommentMap).length > 0) {
     try {
       await replyToResolvedComments({
