@@ -10,6 +10,10 @@ import { fetchFileContent } from "./repo-content";
 export const RepoReviewDefinitionSchema = z.object({
   name: z.string().min(1),
   instructions: z.string().optional(),
+  agent: z.enum(["claude", "codex"]).optional(),
+  model: z.string().optional(),
+  effort: z.string().optional(),
+  credential: z.string().optional(),
   filters: z
     .object({
       branches: z.array(z.string()).optional(),
@@ -242,17 +246,75 @@ export function mergeWithConnector(
     reviewConfig.fileClassification = definition.fileClassification;
   }
 
+  // Runtime overrides: YAML wins if present, otherwise connector
+  const agentType = (definition.agent ?? automation.agentType ?? "claude") as AgentType;
+  const model = definition.model ?? automation.model ?? "";
+  const modelParams: ModelParams = { ...automation.modelParams };
+  if (definition.effort !== undefined) {
+    modelParams.effortLevel = definition.effort as ModelParams["effortLevel"];
+  }
+
   return {
     definition,
     reviewConfig,
-    agentType: (automation.agentType ?? "claude") as AgentType,
-    model: automation.model ?? "",
-    modelParams: automation.modelParams ?? {},
+    agentType,
+    model,
+    modelParams,
     credentialRef: {
       secretId: automation.agentSecretId ?? undefined,
       keyPoolId: automation.keyPoolId ?? undefined,
     },
   };
+}
+
+// ── Credential slug resolution ──
+
+/**
+ * Resolve a credential slug from YAML to a CredentialRef.
+ * Tries key pool name first, then secret label. Returns null if not found.
+ */
+export async function resolveCredentialSlug(
+  organizationId: string,
+  slug: string,
+): Promise<
+  | { type: "pool"; poolId: string }
+  | { type: "secret"; secretId: string }
+  | null
+> {
+  const { db } = await import("@/lib/db");
+  const { keyPools } = await import("@/lib/key-pools/schema");
+  const { secrets } = await import("@/lib/secrets/schema");
+  const { eq, and, isNull } = await import("drizzle-orm");
+
+  // 1. Try key pool by name
+  const [pool] = await db
+    .select({ id: keyPools.id })
+    .from(keyPools)
+    .where(and(eq(keyPools.organizationId, organizationId), eq(keyPools.name, slug)))
+    .limit(1);
+
+  if (pool) {
+    return { type: "pool", poolId: pool.id };
+  }
+
+  // 2. Try secret by label (non-revoked only)
+  const [secret] = await db
+    .select({ id: secrets.id })
+    .from(secrets)
+    .where(
+      and(
+        eq(secrets.organizationId, organizationId),
+        eq(secrets.label, slug),
+        isNull(secrets.revokedAt),
+      ),
+    )
+    .limit(1);
+
+  if (secret) {
+    return { type: "secret", secretId: secret.id };
+  }
+
+  return null;
 }
 
 // ── Error formatting ──

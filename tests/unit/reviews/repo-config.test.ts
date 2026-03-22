@@ -147,6 +147,31 @@ describe("RepoReviewDefinitionSchema", () => {
       expect(result.data.instructions).toBe("");
     }
   });
+
+  it("parses runtime override fields", () => {
+    const result = RepoReviewDefinitionSchema.safeParse({
+      name: "Full Config",
+      agent: "codex",
+      model: "gpt-5.4",
+      effort: "xhigh",
+      credential: "my-pool",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agent).toBe("codex");
+      expect(result.data.model).toBe("gpt-5.4");
+      expect(result.data.effort).toBe("xhigh");
+      expect(result.data.credential).toBe("my-pool");
+    }
+  });
+
+  it("rejects invalid agent type", () => {
+    const result = RepoReviewDefinitionSchema.safeParse({
+      name: "Test",
+      agent: "invalid-agent",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 // ── mergeWithConnector ──
@@ -245,6 +270,32 @@ describe("mergeWithConnector", () => {
       secretId: "secret-1",
       keyPoolId: undefined,
     });
+  });
+
+  it("overrides agentType from YAML", () => {
+    const def: RepoReviewDefinition = { name: "Test", agent: "codex" };
+    const result = mergeWithConnector(def, baseAutomation);
+    expect(result.agentType).toBe("codex");
+  });
+
+  it("overrides model from YAML", () => {
+    const def: RepoReviewDefinition = { name: "Test", model: "gpt-5.4" };
+    const result = mergeWithConnector(def, baseAutomation);
+    expect(result.model).toBe("gpt-5.4");
+  });
+
+  it("overrides effort from YAML", () => {
+    const def: RepoReviewDefinition = { name: "Test", effort: "low" };
+    const result = mergeWithConnector(def, baseAutomation);
+    expect(result.modelParams.effortLevel).toBe("low");
+  });
+
+  it("inherits agent/model/effort from connector when omitted", () => {
+    const def: RepoReviewDefinition = { name: "Test" };
+    const result = mergeWithConnector(def, baseAutomation);
+    expect(result.agentType).toBe("codex");
+    expect(result.model).toBe("gpt-5.4");
+    expect(result.modelParams.effortLevel).toBe("xhigh");
   });
 
   it("handles null connector config gracefully", () => {

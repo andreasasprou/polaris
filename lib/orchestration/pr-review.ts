@@ -127,9 +127,42 @@ export async function dispatchPrReview(
     const repoConfigResult = await loadRepoReviewConfig(octokit, event.owner, event.repo, event.baseRef);
 
     let config = connectorConfig;
+    let resolvedRuntime: {
+      agentType: AgentType;
+      model: string;
+      modelParams: import("@/lib/sandbox-agent/types").ModelParams;
+      credentialOverride?: { agentSecretId: string | null; keyPoolId: string | null };
+    } | null = null;
+
     if (repoConfigResult.status === "found") {
       const resolved = mergeWithConnector(repoConfigResult.definition, automation);
       config = resolved.reviewConfig;
+      resolvedRuntime = {
+        agentType: resolved.agentType,
+        model: resolved.model,
+        modelParams: resolved.modelParams,
+      };
+
+      // Resolve credential slug to actual ID
+      if (repoConfigResult.definition.credential) {
+        const { resolveCredentialSlug } = await import("@/lib/reviews/repo-config");
+        const credRef = await resolveCredentialSlug(orgId, repoConfigResult.definition.credential);
+        if (!credRef) {
+          const errorMsg = `Review config error: credential "${repoConfigResult.definition.credential}" not found. Check that the key pool name or API key label exists in your organization settings.`;
+          const { failCheck } = await import("@/lib/reviews/github");
+          if (checkRunId) {
+            await failCheck({ installationId, owner: event.owner, repo: event.repo, checkRunId, error: errorMsg });
+          }
+          await updateAutomationRun(automationRunId, { status: "failed", summary: errorMsg, error: errorMsg, completedAt: new Date() });
+          await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
+          handedOff = true;
+          return { jobId: "" };
+        }
+        resolvedRuntime.credentialOverride = {
+          agentSecretId: credRef.type === "secret" ? credRef.secretId : null,
+          keyPoolId: credRef.type === "pool" ? credRef.poolId : null,
+        };
+      }
     } else if (
       repoConfigResult.status === "invalid" ||
       repoConfigResult.status === "multiple" ||
@@ -297,13 +330,17 @@ export async function dispatchPrReview(
 
     // 9. Handle "reset" — create new interactive session
     if (reviewScope === "reset") {
+      const effectiveAgentType = resolvedRuntime?.agentType ?? automation.agentType ?? "claude";
+      const effectiveSecretId = resolvedRuntime?.credentialOverride?.agentSecretId ?? automation.agentSecretId;
+      const effectivePoolId = resolvedRuntime?.credentialOverride?.keyPoolId ?? automation.keyPoolId;
+
       const { createInteractiveSession } = await import("@/lib/sessions/actions");
       const newSession = await createInteractiveSession({
         organizationId: orgId,
         createdBy: "automation",
-        agentType: automation.agentType ?? "claude",
-        agentSecretId: automation.agentSecretId ?? undefined,
-        keyPoolId: automation.keyPoolId ?? undefined,
+        agentType: effectiveAgentType,
+        agentSecretId: effectiveSecretId ?? undefined,
+        keyPoolId: effectivePoolId ?? undefined,
         repositoryId: automation.repositoryId!,
         prompt: reviewPrompt,
       });
@@ -378,13 +415,15 @@ export async function dispatchPrReview(
       ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
     });
 
-    // Resolve agent config
-    const agentType = (automation.agentType ?? "claude") as AgentType;
+    // Resolve agent config (YAML overrides connector)
+    const effectiveAgent = resolvedRuntime?.agentType ?? (automation.agentType ?? "claude") as AgentType;
+    const effectiveModel = resolvedRuntime?.model || automation.model || undefined;
+    const effectiveEffort = resolvedRuntime?.modelParams?.effortLevel ?? automation.modelParams?.effortLevel;
     const resolved = resolveAgentConfig({
-      agentType,
+      agentType: effectiveAgent,
       modeIntent: "read-only",
-      model: automation.model ?? undefined,
-      effortLevel: automation.modelParams?.effortLevel,
+      model: effectiveModel,
+      effortLevel: effectiveEffort,
     });
 
     // Shared primitives

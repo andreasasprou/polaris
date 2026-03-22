@@ -51,6 +51,15 @@ name: "Code Review"
 instructions: |
   Your review instructions here.
 
+# Agent and model configuration (overrides connector defaults)
+agent: claude                      # claude | codex
+model: sonnet                      # model identifier for the chosen agent
+effort: high                       # claude: low|medium|high|max, codex: low|medium|high|xhigh
+
+# Credential reference by slug — matches a key pool name or API key label
+# from your org's Settings > API Keys. The actual secret never appears in YAML.
+credential: "my-anthropic-pool"
+
 # Filters — control which PRs trigger this review
 filters:
   branches: [main]                 # exact match (no glob)
@@ -67,7 +76,7 @@ file-classification:
 
 ### Fields NOT supported yet
 
-`agent`, `model`, `effort`, `credential`, `check-name`, `limits`, `filters.paths` — these inherit from the connector automation and will be configurable in YAML in a future release.
+`check-name`, `limits`, `filters.paths` — these inherit from the connector automation and will be configurable in YAML in a future release.
 
 ## Merge semantics
 
@@ -77,6 +86,10 @@ Each YAML field either replaces or inherits from the connector:
 |-------|----------------|-------------------|
 | `instructions` | Replaces `customPrompt` entirely | Inherits connector prompt |
 | `instructions: ""` | Explicitly clears prompt | — |
+| `agent` | Overrides connector agent | Inherits from connector |
+| `model` | Overrides connector model | Inherits from connector |
+| `effort` | Overrides connector effort level | Inherits from connector |
+| `credential` | Resolves slug → overrides connector credential | Inherits from connector |
 | `filters.*` | Each present field replaces its connector counterpart | Omitted fields inherit |
 | `file-classification` | Replaces entirely | Inherits from connector |
 
@@ -115,6 +128,7 @@ filters:
 | Invalid YAML syntax | GitHub check fails with parse error |
 | Schema validation failure | GitHub check fails with field-level errors |
 | Multiple `.yaml` files | GitHub check fails: "Multiple definitions found" |
+| Unknown `credential` slug | GitHub check fails: "credential not found" |
 
 Present-but-broken config is always a check failure with diagnostics — never a silent fallback to connector settings.
 
@@ -137,10 +151,23 @@ Even with code-based config, you need one automation in the Polaris UI. This "co
 - Default agent, model, and effort level
 - Master enable/disable toggle
 
-The YAML file defines *what* to review and *how*; the connector defines *where* the credentials come from.
+The YAML file defines *what* to review and *how*; the connector provides the defaults for anything the YAML doesn't specify.
+
+## Credentials
+
+YAML files reference credentials by **slug** — the name of a key pool or the label of an API key from Settings > API Keys. Actual secrets never appear in the YAML.
+
+```yaml
+credential: "my-anthropic-pool"    # matches a key pool name in Polaris
+```
+
+Resolution order:
+1. Key pools — matched by pool name within your organization
+2. Individual API keys — matched by key label within your organization
+
+If the slug doesn't match any credential, the review fails with a clear error in the GitHub check. If `credential` is omitted, the connector's default credential is used.
 
 ## Current limitations
 
 - **One definition per repo** — multiple `.yaml` files in `.polaris/reviews/` produce an error. Multi-review fan-out is planned.
-- **No runtime overrides** — agent, model, effort, and credentials always come from the connector.
 - **Exact branch matching** — `branches: [main]` uses exact string match, not globs.
