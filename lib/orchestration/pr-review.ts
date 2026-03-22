@@ -46,6 +46,7 @@ export async function dispatchPrReview(
   const {
     getAutomationSession,
     updateAutomationRun,
+    updateAutomationSession,
     tryAcquireAutomationSessionLock,
     releaseAutomationSessionLock,
     setPendingReviewRequest,
@@ -158,6 +159,21 @@ export async function dispatchPrReview(
         model: resolved.model,
         modelParams: resolved.modelParams,
       };
+
+      // Validate agent/model/effort coherence before proceeding
+      const { validateRuntimeCoherence } = await import("@/lib/reviews/repo-config");
+      const coherenceError = await validateRuntimeCoherence(resolved);
+      if (coherenceError) {
+        const errorMsg = `Review config error: .polaris/reviews/${repoConfigResult.file} — ${coherenceError}`;
+        const { failCheck } = await import("@/lib/reviews/github");
+        if (checkRunId) {
+          await failCheck({ installationId, owner: event.owner, repo: event.repo, checkRunId, error: errorMsg });
+        }
+        await updateAutomationRun(automationRunId, { status: "failed", summary: errorMsg, error: errorMsg, completedAt: new Date() });
+        await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
+        handedOff = true;
+        return { jobId: "" };
+      }
 
       // Resolve credential slug to actual ID (scoped by agent type)
       if (repoConfigResult.definition.credential) {
@@ -332,6 +348,8 @@ export async function dispatchPrReview(
 
     // 9. Handle session creation — explicit "reset" or YAML runtime drift
     const effectiveAgentType = resolvedRuntime?.agentType ?? automation.agentType ?? "claude";
+    const effectiveModel = resolvedRuntime?.model || automation.model || null;
+    const effectiveEffort = resolvedRuntime?.modelParams?.effortLevel ?? automation.modelParams?.effortLevel ?? null;
     // When YAML specifies a credential, use the entire override (not individual fields)
     // to avoid mixing YAML's null agentSecretId with connector's agentSecretId,
     // which violates the DB CHECK constraint (both cannot be set).
@@ -342,15 +360,33 @@ export async function dispatchPrReview(
       ? resolvedRuntime.credentialOverride.keyPoolId
       : automation.keyPoolId ?? null;
 
-    // Detect if YAML changed the agent or credential vs what the existing session was created with.
-    // If so, we need a fresh session — the old sandbox, agent session IDs, and credentials are stale.
-    // Compare unconditionally — covers YAML added, changed, or removed (falling back to connector).
+    // Build the full runtime config for drift comparison and metadata tracking
+    const currentRuntimeConfig = {
+      agentType: effectiveAgentType,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      agentSecretId: effectiveSecretId,
+      keyPoolId: effectivePoolId,
+    };
+
+    // Detect if YAML changed the agent, credential, model, or effort vs what the
+    // existing session was created with. If so, we need a fresh session — the old
+    // sandbox, agent session IDs, and credentials/model/effort are stale.
+    // Agent type and credentials are compared against the interactive session (DB source of truth).
+    // Model and effort are compared against metadata (not stored on interactive_sessions).
     const { getInteractiveSession: getSessionForDriftCheck } = await import("@/lib/sessions/actions");
     const currentSession = await getSessionForDriftCheck(targetSessionId);
+    const lastRuntime = sessionMetadata.lastRuntimeConfig;
     const runtimeDrifted = currentSession && (
+      // Agent type / credential drift (compare against interactive session)
       currentSession.agentType !== effectiveAgentType ||
       (currentSession.agentSecretId ?? null) !== effectiveSecretId ||
-      (currentSession.keyPoolId ?? null) !== effectivePoolId
+      (currentSession.keyPoolId ?? null) !== effectivePoolId ||
+      // Model / effort drift (compare against last dispatched config in metadata)
+      (lastRuntime && (
+        (lastRuntime.model ?? null) !== effectiveModel ||
+        (lastRuntime.effort ?? null) !== effectiveEffort
+      ))
     );
 
     if (reviewScope === "reset" || runtimeDrifted) {
@@ -435,15 +471,12 @@ export async function dispatchPrReview(
       ttlMs: (job.timeoutSeconds + 300) * 1000, // job timeout + 5 min grace
     });
 
-    // Resolve agent config (YAML overrides connector)
-    const effectiveAgent = resolvedRuntime?.agentType ?? (automation.agentType ?? "claude") as AgentType;
-    const effectiveModel = resolvedRuntime?.model || automation.model || undefined;
-    const effectiveEffort = resolvedRuntime?.modelParams?.effortLevel ?? automation.modelParams?.effortLevel;
+    // Resolve agent config (using effective values computed in step 9)
     const resolved = resolveAgentConfig({
-      agentType: effectiveAgent,
+      agentType: effectiveAgentType as AgentType,
       modeIntent: "read-only",
-      model: effectiveModel,
-      effortLevel: effectiveEffort,
+      model: effectiveModel ?? undefined,
+      effortLevel: effectiveEffort ?? undefined,
     });
 
     // Shared primitives
@@ -559,9 +592,15 @@ export async function dispatchPrReview(
       // Success
       if (response.status === 202) {
         handedOff = true;
-        await updateAutomationRun(automationRunId, {
-          interactiveSessionId: targetSessionId,
-        }).catch(() => {});
+        await Promise.all([
+          updateAutomationRun(automationRunId, {
+            interactiveSessionId: targetSessionId,
+          }),
+          // Persist runtime config so future dispatches can detect model/effort drift
+          updateAutomationSession(automationSessionId, {
+            metadata: { ...sessionMetadata, lastRuntimeConfig: currentRuntimeConfig },
+          }),
+        ]).catch(() => {});
         return { jobId: job.id };
       }
 

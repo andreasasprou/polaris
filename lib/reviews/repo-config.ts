@@ -272,6 +272,36 @@ export function mergeWithConnector(
   };
 }
 
+// ── Runtime coherence validation ──
+
+/**
+ * Validate that agent / model / effort form a coherent tuple.
+ * Called after merging YAML + connector to catch invalid combos
+ * (e.g. agent: claude + model: gpt-5.4) at config time rather than
+ * letting them propagate to resolveAgentConfig() where the error
+ * falls into the generic catch path with an APPROVE check.
+ *
+ * Returns null if valid, or an error message string if not.
+ */
+export async function validateRuntimeCoherence(resolved: ResolvedReviewConfig): Promise<string | null> {
+  const { agentType, model, modelParams } = resolved;
+  const { getModels, getThoughtLevels } = await import("@/lib/sandbox-agent/agent-profiles");
+
+  // Validate model against agent's allowed list
+  const allowedModels = getModels(agentType);
+  if (model && allowedModels.length > 0 && !allowedModels.includes(model)) {
+    return `Invalid model "${model}" for agent "${agentType}". Valid models: ${allowedModels.join(", ")}`;
+  }
+
+  // Validate effort against agent's allowed levels
+  const allowedEffort = getThoughtLevels(agentType);
+  if (modelParams.effortLevel && allowedEffort && !allowedEffort.includes(modelParams.effortLevel)) {
+    return `Invalid effort level "${modelParams.effortLevel}" for agent "${agentType}". Valid levels: ${allowedEffort.join(", ")}`;
+  }
+
+  return null;
+}
+
 // ── Credential slug resolution ──
 
 /**

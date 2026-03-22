@@ -62,6 +62,7 @@ vi.mock("@/lib/automations/actions", () => ({
   releaseAutomationSessionLock: vi.fn().mockResolvedValue(undefined),
   setPendingReviewRequest: vi.fn().mockResolvedValue(undefined),
   swapAutomationSessionInteractiveSession: vi.fn().mockResolvedValue(undefined),
+  updateAutomationSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/automations/queries", () => ({
@@ -113,6 +114,7 @@ vi.mock("@/lib/reviews/repo-config", () => ({
     }),
   ),
   formatConfigError: vi.fn().mockReturnValue("Review config error: test"),
+  validateRuntimeCoherence: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("@/lib/reviews/diff", () => ({
