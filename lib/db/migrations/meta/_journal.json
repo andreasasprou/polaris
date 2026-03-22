@@ -36,6 +36,13 @@
       "when": 1774016870606,
       "tag": "0004_nappy_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1774360000000,
+      "tag": "0005_add-compute-claims",
+      "breakpoints": true
     }
   ]
 }
