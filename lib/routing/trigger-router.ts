@@ -226,10 +226,16 @@ async function dispatchContinuousReview(
   });
 
   // Build run details URL for GitHub check links
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? process.env.VERCEL_URL;
-  const runDetailsUrl = appUrl
-    ? `${appUrl.startsWith("http") ? appUrl : `https://${appUrl}`}/runs/${run.id}`
-    : undefined;
+  let runDetailsUrl: string | undefined;
+  try {
+    const { getOrgSlugById } = await import("@/lib/auth/session");
+    const { orgUrl } = await import("@/lib/config/urls");
+    const slug = await getOrgSlugById(orgId);
+    runDetailsUrl = orgUrl(slug, `/runs/${run.id}`);
+  } catch {
+    const { getAppBaseUrl } = await import("@/lib/config/urls");
+    runDetailsUrl = `${getAppBaseUrl()}/runs/${run.id}`;
+  }
 
   // Create GitHub check so it appears on the PR while the task queues
   let checkRunId: string | undefined;

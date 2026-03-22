@@ -4,8 +4,8 @@ import { headers } from "next/headers";
 import { APIError } from "better-auth";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { hasOrganizationMembership } from "@/lib/auth/session";
-import { getAppBaseUrl } from "@/lib/config/urls";
+import { hasOrganizationMembership, getOrgSlugById } from "@/lib/auth/session";
+import { getAppBaseUrl, RESERVED_SLUGS } from "@/lib/config/urls";
 import { db } from "@/lib/db";
 import { organization } from "@/lib/db/auth-schema";
 import { createGitHubApp } from "@/lib/integrations/github";
@@ -15,10 +15,15 @@ import { verifyState } from "@/lib/integrations/github-state";
 import { withEvlog } from "@/lib/evlog";
 
 function toSlug(name: string): string {
-  return name
+  let slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+  // Avoid reserved slugs that would conflict with app routes
+  if (RESERVED_SLUGS.has(slug)) {
+    slug = `${slug}-org`;
+  }
+  return slug;
 }
 
 function redirectWithError(baseUrl: string, path: string, error: string) {
@@ -179,8 +184,22 @@ export const GET = withEvlog(async (req: NextRequest) => {
     }
   }
 
-  if (orgCreated) {
-    return NextResponse.redirect(new URL("/dashboard?success=org_created", baseUrl));
+  // Resolve org slug for org-scoped redirect
+  let orgSlug: string | undefined;
+  try {
+    orgSlug = await getOrgSlugById(orgId);
+  } catch {
+    // Fall back to bare paths — proxy will handle legacy redirect
   }
-  return NextResponse.redirect(new URL("/integrations?success=github_installed", baseUrl));
+
+  if (orgCreated) {
+    const path = orgSlug
+      ? `/${orgSlug}/dashboard?success=org_created`
+      : "/dashboard?success=org_created";
+    return NextResponse.redirect(new URL(path, baseUrl));
+  }
+  const path = orgSlug
+    ? `/${orgSlug}/integrations?success=github_installed`
+    : "/integrations?success=github_installed";
+  return NextResponse.redirect(new URL(path, baseUrl));
 });

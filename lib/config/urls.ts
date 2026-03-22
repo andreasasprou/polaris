@@ -23,3 +23,22 @@ export function getAppBaseUrl(): string {
 export function getCallbackUrl(): string {
   return `${getAppBaseUrl()}/api/callbacks`;
 }
+
+/** Build an org-scoped dashboard path: /acme/sessions/abc */
+export function orgPath(orgSlug: string, path: string): string {
+  return `/${orgSlug}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/** Build a full external URL with org scope */
+export function orgUrl(orgSlug: string, path: string): string {
+  return `${getAppBaseUrl()}${orgPath(orgSlug, path)}`;
+}
+
+/** Slugs that cannot be used as organization slugs (conflict with routes) */
+export const RESERVED_SLUGS = new Set([
+  "api",
+  "login",
+  "onboarding",
+  "_next",
+  "favicon.ico",
+]);

@@ -435,6 +435,17 @@ User auth is handled by better-auth with a GitHub OAuth provider and an
 keys are encrypted at rest (AES-256-GCM via `lib/credentials/encryption.ts`).
 GitHub access uses short-lived App installation tokens minted per operation.
 
+### URL routing and org context
+All dashboard URLs are org-scoped via a `[orgSlug]` dynamic segment under
+`app/(dashboard)/`. The `[orgSlug]/layout.tsx` validates the slug, verifies
+membership, and syncs `session.activeOrganizationId` to match the URL. Link
+helpers (`useOrgPath()` for client, `orgPath()` for server) ensure all internal
+navigation includes the org slug. External links (e.g. GitHub check run detail
+URLs) use `orgUrl()`. Legacy bare-path bookmarks are handled by explicit redirect
+pages in `app/(legacy-redirect)/` that resolve the owning org from the DB.
+`proxy.ts` handles auth protection for org-scoped paths and caches the slug in a
+`polaris_org_slug` cookie for fast legacy redirects.
+
 ### Durability and retry
 The sandbox proxy writes callbacks to a file-based outbox before attempting HTTP
 delivery (write-ahead pattern). Delivery retries with exponential backoff (1s, 4s,

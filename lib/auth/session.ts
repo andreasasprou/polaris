@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   member,
+  organization,
   session as sessionTable,
 } from "@/lib/db/auth-schema";
 import { and, eq } from "drizzle-orm";
@@ -81,6 +82,16 @@ export async function getSessionWithOrgAdmin() {
   }
 
   return { session, orgId };
+}
+
+export async function getOrgSlugById(orgId: string): Promise<string> {
+  const [org] = await db
+    .select({ slug: organization.slug })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+  if (!org) throw new Error(`Organization not found: ${orgId}`);
+  return org.slug;
 }
 
 export async function hasOrganizationMembership(
