@@ -5,6 +5,7 @@ import {
   casSessionStatus,
 } from "@/lib/sessions/actions";
 import { getStatusConfig } from "@/lib/sessions/status";
+import { reconcileSessionStatus } from "@/lib/sessions/reconcile";
 import { getActiveJobForSession } from "@/lib/jobs/actions";
 import { withEvlog } from "@/lib/evlog";
 
@@ -29,28 +30,11 @@ export const GET = withEvlog(async (
   }
 
   // Job-based reconciliation: heal stale non-terminal states.
-  if (session.status === "active") {
-    const activeJob = await getActiveJobForSession(sessionId);
-    if (!activeJob) {
-      const healed = await casSessionStatus(sessionId, ["active"], "idle");
-      if (healed) {
-        session = healed;
-      }
-    }
-  } else if (session.status === "creating") {
-    // If "creating" for >60s with no job, the prompt dispatch failed — heal to failed.
-    const ageMs = Date.now() - new Date(session.createdAt).getTime();
-    if (ageMs > 60_000) {
-      const activeJob = await getActiveJobForSession(sessionId);
-      if (!activeJob) {
-        const healed = await casSessionStatus(sessionId, ["creating"], "failed", {
-          endedAt: new Date(),
-        });
-        if (healed) {
-          session = healed;
-        }
-      }
-    }
+  const reconciledStatus = await reconcileSessionStatus(session);
+  if (reconciledStatus !== session.status) {
+    // Re-fetch to get the full updated row for the response.
+    const refreshed = await getInteractiveSession(sessionId);
+    if (refreshed) session = refreshed;
   }
 
   return NextResponse.json({ session });

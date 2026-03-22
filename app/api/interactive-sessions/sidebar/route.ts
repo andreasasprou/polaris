@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { getSessionWithOrg } from "@/lib/auth/session";
+import { reconcileSessionStatus } from "@/lib/sessions/reconcile";
 import { withEvlog } from "@/lib/evlog";
 
 export type SidebarSessionRow = {
@@ -19,6 +20,10 @@ export type SidebarSessionRow = {
  *
  * Returns the 100 most recent sessions joined with repositories and a
  * needsAttention flag computed from job_attempts with status 'waiting_human'.
+ *
+ * Reconciles stale "creating" sessions: if a session has been in "creating"
+ * for >60s with no active job, it is healed to "failed" so the sidebar
+ * reflects the same truth the detail endpoint shows.
  */
 export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
@@ -44,5 +49,31 @@ export const GET = withEvlog(async () => {
     LIMIT 100
   `);
 
-  return NextResponse.json({ sessions: rows.rows });
+  const sessions = rows.rows;
+
+  // Reconcile stale sessions — only "creating" older than 60s need checking.
+  // This is cheap: typically 0-1 sessions match, each requiring one job lookup.
+  const stale = sessions.filter(
+    (s) =>
+      s.status === "creating" &&
+      Date.now() - new Date(s.createdAt).getTime() > 60_000,
+  );
+
+  if (stale.length > 0) {
+    const healed = await Promise.all(
+      stale.map(async (s) => {
+        const reconciledStatus = await reconcileSessionStatus(s);
+        return { id: s.id, reconciledStatus };
+      }),
+    );
+
+    // Patch the in-memory rows with reconciled statuses so the response is fresh.
+    const healedMap = new Map(healed.map((h) => [h.id, h.reconciledStatus]));
+    for (const session of sessions) {
+      const patched = healedMap.get(session.id);
+      if (patched) session.status = patched;
+    }
+  }
+
+  return NextResponse.json({ sessions });
 });
