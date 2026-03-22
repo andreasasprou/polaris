@@ -118,20 +118,18 @@ describe("extractFileChanges", () => {
 
     const result = extractFileChanges(items);
     expect(result.totalFiles).toBe(1);
-    // Both hunks accumulated — 2 additions + 2 deletions total
+    // Two separate hunks preserved
+    expect(result.files[0].hunks).toHaveLength(2);
+    expect(result.files[0].hunks[0].oldValue).toContain("old");
+    expect(result.files[0].hunks[1].newValue).toContain("final");
+    // Aggregated counts
     expect(result.files[0].additions).toBe(2);
     expect(result.files[0].deletions).toBe(2);
     expect(result.totalAdditions).toBe(2);
     expect(result.totalDeletions).toBe(2);
-    // Diff contains both hunks
-    expect(result.files[0].diff).toContain("old");
-    expect(result.files[0].diff).toContain("final");
   });
 
-  it("accumulates diff parts (oldText/newText) without malformed headers", () => {
-    // Two diff content parts for the same file — createTwoFilesPatch produces
-    // full patches with Index:/---/+++ headers. These must be stripped so
-    // concatenation doesn't produce malformed combined diffs.
+  it("accumulates diff parts (oldText/newText) as separate hunks", () => {
     const items: ChatItem[] = [
       makeToolCall([
         {
@@ -153,12 +151,10 @@ describe("extractFileChanges", () => {
 
     const result = extractFileChanges(items);
     expect(result.totalFiles).toBe(1);
-    // Both edits accumulated
+    // Two separate hunks, not concatenated
+    expect(result.files[0].hunks).toHaveLength(2);
     expect(result.files[0].additions).toBe(2);
     expect(result.files[0].deletions).toBe(2);
-    // No stray file headers in the middle of the diff
-    expect(result.files[0].diff).not.toContain("Index:");
-    expect(result.files[0].diff).not.toContain("--- /src/app.ts");
   });
 
   it("aggregates multiple files correctly", () => {

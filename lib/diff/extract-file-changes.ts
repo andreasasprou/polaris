@@ -91,20 +91,44 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
     const additions = parsedLines.filter((l) => l.type === "addition").length;
     const deletions = parsedLines.filter((l) => l.type === "deletion").length;
 
+    // Build old/new value pair from the unified diff for this hunk
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
+    for (const line of diff.split("\n")) {
+      if (
+        line.startsWith("diff --git") || line.startsWith("index ") ||
+        line.startsWith("--- ") || line.startsWith("+++ ") ||
+        line.startsWith("@@ ") || line.startsWith("\\")
+      ) continue;
+      if (line.startsWith("+")) { newLines.push(line.slice(1)); }
+      else if (line.startsWith("-")) { oldLines.push(line.slice(1)); }
+      else {
+        const c = line.startsWith(" ") ? line.slice(1) : line;
+        oldLines.push(c);
+        newLines.push(c);
+      }
+    }
+
+    const hunk: import("./types").DiffHunk = {
+      diff,
+      oldValue: oldLines.join("\n"),
+      newValue: newLines.join("\n"),
+      additions,
+      deletions,
+    };
+
     const existing = changesByPath.get(path);
     if (existing) {
-      // Accumulate: append hunks, sum counts
-      existing.diff += "\n" + diff;
+      existing.hunks.push(hunk);
       existing.parsedLines.push(...parsedLines);
       existing.additions += additions;
       existing.deletions += deletions;
-      // Keep the latest action (e.g., "write" supersedes "patch")
       existing.action = action;
     } else {
       changesByPath.set(path, {
         path,
         action,
-        diff,
+        hunks: [hunk],
         parsedLines,
         additions,
         deletions,

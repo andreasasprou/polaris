@@ -14,46 +14,6 @@ import type { FileChange } from "@/lib/diff/types";
 
 const MAX_DISPLAY_LINES = 5000;
 
-/**
- * Reconstruct old/new file content from a unified diff string.
- * Walks each line and separates into old (deletions + context) and new (additions + context).
- */
-function splitDiffToOldNew(diff: string): { oldValue: string; newValue: string } {
-  const lines = diff.split("\n");
-  const oldLines: string[] = [];
-  const newLines: string[] = [];
-
-  for (const line of lines) {
-    // Skip file headers and hunk headers
-    if (
-      line.startsWith("diff --git") ||
-      line.startsWith("index ") ||
-      line.startsWith("--- ") ||
-      line.startsWith("+++ ") ||
-      line.startsWith("@@ ") ||
-      line.startsWith("\\")
-    ) {
-      continue;
-    }
-
-    if (line.startsWith("+")) {
-      newLines.push(line.slice(1));
-    } else if (line.startsWith("-")) {
-      oldLines.push(line.slice(1));
-    } else {
-      // Context line
-      const content = line.startsWith(" ") ? line.slice(1) : line;
-      oldLines.push(content);
-      newLines.push(content);
-    }
-  }
-
-  return {
-    oldValue: oldLines.join("\n"),
-    newValue: newLines.join("\n"),
-  };
-}
-
 export function DiffFileSection({ file }: { file: FileChange }) {
   const [open, setOpen] = useState(true);
   const { resolvedTheme } = useTheme();
@@ -61,8 +21,6 @@ export function DiffFileSection({ file }: { file: FileChange }) {
   const fileName = file.path.split("/").pop() ?? file.path;
   const tooLarge = file.parsedLines.length > MAX_DISPLAY_LINES;
   const isDark = resolvedTheme === "dark";
-
-  const { oldValue, newValue } = splitDiffToOldNew(file.diff);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -99,27 +57,31 @@ export function DiffFileSection({ file }: { file: FileChange }) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="mt-1 overflow-hidden rounded-md border border-border">
+        <div className="mt-1 flex flex-col gap-1">
           {tooLarge ? (
-            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground rounded-md border border-border">
               Diff too large to display ({file.parsedLines.length.toLocaleString()} lines)
             </div>
           ) : (
-            <ReactDiffViewer
-              oldValue={oldValue}
-              newValue={newValue}
-              splitView={false}
-              useDarkTheme={isDark}
-              compareMethod={DiffMethod.LINES}
-              hideLineNumbers={false}
-              styles={{
-                contentText: {
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  fontSize: "12px",
-                  lineHeight: "1.5",
-                },
-              }}
-            />
+            file.hunks.map((hunk, i) => (
+              <div key={i} className="overflow-hidden rounded-md border border-border">
+                <ReactDiffViewer
+                  oldValue={hunk.oldValue}
+                  newValue={hunk.newValue}
+                  splitView={false}
+                  useDarkTheme={isDark}
+                  compareMethod={DiffMethod.LINES}
+                  hideLineNumbers={false}
+                  styles={{
+                    contentText: {
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      fontSize: "12px",
+                      lineHeight: "1.5",
+                    },
+                  }}
+                />
+              </div>
+            ))
           )}
         </div>
       </CollapsibleContent>
