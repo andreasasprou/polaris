@@ -20,6 +20,7 @@ Pick the flow closest to your task. Paths show the recommended reading order:
 
 - **Changing session lifecycle?** `lib/sessions/status.ts` → `lib/sessions/actions.ts` → `lib/orchestration/sandbox-lifecycle.ts`
 - **Modifying PR review logic?** `lib/reviews/prompt-builder.ts` → `lib/orchestration/pr-review.ts` → `lib/reviews/output-parser.ts`
+- **Changing inline review comments?** `lib/reviews/inline-comments.ts` → `lib/reviews/github.ts` (postInlineReview, resolveReviewThreads) → `lib/orchestration/postprocess.ts` (steps 2c, 5)
 - **Adding a new session status?** Add to `lib/sessions/status.ts` STATUS_CONFIG → Update `hooks/use-session-chat.ts` → Update `components/sessions/session-status.tsx`
 - **Changing sandbox/agent communication?** `lib/sandbox-proxy/server.ts` → `lib/sandbox-proxy/types.ts` → rebuild with `pnpm build:proxy`
 - **Modifying event consolidation?** `lib/sandbox-agent/event-types.ts` (consolidateEvents) → `hooks/use-session-chat.ts` (consumer)

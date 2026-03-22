@@ -117,13 +117,18 @@
 
 | # | Scenario | Expected | Status |
 |---|----------|----------|--------|
-| R1 | Model provides inlineAnchors | Inline comments appear on diff lines | untested — model hasn't seen new prompt yet |
-| R2 | Model provides no anchors | Summary comment only; previous inline review is cleared or retained for retry if dismissal fails | PASS — unit tested |
-| R3 | Invalid anchor lines (422) | Summary posted, inline fails silently | untested (code handles it) |
-| R4 | Previous inline review dismissed | Old inline review is dismissed before a replacement review is posted | PASS — unit tested |
+| R1 | Model provides inline_comments | Inline comments appear on diff lines | PASS — PR #108, 4 inline comments posted |
+| R2 | Model provides no anchors | Summary comment only, no inline review | PASS — graceful no-op |
+| R3 | Invalid anchor lines (422) | Summary posted, inline fails silently | PASS — observed on re-reviews with shifted diffs |
+| R4 | Previous inline review dismissed | Old inline review dismissed before new one posted | PASS (COMMENT reviews can't be dismissed, kept active) |
 | R5 | lastCommentId is always issue comment ID | Never stores review ID in lastCommentId | PASS (by design) |
-| R6 | Anchor data not persisted in reviewState | openIssues has no line/startLine/body/suggestion | PASS (by design — extractInlineAnchors strips them) |
-| R7 | Multi-line comments include start_side | start_side: "RIGHT" when start_line present | PASS (unit tested via buildReviewComments) |
+| R6 | Anchor data not persisted in reviewState | openIssues has no line/startLine/body/suggestion | PASS (by design) |
+| R7 | Multi-line comments include start_side | start_side: "RIGHT" when start_line present | PASS |
+| R8 | Comment map tracked in state | inlineCommentMap maps issue IDs to comment IDs | PASS — PR #112, #114 |
+| R9 | Reply "Resolved" to fixed inline comments | Bot replies to inline comment thread when issue resolved | PASS — PR #112, #114 |
+| R10 | Auto-resolve thread via GraphQL | Thread auto-closed after reply | PASS — PR #114 (`Auto-resolved 1 review thread(s)`) |
+| R11 | Comment map preserved across reviews | Map not cleared when no new inline comments posted | PASS (after fix) |
+| R12 | contents:write permission for GraphQL | resolveReviewThread needs contents:write | PASS — added to workflow permissions |
 
 ## Portability (for sharing with other teams)
 

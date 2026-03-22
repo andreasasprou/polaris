@@ -112,8 +112,11 @@ how the current implementation works.
      CAS session `active→idle`.
 9. **`lib/orchestration/postprocess.ts` → `runPostProcessing()`** —
    CAS job `agent_completed→postprocess_pending`. For `prompt` jobs: no-op → completed.
-   For `coding_task`: git push + PR creation. For `review`: parse output, post GitHub
-   comment, complete check, release lock.
+   For `coding_task`: git push + PR creation. For `review`: parse output, mark stale,
+   dismiss old inline reviews, reply "Resolved" to resolved inline comments + auto-resolve
+   threads (GraphQL `resolveReviewThread`), post summary comment, post inline review with
+   anchored findings (best-effort), fetch + persist comment ID map for future resolution,
+   complete check, release lock.
 
 ### Flow B — GitHub webhook triggers a PR review
 
