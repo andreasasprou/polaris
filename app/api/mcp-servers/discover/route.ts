@@ -4,6 +4,18 @@ import { discoverOAuthConfig } from "@/lib/mcp-servers/discovery";
 import { isValidUrl } from "@/lib/mcp-servers/url-validation";
 import { withEvlog } from "@/lib/evlog";
 
+async function readJsonObject(req: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const body = await req.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return null;
+    }
+    return body as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export const POST = withEvlog(async (req: Request) => {
   const admin = await getSessionWithOrgAdmin();
   if (!admin) {
@@ -13,7 +25,11 @@ export const POST = withEvlog(async (req: Request) => {
     );
   }
 
-  const body = await req.json();
+  const body = await readJsonObject(req);
+  if (!body) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
   const serverUrl =
     typeof body.serverUrl === "string" ? body.serverUrl.trim() : "";
 

@@ -66,16 +66,29 @@ export const GET = withEvlog(async (req: Request) => {
   }
 
   const url = new URL(req.url);
+  const state = url.searchParams.get("state");
+  let trustedPayload = state ? verifyMcpOAuthState(state) : null;
+  if (
+    trustedPayload &&
+    (trustedPayload.userId !== session.user.id || trustedPayload.orgId !== orgId)
+  ) {
+    trustedPayload = null;
+  }
+
+  let errorPath = marketplacePath;
+  if (trustedPayload) {
+    const stateServer = await findMcpServerByIdAndOrg(trustedPayload.serverId, orgId);
+    errorPath = getServerPath(orgSlug, stateServer);
+  }
 
   const oauthError = url.searchParams.get("error");
   if (oauthError) {
     const safeMessage =
       ERROR_MESSAGES[oauthError] ?? `OAuth error: ${oauthError}`;
-    return redirectWithQuery(baseUrl, marketplacePath, "error", safeMessage);
+    return redirectWithQuery(baseUrl, errorPath, "error", safeMessage);
   }
 
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
   if (!code || !state) {
     return redirectWithQuery(
       baseUrl,
@@ -85,15 +98,9 @@ export const GET = withEvlog(async (req: Request) => {
     );
   }
 
-  const payload = verifyMcpOAuthState(state);
+  const payload = trustedPayload;
   if (!payload) {
     return redirectWithQuery(baseUrl, marketplacePath, "error", "invalid state");
-  }
-  if (payload.userId !== session.user.id) {
-    return redirectWithQuery(baseUrl, marketplacePath, "error", "user mismatch");
-  }
-  if (payload.orgId !== orgId) {
-    return redirectWithQuery(baseUrl, marketplacePath, "error", "org mismatch");
   }
 
   const server = await findMcpServerByIdAndOrg(payload.serverId, orgId);

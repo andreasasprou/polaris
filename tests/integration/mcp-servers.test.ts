@@ -22,6 +22,7 @@ describe("mcp-servers", async () => {
     updateMcpServerEnabled,
     updateMcpServerHeaders,
     updateMcpServerAuth,
+    updateMcpServerOAuthMetadata,
     clearMcpServerAuth,
   } = await import("@/lib/mcp-servers/actions");
   const {
@@ -216,6 +217,28 @@ describe("mcp-servers", async () => {
     expect(oauthEntry!.headers!["Authorization"]).toBe(
       "Bearer eyJ-test-access-token",
     );
+  });
+
+  it("preserves omitted OAuth metadata fields during partial updates", async () => {
+    const servers = await findMcpServersByOrg(TEST_ORG_ID);
+    const oauthServer = servers.find((s) => s.authType === "oauth")!;
+
+    await updateMcpServerOAuthMetadata(oauthServer.id, TEST_ORG_ID, {
+      oauthAuthorizationEndpoint: "https://oauth-provider.dev/new-authorize",
+    });
+
+    const updated = await findMcpServerByIdAndOrg(
+      oauthServer.id,
+      TEST_ORG_ID,
+    );
+    expect(updated!.oauthClientId).toBe("my-client-id");
+    expect(updated!.oauthAuthorizationEndpoint).toBe(
+      "https://oauth-provider.dev/new-authorize",
+    );
+    expect(updated!.oauthTokenEndpoint).toBe(
+      "https://oauth-provider.dev/token",
+    );
+    expect(updated!.oauthScopes).toBe("openid profile");
   });
 
   it("clears auth config on clearMcpServerAuth", async () => {

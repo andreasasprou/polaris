@@ -16,6 +16,21 @@ function toSafeErrorMessage(error: unknown): string {
   return error.message.slice(0, 500) || "Unknown MCP connection error";
 }
 
+function getAuthResolutionError(server: {
+  authType: string;
+  encryptedAuthConfig: string | null;
+}) {
+  if (server.authType !== "oauth") {
+    return server.encryptedAuthConfig
+      ? "Unable to resolve authentication headers for this server"
+      : "This server is missing authentication headers";
+  }
+
+  return server.encryptedAuthConfig
+    ? "Unable to resolve authentication for this server. Reconnect and try again."
+    : "Connect this server before testing tools";
+}
+
 export const POST = withEvlog(
   async (
     _req: Request,
@@ -41,10 +56,7 @@ export const POST = withEvlog(
     if (!resolved?.headers) {
       return NextResponse.json(
         {
-          error:
-            server.authType === "oauth"
-              ? "Connect this server before testing tools"
-              : "This server is missing authentication headers",
+          error: getAuthResolutionError(server),
         },
         { status: 400 },
       );

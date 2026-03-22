@@ -52,15 +52,39 @@ function normalizeHeaders(input: unknown): Record<string, string> {
   return headers;
 }
 
+function readTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+async function readJsonObject(req: Request): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    throw new ApiError("Invalid JSON body", 400);
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ApiError("JSON body must be an object", 400);
+  }
+
+  return body as Record<string, unknown>;
+}
+
 export const POST = withEvlog(async (req: Request) => {
   const admin = await getSessionWithOrgAdmin();
   if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
   const { session, orgId } = admin;
-  const body = await req.json();
+  let requestedName: string | null = null;
 
   try {
+    const body = await readJsonObject(req);
+    requestedName = readTrimmedString(body.name);
+
     const catalogSlug =
-      typeof body.catalogSlug === "string" ? body.catalogSlug.trim() : "";
+      readTrimmedString(body.catalogSlug) ?? "";
 
     if (catalogSlug) {
       const template = getCatalogTemplate(catalogSlug);
@@ -75,7 +99,7 @@ export const POST = withEvlog(async (req: Request) => {
       try {
         serverUrl = resolveCatalogServerUrl(
           template,
-          typeof body.region === "string" ? body.region.trim() : null,
+          readTrimmedString(body.region),
         );
       } catch (error) {
         return NextResponse.json(
@@ -135,7 +159,7 @@ export const POST = withEvlog(async (req: Request) => {
       return NextResponse.json({ server }, { status: 201 });
     }
 
-    const name = body.name?.trim();
+    const name = readTrimmedString(body.name);
     if (!name) {
       return NextResponse.json(
         { error: "name is required" },
@@ -143,7 +167,7 @@ export const POST = withEvlog(async (req: Request) => {
       );
     }
 
-    const serverUrl = body.serverUrl?.trim();
+    const serverUrl = readTrimmedString(body.serverUrl);
     if (!serverUrl || !isValidUrl(serverUrl, { allowLocalDev: true })) {
       return NextResponse.json(
         {
@@ -154,16 +178,19 @@ export const POST = withEvlog(async (req: Request) => {
       );
     }
 
-    const transport = body.transport ?? "streamable-http";
-    if (!VALID_TRANSPORTS.includes(transport)) {
+    const transport =
+      typeof body.transport === "string"
+        ? body.transport
+        : "streamable-http";
+    if (transport !== "streamable-http" && transport !== "sse") {
       return NextResponse.json(
         { error: `transport must be one of: ${VALID_TRANSPORTS.join(", ")}` },
         { status: 400 },
       );
     }
 
-    const authType = body.authType;
-    if (!VALID_AUTH_TYPES.includes(authType)) {
+    const authType = typeof body.authType === "string" ? body.authType : "";
+    if (authType !== "static" && authType !== "oauth") {
       return NextResponse.json(
         { error: `authType must be one of: ${VALID_AUTH_TYPES.join(", ")}` },
         { status: 400 },
@@ -194,11 +221,11 @@ export const POST = withEvlog(async (req: Request) => {
     }
 
     if (authType === "oauth") {
-      const clientId = body.oauthClientId?.trim() ?? "";
+      const clientId = readTrimmedString(body.oauthClientId) ?? "";
       const authorizationEndpoint =
-        body.oauthAuthorizationEndpoint?.trim() ?? "";
-      const tokenEndpoint = body.oauthTokenEndpoint?.trim() ?? "";
-      oauthScopes = body.oauthScopes?.trim() || null;
+        readTrimmedString(body.oauthAuthorizationEndpoint) ?? "";
+      const tokenEndpoint = readTrimmedString(body.oauthTokenEndpoint) ?? "";
+      oauthScopes = readTrimmedString(body.oauthScopes);
 
       if (!clientId) {
         return NextResponse.json(
@@ -253,8 +280,8 @@ export const POST = withEvlog(async (req: Request) => {
       return NextResponse.json(
         {
           error:
-            typeof body.name === "string" && body.name.trim()
-              ? `An MCP server named "${body.name.trim()}" already exists`
+            requestedName
+              ? `An MCP server named "${requestedName}" already exists`
               : "This MCP server already exists",
         },
         { status: 409 },

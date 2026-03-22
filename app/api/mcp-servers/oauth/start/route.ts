@@ -55,39 +55,45 @@ export const GET = withEvlog(async (req: Request) => {
         { status: 400 },
       );
     }
-    if (
-      discovered.codeChallengeMethodsSupported?.length &&
-      !discovered.codeChallengeMethodsSupported.includes("S256")
-    ) {
+    if (!discovered.codeChallengeMethodsSupported?.includes("S256")) {
       return NextResponse.json(
         { error: "OAuth provider does not support S256 PKCE" },
         { status: 400 },
       );
     }
 
-    authorizationEndpoint = discovered.authorizationEndpoint;
-    tokenEndpoint = discovered.tokenEndpoint;
+    const latestServer = await findMcpServerByIdAndOrg(server.id, orgId);
+    if (
+      latestServer?.oauthAuthorizationEndpoint &&
+      latestServer.oauthTokenEndpoint
+    ) {
+      authorizationEndpoint = latestServer.oauthAuthorizationEndpoint;
+      tokenEndpoint = latestServer.oauthTokenEndpoint;
+    } else {
+      authorizationEndpoint = discovered.authorizationEndpoint;
+      tokenEndpoint = discovered.tokenEndpoint;
 
-    try {
-      await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
-    } catch (error) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Invalid OAuth metadata for this MCP server",
-        },
-        { status: 400 },
-      );
+      try {
+        await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Invalid OAuth metadata for this MCP server",
+          },
+          { status: 400 },
+        );
+      }
+
+      await updateMcpServerOAuthMetadata(server.id, orgId, {
+        oauthClientId: server.oauthClientId,
+        oauthAuthorizationEndpoint: authorizationEndpoint,
+        oauthTokenEndpoint: tokenEndpoint,
+        oauthScopes: server.oauthScopes,
+      });
     }
-
-    await updateMcpServerOAuthMetadata(server.id, orgId, {
-      oauthClientId: server.oauthClientId,
-      oauthAuthorizationEndpoint: authorizationEndpoint,
-      oauthTokenEndpoint: tokenEndpoint,
-      oauthScopes: server.oauthScopes,
-    });
   }
 
   try {

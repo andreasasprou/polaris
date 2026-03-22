@@ -70,7 +70,8 @@ describe("GET /api/mcp-servers/oauth/start", () => {
     });
     discoverOAuthConfigMock.mockResolvedValue({
       authorizationEndpoint: "http://127.0.0.1/authorize",
-      tokenEndpoint: "https://oauth.example.com/token",
+      tokenEndpoint: "https://example.com/token",
+      codeChallengeMethodsSupported: ["S256"],
     });
 
     const response = await GET(
@@ -112,5 +113,75 @@ describe("GET /api/mcp-servers/oauth/start", () => {
     });
     expect(discoverOAuthConfigMock).not.toHaveBeenCalled();
     expect(signMcpOAuthStateMock).not.toHaveBeenCalled();
+  });
+
+  it("requires discovered OAuth metadata to advertise S256 PKCE support", async () => {
+    findMcpServerByIdAndOrgMock.mockResolvedValue({
+      id: "server-1",
+      serverUrl: "https://mcp.example.com/sse",
+      authType: "oauth",
+      oauthClientId: "client-123",
+      oauthAuthorizationEndpoint: null,
+      oauthTokenEndpoint: null,
+      oauthScopes: null,
+    });
+    discoverOAuthConfigMock.mockResolvedValue({
+      authorizationEndpoint: "https://oauth.example.com/authorize",
+      tokenEndpoint: "https://oauth.example.com/token",
+      codeChallengeMethodsSupported: undefined,
+    });
+
+    const response = await GET(
+      new Request(
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+      ),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "OAuth provider does not support S256 PKCE",
+    });
+    expect(updateMcpServerOAuthMetadataMock).not.toHaveBeenCalled();
+    expect(signMcpOAuthStateMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses concurrently cached OAuth metadata instead of persisting again", async () => {
+    findMcpServerByIdAndOrgMock
+      .mockResolvedValueOnce({
+        id: "server-1",
+        serverUrl: "https://mcp.example.com/sse",
+        authType: "oauth",
+        oauthClientId: "client-123",
+        oauthAuthorizationEndpoint: null,
+        oauthTokenEndpoint: null,
+        oauthScopes: "scope-a",
+      })
+      .mockResolvedValueOnce({
+        id: "server-1",
+        serverUrl: "https://mcp.example.com/sse",
+        authType: "oauth",
+        oauthClientId: "client-123",
+        oauthAuthorizationEndpoint: "https://example.com/authorize",
+        oauthTokenEndpoint: "https://example.com/token",
+        oauthScopes: "scope-a",
+      });
+    discoverOAuthConfigMock.mockResolvedValue({
+      authorizationEndpoint: "https://example.com/authorize",
+      tokenEndpoint: "https://example.com/token",
+      codeChallengeMethodsSupported: ["S256"],
+    });
+    signMcpOAuthStateMock.mockReturnValue("signed-state");
+
+    const response = await GET(
+      new Request(
+        "https://polaris.example.com/api/mcp-servers/oauth/start?serverId=server-1",
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toContain(
+      "https://example.com/authorize",
+    );
+    expect(updateMcpServerOAuthMetadataMock).not.toHaveBeenCalled();
   });
 });

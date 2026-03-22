@@ -7,6 +7,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { McpStatusBadge } from "./mcp-status-badge";
@@ -56,6 +64,12 @@ type Banner =
     }
   | null;
 
+type AcknowledgementAction =
+  | "oauth-install"
+  | "oauth-connect"
+  | "static-install"
+  | "toggle-enable";
+
 function badgeLabel(badge: CatalogTemplate["badge"]) {
   if (badge === "official") return "Official";
   if (badge === "verified") return "Verified";
@@ -69,6 +83,25 @@ function ownershipLabel(ownershipModel: CatalogTemplate["ownershipModel"]) {
 function formatTimestamp(value: string | null) {
   if (!value) return "Never";
   return new Date(value).toLocaleString();
+}
+
+function getOwnershipNotice(template: CatalogTemplate) {
+  return template.ownershipModel === "org-shared"
+    ? `Enabling ${template.name} makes one shared connection available to everyone in this workspace. Use a service account when possible.`
+    : `Enabling ${template.name} uses a personal connection tied to your account.`;
+}
+
+function getAcknowledgementActionLabel(action: AcknowledgementAction) {
+  switch (action) {
+    case "oauth-install":
+      return "Enable and connect";
+    case "oauth-connect":
+      return "Continue to connect";
+    case "static-install":
+      return "Install integration";
+    case "toggle-enable":
+      return "Enable integration";
+  }
 }
 
 async function readApiError(response: Response) {
@@ -109,6 +142,9 @@ export function CatalogInstallPanel({
   const [headerValues, setHeaderValues] = useState<Record<string, string>>(
     Object.fromEntries((template.requiredHeaders ?? []).map((name) => [name, ""])),
   );
+  const [pendingAcknowledgement, setPendingAcknowledgement] =
+    useState<AcknowledgementAction | null>(null);
+  const [hasAcknowledged, setHasAcknowledged] = useState(false);
 
   const activeTools = server?.lastDiscoveredTools ?? null;
 
@@ -276,8 +312,102 @@ export function CatalogInstallPanel({
     }
   }
 
+  async function runAcknowledgedAction(action: AcknowledgementAction) {
+    if (action === "oauth-install") {
+      await handleOAuthInstall();
+      return;
+    }
+
+    if (action === "oauth-connect") {
+      await handleConnect();
+      return;
+    }
+
+    if (action === "static-install") {
+      await handleStaticInstall();
+      return;
+    }
+
+    await handleToggleEnabled();
+  }
+
+  async function handleAcknowledgementConfirm() {
+    if (!pendingAcknowledgement) return;
+
+    const action = pendingAcknowledgement;
+    setPendingAcknowledgement(null);
+    setHasAcknowledged(false);
+    await runAcknowledgedAction(action);
+  }
+
+  function openAcknowledgement(action: AcknowledgementAction) {
+    setPendingAcknowledgement(action);
+    setHasAcknowledged(false);
+  }
+
   return (
     <div className="space-y-6">
+      <Dialog
+        open={pendingAcknowledgement !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingAcknowledgement(null);
+            setHasAcknowledged(false);
+          }
+        }}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Confirm shared integration access</DialogTitle>
+            <DialogDescription>
+              Review the workspace access and permissions before continuing.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Permissions
+              </p>
+              <p className="mt-1 text-sm">{template.permissionSummary}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/30 p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Credential ownership
+              </p>
+              <p className="mt-1 text-sm">{getOwnershipNotice(template)}</p>
+            </div>
+            <label className="flex items-start gap-3 rounded-lg border p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={hasAcknowledged}
+                onChange={(event) => setHasAcknowledged(event.target.checked)}
+                className="mt-0.5 size-4 rounded border"
+              />
+              <span>I understand and want to enable this integration.</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingAcknowledgement(null);
+                setHasAcknowledged(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAcknowledgementConfirm}
+              disabled={!hasAcknowledged}
+            >
+              {pendingAcknowledgement
+                ? getAcknowledgementActionLabel(pendingAcknowledgement)
+                : "Continue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -356,12 +486,15 @@ export function CatalogInstallPanel({
           {template.authType === "oauth-discovery" ? (
             <div className="flex flex-wrap gap-2">
               {!server ? (
-                <Button onClick={handleOAuthInstall} disabled={isInstalling}>
+                <Button
+                  onClick={() => openAcknowledgement("oauth-install")}
+                  disabled={isInstalling}
+                >
                   {isInstalling ? "Starting OAuth..." : "Enable and connect"}
                 </Button>
               ) : (
                 <>
-                  <Button onClick={handleConnect}>
+                  <Button onClick={() => openAcknowledgement("oauth-connect")}>
                     {status === "needs_auth" ? "Connect" : "Reconnect"}
                   </Button>
                   <Button
@@ -373,7 +506,11 @@ export function CatalogInstallPanel({
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={handleToggleEnabled}
+                    onClick={() =>
+                      server.enabled
+                        ? handleToggleEnabled()
+                        : openAcknowledgement("toggle-enable")
+                    }
                     disabled={isToggling}
                   >
                     {isToggling
@@ -431,7 +568,10 @@ export function CatalogInstallPanel({
                 </div>
               ))}
 
-              <Button onClick={handleStaticInstall} disabled={isInstalling}>
+              <Button
+                onClick={() => openAcknowledgement("static-install")}
+                disabled={isInstalling}
+              >
                 {isInstalling ? "Installing..." : "Install integration"}
               </Button>
             </div>
@@ -453,7 +593,11 @@ export function CatalogInstallPanel({
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={handleToggleEnabled}
+                  onClick={() =>
+                    server.enabled
+                      ? handleToggleEnabled()
+                      : openAcknowledgement("toggle-enable")
+                  }
                   disabled={isToggling}
                 >
                   {isToggling

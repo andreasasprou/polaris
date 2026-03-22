@@ -178,19 +178,40 @@ export async function updateMcpServerOAuthMetadata(
     oauthScopes?: string | null;
   },
 ) {
+  const updates: {
+    oauthClientId?: string | null;
+    oauthAuthorizationEndpoint?: string | null;
+    oauthTokenEndpoint?: string | null;
+    oauthScopes?: string | null;
+    lastTestStatus: null;
+    lastTestError: null;
+    lastTestedAt: null;
+    lastDiscoveredTools: null;
+    updatedAt: Date;
+  } = {
+    lastTestStatus: null,
+    lastTestError: null,
+    lastTestedAt: null,
+    lastDiscoveredTools: null,
+    updatedAt: new Date(),
+  };
+
+  if (metadata.oauthClientId !== undefined) {
+    updates.oauthClientId = metadata.oauthClientId;
+  }
+  if (metadata.oauthAuthorizationEndpoint !== undefined) {
+    updates.oauthAuthorizationEndpoint = metadata.oauthAuthorizationEndpoint;
+  }
+  if (metadata.oauthTokenEndpoint !== undefined) {
+    updates.oauthTokenEndpoint = metadata.oauthTokenEndpoint;
+  }
+  if (metadata.oauthScopes !== undefined) {
+    updates.oauthScopes = metadata.oauthScopes;
+  }
+
   await db
     .update(mcpServers)
-    .set({
-      oauthClientId: metadata.oauthClientId ?? null,
-      oauthAuthorizationEndpoint: metadata.oauthAuthorizationEndpoint ?? null,
-      oauthTokenEndpoint: metadata.oauthTokenEndpoint ?? null,
-      oauthScopes: metadata.oauthScopes ?? null,
-      lastTestStatus: null,
-      lastTestError: null,
-      lastTestedAt: null,
-      lastDiscoveredTools: null,
-      updatedAt: new Date(),
-    })
+    .set(updates)
     .where(
       and(eq(mcpServers.id, id), eq(mcpServers.organizationId, organizationId)),
     );
