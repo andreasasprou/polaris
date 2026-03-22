@@ -1,6 +1,6 @@
 # Code Reviews as Code
 
-Polaris can read review configuration from your repository instead of (or in addition to) the UI. Commit a YAML file to `.polaris/reviews/` and Polaris will use it to drive your PR reviews.
+Configure your PR reviews in version-controlled YAML instead of (or in addition to) the UI. Commit a file to `.polaris/reviews/` and Polaris will use it to drive your reviews — no UI changes needed.
 
 ## Quick start
 
