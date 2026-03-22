@@ -8,6 +8,27 @@ import type {
 } from "./types";
 import type { ChatItem } from "@/lib/sandbox-agent/event-types";
 
+/**
+ * Strip file-level headers (Index:, ---, +++) from a unified patch string,
+ * keeping only the hunk headers (@@ ... @@) and their content lines.
+ * This allows safe concatenation of multiple patches for the same file.
+ */
+function stripPatchHeaders(patch: string): string {
+  return patch
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.startsWith("Index: ") &&
+        !line.startsWith("===") &&
+        !line.startsWith("--- ") &&
+        !line.startsWith("+++ ") &&
+        !line.startsWith("diff --git") &&
+        !line.startsWith("index "),
+    )
+    .join("\n")
+    .trim();
+}
+
 // ── Type guards for content parts ──
 
 function isFileRefPart(part: Record<string, unknown>): part is FileRefContentPart & Record<string, unknown> {
@@ -116,14 +137,17 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
 
       if (isDiffPart(part)) {
         const filePath = part.path ?? lastFileRefPath ?? "unknown";
-        const unifiedDiff = createTwoFilesPatch(
+        const fullPatch = createTwoFilesPatch(
           filePath,
           filePath,
           part.oldText,
           part.newText,
         );
+        // Strip file headers so concatenation with other patches for the
+        // same file doesn't produce malformed combined diffs.
+        const hunksOnly = stripPatchHeaders(fullPatch);
 
-        appendChange(filePath, "patch", unifiedDiff);
+        appendChange(filePath, "patch", hunksOnly);
         continue;
       }
     }

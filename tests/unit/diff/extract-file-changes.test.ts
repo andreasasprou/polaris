@@ -128,6 +128,39 @@ describe("extractFileChanges", () => {
     expect(result.files[0].diff).toContain("final");
   });
 
+  it("accumulates diff parts (oldText/newText) without malformed headers", () => {
+    // Two diff content parts for the same file — createTwoFilesPatch produces
+    // full patches with Index:/---/+++ headers. These must be stripped so
+    // concatenation doesn't produce malformed combined diffs.
+    const items: ChatItem[] = [
+      makeToolCall([
+        {
+          type: "diff",
+          oldText: "line1\nline2\n",
+          newText: "line1\nline2_v1\n",
+          path: "/src/app.ts",
+        },
+      ], { toolCallId: "tc-1" }),
+      makeToolCall([
+        {
+          type: "diff",
+          oldText: "line3\nline4\n",
+          newText: "line3\nline4_v2\n",
+          path: "/src/app.ts",
+        },
+      ], { toolCallId: "tc-2" }),
+    ];
+
+    const result = extractFileChanges(items);
+    expect(result.totalFiles).toBe(1);
+    // Both edits accumulated
+    expect(result.files[0].additions).toBe(2);
+    expect(result.files[0].deletions).toBe(2);
+    // No stray file headers in the middle of the diff
+    expect(result.files[0].diff).not.toContain("Index:");
+    expect(result.files[0].diff).not.toContain("--- /src/app.ts");
+  });
+
   it("aggregates multiple files correctly", () => {
     const diff1 = "@@ -1,1 +1,2 @@\n context\n+added";
     const diff2 = "@@ -1,2 +1,1 @@\n context\n-removed";
