@@ -275,6 +275,103 @@ export async function dismissReview(input: {
 }
 
 /**
+ * Fetch individual comment IDs for a review, mapped to issue IDs by creation order.
+ * Returns { issueId: commentDatabaseId } mapping for future reply-on-resolve.
+ */
+export async function fetchInlineCommentMap(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  reviewId: number;
+  inlineAnchors: Array<{ issueId: string; file: string }>;
+}): Promise<Record<string, number>> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  const commentMap: Record<string, number> = {};
+
+  try {
+    const { data: reviewComments } = await octokit.rest.pulls.listCommentsForReview({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      review_id: input.reviewId,
+      per_page: 100,
+    });
+
+    const thisReviewComments = reviewComments.filter(
+      (rc) => rc.pull_request_review_id === input.reviewId,
+    );
+
+    for (let i = 0; i < Math.min(thisReviewComments.length, input.inlineAnchors.length); i++) {
+      const rc = thisReviewComments[i]!;
+      const anchor = input.inlineAnchors[i]!;
+      if (rc.path === anchor.file && anchor.issueId) {
+        commentMap[anchor.issueId] = rc.id;
+      }
+    }
+  } catch (err) {
+    const log = useLogger();
+    log.set({ fetchCommentMap: { error: err instanceof Error ? err.message : String(err) } });
+  }
+
+  return commentMap;
+}
+
+/**
+ * Reply "Resolved" to inline comments for resolved issues, then auto-resolve the threads.
+ */
+export async function replyAndResolveInlineComments(input: {
+  installationId: number;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  headSha: string;
+  resolvedIssues: Array<{ id: string; resolution?: string }>;
+  inlineCommentMap: Record<string, number>;
+}): Promise<{ repliedCount: number; resolvedCount: number }> {
+  const octokit = await getInstallationOctokitById(input.installationId);
+  const log = useLogger();
+  let repliedCount = 0;
+  const commentIdsToResolve: number[] = [];
+
+  // Step 1: Reply to each resolved issue's inline comment
+  for (const resolved of input.resolvedIssues) {
+    const commentId = input.inlineCommentMap[resolved.id];
+    if (!commentId) continue;
+
+    try {
+      const shortSha = input.headSha.slice(0, 8);
+      const resolution = resolved.resolution || "Fixed";
+      await octokit.rest.pulls.createReplyForReviewComment({
+        owner: input.owner,
+        repo: input.repo,
+        pull_number: input.prNumber,
+        comment_id: commentId,
+        body: `> **Resolved** in \`${shortSha}\`\n>\n> ${resolution}`,
+      });
+      commentIdsToResolve.push(commentId);
+      repliedCount++;
+    } catch (err) {
+      log.set({ replyResolved: { commentId, error: err instanceof Error ? err.message : String(err) } });
+    }
+  }
+
+  // Step 2: Auto-resolve the threads via GraphQL
+  let resolvedCount = 0;
+  if (commentIdsToResolve.length > 0) {
+    resolvedCount = await resolveReviewThreads({
+      installationId: input.installationId,
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber,
+      commentIds: commentIdsToResolve,
+    });
+  }
+
+  return { repliedCount, resolvedCount };
+}
+
+/**
  * Resolve review comment threads via GraphQL.
  * Finds threads by matching comment database IDs, then resolves them.
  */

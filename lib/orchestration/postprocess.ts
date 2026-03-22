@@ -304,6 +304,8 @@ async function postprocessReview(job: JobRow): Promise<void> {
     completeCheck,
     postInlineReview,
     dismissReview,
+    fetchInlineCommentMap,
+    replyAndResolveInlineComments,
   } = await import("@/lib/reviews/github");
   const {
     extractInlineAnchors,
@@ -418,6 +420,44 @@ async function postprocessReview(job: JobRow): Promise<void> {
       );
     }
 
+    // 2c. Reply to resolved inline comments + auto-resolve threads
+    if (parsed && automationSessionId && !sideEffects.inline_resolved) {
+      try {
+        const { getAutomationSession: getSessionForResolve } = await import(
+          "@/lib/automations/actions"
+        );
+        const sessionForResolve = await getSessionForResolve(automationSessionId);
+        const prevCommentMap = sessionForResolve?.metadata?.inlineCommentMap ?? {};
+        const resolvedIssues = metadata?.reviewState?.resolvedIssues ?? [];
+
+        // Find issues that were just resolved in this review
+        const newlyResolved = resolvedIssues.filter((ri) => prevCommentMap[ri.id]);
+
+        if (newlyResolved.length > 0) {
+          const { repliedCount, resolvedCount } = await replyAndResolveInlineComments({
+            installationId,
+            owner,
+            repo,
+            prNumber,
+            headSha: toSha,
+            resolvedIssues: newlyResolved.map((ri) => ({
+              id: ri.id,
+              resolution: ri.summary,
+            })),
+            inlineCommentMap: prevCommentMap,
+          });
+
+          if (repliedCount > 0) {
+            const log = useLogger();
+            log.set({ postprocess: { inlineReplied: repliedCount, threadsResolved: resolvedCount } });
+          }
+        }
+      } catch {
+        // Non-fatal — inline resolution is a UX enhancement
+      }
+      await markSideEffect(job.id, "inline_resolved");
+    }
+
     // 3. Update session metadata (survives comment post failure)
     if (automationSessionId && !sideEffects.session_updated) {
       const { getAutomationSession } = await import(
@@ -524,15 +564,30 @@ async function postprocessReview(job: JobRow): Promise<void> {
                 ...activeInlineReviewIds,
                 inlineResult.reviewId,
               ];
+
+              // Fetch individual comment IDs for reply-on-resolve
+              const newCommentMap = await fetchInlineCommentMap({
+                installationId,
+                owner,
+                repo,
+                prNumber,
+                reviewId: inlineResult.reviewId,
+                inlineAnchors: anchors,
+              });
+
               const { getAutomationSession: getSessionForInline } = await import(
                 "@/lib/automations/actions"
               );
               const sessionForInline = await getSessionForInline(automationSessionId);
               if (sessionForInline?.metadata) {
+                const prevMap = sessionForInline.metadata.inlineCommentMap ?? {};
                 await updateAutomationSession(automationSessionId, {
                   metadata: {
                     ...sessionForInline.metadata,
                     ...buildInlineReviewTrackingState(activeInlineReviewIds),
+                    inlineCommentMap: Object.keys(newCommentMap).length > 0
+                      ? { ...prevMap, ...newCommentMap }
+                      : prevMap,
                   },
                 });
               }

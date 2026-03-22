@@ -114,6 +114,8 @@ export interface AutomationSessionMetadata {
   lastCommentId: string | null;
   activeInlineReviewIds?: number[] | null;
   lastInlineReviewId?: number | null;
+  /** Maps issue IDs to GitHub review comment database IDs for reply-on-resolve */
+  inlineCommentMap?: Record<string, number> | null;
   lastCheckRunId: string | null;
   lastCompletedRunId: string | null;
   pendingReviewRequest: QueuedReviewRequest | null;
