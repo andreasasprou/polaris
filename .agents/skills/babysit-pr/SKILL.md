@@ -1,6 +1,6 @@
 ---
 name: babysit-pr
-description: Babysit a GitHub pull request after creation by continuously polling CI checks/workflow runs, new review comments, and mergeability state until the PR is ready to merge (or merged/closed). Diagnose failures, retry likely flaky failures up to 3 times, auto-fix/push branch-related issues when appropriate, and stop only when user help is required (for example CI infrastructure issues, exhausted flaky retries, or ambiguous/blocking situations). Use when the user asks Codex to monitor a PR, watch CI, handle review comments, or keep an eye on failures and feedback on an open PR.
+description: Babysit a GitHub pull request after creation by continuously polling CI checks/workflow runs, new review comments, and mergeability state until the PR is ready to merge (or merged/closed). Diagnose failures, retry likely flaky failures up to 3 times, auto-fix/push branch-related issues when appropriate, and stop only when user help is required (for example CI infrastructure issues, exhausted flaky retries, or ambiguous/blocking situations). Use when the user asks to monitor a PR, babysit a PR, watch CI, handle review comments, keep an eye on failures and feedback, "make sure CI passes", "get this PR merged", or any variation of wanting ongoing PR oversight until it's ready to merge.
 ---
 
 # PR Babysitter
@@ -34,7 +34,7 @@ Accept any of the following:
 9. If both actionable review feedback and `retry_failed_checks` are present, prioritize review feedback first; a new commit will retrigger CI, so avoid rerunning flaky checks on the old SHA unless you intentionally defer the review change.
 10. On every loop, verify mergeability / merge-conflict status (for example via `gh pr view`) in addition to CI and review state.
 11. After any push or rerun action, immediately return to step 1 and continue polling on the updated SHA/state.
-12. If you had been using `--watch` before pausing to patch/commit/push, relaunch `--watch` yourself immediately after the push in the same turn immediately after the push (do not wait for the user to re-invoke the skill).
+12. If you had been using `--watch` before pausing to patch/commit/push, relaunch `--watch` yourself immediately after the push (do not wait for the user to re-invoke the skill).
 13. Repeat polling until the PR is green + review-clean + mergeable, `stop_pr_closed` appears, or a user-help-required blocker is reached.
 14. Maintain terminal/session ownership: while babysitting is active, keep consuming watcher output in the same turn; do not leave a detached `--watch` process running and then end the turn as if monitoring were complete.
 
@@ -85,14 +85,14 @@ The watcher surfaces review items from:
 - Inline review comments
 - Review submissions (COMMENT / APPROVED / CHANGES_REQUESTED)
 
-It intentionally surfaces Codex reviewer bot feedback (for example comments/reviews from `chatgpt-codex-connector[bot]`) in addition to human reviewer feedback. Most unrelated bot noise should still be ignored.
-For safety, the watcher only auto-surfaces trusted human review authors (for example repo OWNER/MEMBER/COLLABORATOR, plus the authenticated operator) and approved review bots such as Codex.
+It intentionally surfaces trusted review bot feedback in addition to human reviewer feedback. Most unrelated bot noise should still be ignored.
+For safety, the watcher only auto-surfaces trusted human review authors (for example repo OWNER/MEMBER/COLLABORATOR, plus the authenticated operator) and approved review bots.
 On a fresh watcher state file, existing pending review feedback may be surfaced immediately (not only comments that arrive after monitoring starts). This is intentional so already-open review comments are not missed.
 
 When you agree with a comment and it is actionable:
 
 1. Patch code locally.
-2. Commit with `codex: address PR review feedback (#<n>)`.
+2. Commit with `fix: address PR review feedback (#<n>)`.
 3. Push to the PR head branch.
 4. Resume watching on the new SHA immediately (do not stop after reporting the push).
 5. If monitoring was running in `--watch` mode, restart `--watch` immediately after the push in the same turn; do not wait for the user to ask again.
@@ -113,11 +113,11 @@ If a code review comment/thread is already marked as resolved in GitHub, treat i
 
 Commit message defaults:
 
-- `codex: fix CI failure on PR #<n>`
-- `codex: address PR review feedback (#<n>)`
+- `fix: CI failure on PR #<n>`
+- `fix: address PR review feedback (#<n>)`
 
 ## Monitoring Loop Pattern
-Use this loop in a live Codex session:
+Use this loop in a live session:
 
 1. Run `--once`.
 2. Read `actions`.
@@ -151,7 +151,7 @@ Stop only when one of the following is true:
 
 - PR merged or closed (stop as soon as a poll/snapshot confirms this).
 - PR is ready to merge: CI succeeded, no surfaced unaddressed review comments, not blocked on required review approval, and no merge conflict risk.
-- User intervention is required and Codex cannot safely proceed alone.
+- User intervention is required and the agent cannot safely proceed alone.
 
 Keep polling when:
 

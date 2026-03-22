@@ -25,7 +25,7 @@ Used to discover failed workflow runs and rerunnable run IDs.
 - `gh run view <run-id> --json jobs,name,workflowName,conclusion,status,url,headSha`
 - `gh run view <run-id> --log-failed`
 
-Used by Codex to classify branch-related vs flaky/unrelated failures.
+Used to classify branch-related vs flaky/unrelated failures.
 
 ### Retry failed jobs only
 
