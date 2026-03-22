@@ -121,8 +121,17 @@ async function resolveServer(
         // our clear will be a no-op because the WHERE won't match.
         const originalEncryptedBlob = row.encryptedAuthConfig!;
 
+        // Validate token endpoint resolves to a public IP before fetching
+        // (prevents SSRF via DNS rebinding on previously-valid domains)
+        const { validateServerFetchUrl } = await import("./url-validation");
+        const safeUrl = await validateServerFetchUrl(row.oauthTokenEndpoint);
+        if (!safeUrl) {
+          console.warn(`[mcp-servers] Token endpoint ${row.oauthTokenEndpoint} resolves to private address, skipping server ${row.id}`);
+          return null;
+        }
+
         try {
-          const refreshRes = await fetch(row.oauthTokenEndpoint, {
+          const refreshRes = await fetch(safeUrl, {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
             body: new URLSearchParams({

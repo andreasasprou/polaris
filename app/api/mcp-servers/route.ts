@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrg, requireOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrg, getSessionWithOrgAdmin } from "@/lib/auth/session";
 import { findMcpServersByOrg } from "@/lib/mcp-servers/queries";
 import { createMcpServer } from "@/lib/mcp-servers/actions";
+import { isValidUrl, validateServerFetchUrl } from "@/lib/mcp-servers/url-validation";
 import { withEvlog } from "@/lib/evlog";
 
 export const GET = withEvlog(async () => {
@@ -10,62 +11,13 @@ export const GET = withEvlog(async () => {
   return NextResponse.json({ servers });
 });
 
-/** Check if a hostname looks like a private/internal target. */
-function isPrivateHostname(hostname: string): boolean {
-  // Loopback
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.endsWith(".localhost")
-  ) return true;
-
-  // RFC1918 private ranges
-  const parts = hostname.split(".").map(Number);
-  if (parts.length === 4 && parts.every((n) => !isNaN(n))) {
-    if (parts[0] === 10) return true; // 10.0.0.0/8
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12
-    if (parts[0] === 192 && parts[1] === 168) return true; // 192.168.0.0/16
-    if (parts[0] === 169 && parts[1] === 254) return true; // link-local
-    if (parts[0] === 0) return true; // 0.0.0.0
-  }
-
-  // Common internal DNS patterns
-  if (
-    hostname.endsWith(".internal") ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".corp") ||
-    hostname.endsWith(".lan")
-  ) return true;
-
-  return false;
-}
-
-/**
- * Validate a URL for MCP server endpoints.
- * - MCP server URLs: HTTPS required, HTTP allowed for localhost in dev only
- * - OAuth endpoints (server-fetched): HTTPS required, private/internal hosts blocked
- */
-function isValidUrl(urlStr: string, { allowLocalDev = false } = {}): boolean {
-  try {
-    const url = new URL(urlStr);
-    if (url.protocol === "http:") {
-      return allowLocalDev && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
-    }
-    if (url.protocol !== "https:") return false;
-    // Block private/internal targets for HTTPS too
-    if (isPrivateHostname(url.hostname)) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const VALID_TRANSPORTS = ["streamable-http", "sse"] as const;
 const VALID_AUTH_TYPES = ["static", "oauth"] as const;
 
 export const POST = withEvlog(async (req: Request) => {
-  const { session, orgId } = await requireOrgAdmin();
+  const admin = await getSessionWithOrgAdmin();
+  if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
+  const { session, orgId } = admin;
   const body = await req.json();
 
   // Validate required fields
@@ -124,13 +76,15 @@ export const POST = withEvlog(async (req: Request) => {
     const tokenEndpoint = body.oauthTokenEndpoint?.trim();
     if (!authEndpoint || !isValidUrl(authEndpoint)) {
       return NextResponse.json(
-        { error: "oauthAuthorizationEndpoint must be a valid HTTPS URL" },
+        { error: "oauthAuthorizationEndpoint must be a valid HTTPS URL (private/internal hosts blocked)" },
         { status: 400 },
       );
     }
-    if (!tokenEndpoint || !isValidUrl(tokenEndpoint)) {
+    // Token endpoint is server-fetched — validate with DNS resolution to block
+    // domains that resolve to private IPs (prevents SSRF via DNS rebinding)
+    if (!tokenEndpoint || !(await validateServerFetchUrl(tokenEndpoint))) {
       return NextResponse.json(
-        { error: "oauthTokenEndpoint must be a valid HTTPS URL" },
+        { error: "oauthTokenEndpoint must be a valid HTTPS URL that does not resolve to a private/internal address" },
         { status: 400 },
       );
     }

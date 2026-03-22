@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { requireOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdmin } from "@/lib/auth/session";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { signMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { withEvlog } from "@/lib/evlog";
 
 export const GET = withEvlog(async (req: Request) => {
-  const { session, orgId } = await requireOrgAdmin();
+  const admin = await getSessionWithOrgAdmin();
+  if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
+  const { session, orgId } = admin;
   const url = new URL(req.url);
   const serverId = url.searchParams.get("serverId");
 

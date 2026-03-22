@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdmin } from "@/lib/auth/session";
 import {
   deleteMcpServer,
   updateMcpServerEnabled,
@@ -13,7 +13,9 @@ export const DELETE = withEvlog(
     _req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const { orgId } = await requireOrgAdmin();
+    const admin = await getSessionWithOrgAdmin();
+    if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
+    const { orgId } = admin;
     const { id } = await params;
 
     await deleteMcpServer(id, orgId);
@@ -26,7 +28,9 @@ export const PATCH = withEvlog(
     req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const { orgId } = await requireOrgAdmin();
+    const admin = await getSessionWithOrgAdmin();
+    if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
+    const { orgId } = admin;
     const { id } = await params;
     const body = await req.json();
 
