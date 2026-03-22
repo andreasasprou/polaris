@@ -336,6 +336,10 @@ async function fetchInlineCommentMap({
         commentMap[match.issue_id] = rc.id;
       }
     }
+    if (Object.keys(commentMap).length === 0 && reviewComments.length > 0) {
+      console.log(`[codex-review] Debug: API returned: ${JSON.stringify(reviewComments.map(rc => ({ id: rc.id, path: rc.path, line: rc.line, original_line: rc.original_line })))}`);
+      console.log(`[codex-review] Debug: Expected: ${JSON.stringify(inlineComments.map(ic => ({ issue_id: ic.issue_id, file: ic.file, line: ic.line })))}`);
+    }
     console.log(
       `[codex-review] Comment map: ${JSON.stringify(commentMap)} (from ${reviewComments.length} review comments)`
     );
