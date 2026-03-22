@@ -121,7 +121,23 @@ export async function dispatchPrReview(
     const log = useLogger();
     log.set({ dispatch: { automationRunId, automationId, sessionId: automationSessionId, prNumber: event.prNumber } });
 
-    // 3. Load repo-level config from BASE branch
+    // 3. Ensure check exists (before config validation so error paths can fail it)
+    if (!checkRunId) {
+      try {
+        const check = await createPendingCheck({
+          installationId,
+          owner: event.owner,
+          repo: event.repo,
+          headSha: event.headSha,
+          checkName: connectorConfig.checkName,
+        });
+        checkRunId = check.checkRunId;
+      } catch {
+        // Continue without check — best effort
+      }
+    }
+
+    // 4. Load repo-level config from BASE branch
     const octokit = await getReviewOctokit(installationId);
     const { loadRepoReviewConfig, mergeWithConnector, formatConfigError } = await import("@/lib/reviews/repo-config");
     const repoConfigResult = await loadRepoReviewConfig(octokit, event.owner, event.repo, event.baseRef);
@@ -226,22 +242,6 @@ export async function dispatchPrReview(
       await releaseAutomationSessionLock({ automationSessionId, jobId: automationRunId });
       handedOff = true; // lock explicitly released, skip finally cleanup
       return { jobId: "" };
-    }
-
-    // 6. Ensure check exists
-    if (!checkRunId) {
-      try {
-        const check = await createPendingCheck({
-          installationId,
-          owner: event.owner,
-          repo: event.repo,
-          headSha: event.headSha,
-          checkName: config.checkName,
-        });
-        checkRunId = check.checkRunId;
-      } catch {
-        // Continue without check
-      }
     }
 
     await updateAutomationRun(automationRunId, {
