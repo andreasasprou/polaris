@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,18 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 
+function safeReturnTo(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//")) return null;
+  if (raw.includes(":")) return null;
+  return raw;
+}
+
 export function LoginForm() {
+  const searchParams = useSearchParams();
+  const returnTo = safeReturnTo(searchParams.get("returnTo"));
+
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
       <div className="w-full max-w-md">
@@ -21,10 +32,10 @@ export function LoginForm() {
             <TabsTrigger value="sign-up">Sign Up</TabsTrigger>
           </TabsList>
           <TabsContent value="sign-in">
-            <SignInCard />
+            <SignInCard returnTo={returnTo} />
           </TabsContent>
           <TabsContent value="sign-up">
-            <SignUpCard />
+            <SignUpCard returnTo={returnTo} />
           </TabsContent>
         </Tabs>
       </div>
@@ -32,13 +43,15 @@ export function LoginForm() {
   );
 }
 
-function SignInCard() {
+function SignInCard({ returnTo }: { returnTo: string | null }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const postLoginPath = returnTo || "/onboarding";
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
@@ -48,7 +61,7 @@ function SignInCard() {
     const { error } = await authClient.signIn.email({
       email,
       password,
-      callbackURL: "/onboarding",
+      callbackURL: postLoginPath,
     });
 
     if (error) {
@@ -57,7 +70,7 @@ function SignInCard() {
       return;
     }
 
-    router.push("/onboarding");
+    router.push(postLoginPath);
   }
 
   return (
@@ -124,7 +137,7 @@ function SignInCard() {
           onClick={() =>
             authClient.signIn.social({
               provider: "github",
-              callbackURL: "/onboarding",
+              callbackURL: postLoginPath,
             })
           }
         >
@@ -138,7 +151,7 @@ function SignInCard() {
   );
 }
 
-function SignUpCard() {
+function SignUpCard({ returnTo }: { returnTo: string | null }) {
   const router = useRouter();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -149,6 +162,8 @@ function SignUpCard() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const postLoginPath = returnTo || "/onboarding";
 
   async function handleSignUp(e: React.FormEvent) {
     e.preventDefault();
@@ -165,7 +180,7 @@ function SignUpCard() {
       name: `${firstName} ${lastName}`.trim(),
       email,
       password,
-      callbackURL: "/onboarding",
+      callbackURL: postLoginPath,
     });
 
     if (error) {
@@ -174,7 +189,7 @@ function SignUpCard() {
       return;
     }
 
-    router.push("/onboarding");
+    router.push(postLoginPath);
   }
 
   return (

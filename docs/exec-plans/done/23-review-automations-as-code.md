@@ -1,6 +1,6 @@
 ---
 title: Review Automations as Code
-status: active
+status: done
 created: 2026-03-22
 owner: andreas
 related_prs: []

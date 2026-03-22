@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdmin, getOrgSlugById } from "@/lib/auth/session";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { updateMcpServerAuth } from "@/lib/mcp-servers/actions";
 import { verifyMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
@@ -134,6 +134,14 @@ export const GET = withEvlog(async (req: Request) => {
   });
 
   // Clear verifier cookie and redirect
+  let successPath = "/settings/mcp?success=connected";
+  try {
+    const slug = await getOrgSlugById(orgId);
+    successPath = `/${slug}/settings/mcp?success=connected`;
+  } catch {
+    // Fall back to bare path — proxy will handle legacy redirect
+  }
+
   const headers = new Headers();
   headers.append(
     "Set-Cookie",
@@ -141,7 +149,7 @@ export const GET = withEvlog(async (req: Request) => {
   );
   headers.set(
     "Location",
-    new URL("/settings/mcp?success=connected", req.url).toString(),
+    new URL(successPath, req.url).toString(),
   );
   return new Response(null, { status: 302, headers });
 });

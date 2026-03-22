@@ -151,19 +151,17 @@ The highest-impact change: shift all achromatic values to warm hue ~70.
 
 ### Phase 3: Typography Scale
 
-Cursor's product UI uses 11-13px text. Our typography classes:
+Cursor's product UI uses 11-13px text. **No custom CSS classes** — use Tailwind directly at each call site:
 
-```css
-.text-page-title  { @apply text-xl font-semibold tracking-tight; }  /* 20px, not 24 — denser */
-.text-section-title { @apply text-base font-semibold tracking-tight; } /* 16px, not 18 */
-.text-body        { @apply text-[13px] leading-[1.33]; }             /* Cursor's --text-product-lg */
-.text-caption     { @apply text-xs text-muted-foreground; }          /* 12px */
-.text-timestamp   { @apply text-[11px] tabular-nums text-muted-foreground/50; } /* Cursor's --text-product-sm, 50% opacity */
-.text-label       { @apply text-[11px] font-medium uppercase tracking-wider text-muted-foreground; }
-.text-code        { @apply font-mono text-[13px] rounded-[3px] bg-muted/60 px-1.5 py-0.5; }
-```
-
-Note: Cursor uses `tracking: 0.0044em` for product small text — nearly zero. Our `tracking-tight` (-0.025em) is close enough.
+| Role | Tailwind Classes | Notes |
+|------|-----------------|-------|
+| Page title | `text-xl font-semibold tracking-tight` | 20px, not 24 — denser |
+| Section title | `text-base font-semibold tracking-tight` | 16px |
+| Body | `text-[13px] leading-[1.33]` | Cursor's product-lg |
+| Caption | `text-xs text-muted-foreground` | 12px |
+| Timestamp | `text-[11px] tabular-nums text-muted-foreground/50` | 11px, 50% opacity |
+| Label | `text-[11px] font-medium uppercase tracking-wider text-muted-foreground` | Metadata labels |
+| Inline code | `font-mono text-[13px] rounded-[3px] bg-muted/60 px-1.5 py-0.5` | Code references |
 
 ### Phase 4: Shadows, Borders & Scrollbars
 
@@ -281,13 +279,13 @@ Live dot for active statuses:
 
 ### Phase 8: Typography Application
 
-Exact changes per file:
-- `automations/page.tsx` line 23: `text-2xl font-medium` → `text-page-title`
+Exact changes per file (all pure Tailwind, no custom classes):
+- `automations/page.tsx` line 23: `text-2xl font-medium` → `text-xl font-semibold tracking-tight`
 - `sessions/page.tsx` line 44: same
 - `runs/page.tsx` line 83: same
 - `dashboard/page.tsx` line 92: same
-- `runs/[runId]/page.tsx` MetadataCard label: `text-xs font-medium text-muted-foreground` → `text-label`
-- All timestamp cells in tables: wrap in `<span className="text-timestamp">`
+- `runs/[runId]/page.tsx` MetadataCard label: `text-xs font-medium text-muted-foreground` → `text-[11px] font-medium uppercase tracking-wider text-muted-foreground`
+- All timestamp cells in tables: wrap in `<span className="text-[11px] tabular-nums text-muted-foreground/50">`
 
 ### Phase 9: Liveness Animations
 
@@ -301,7 +299,7 @@ Replace bare "Loading..." text with consistent pattern:
 ```tsx
 <div className="flex flex-col items-center gap-3 py-16">
   <Spinner className="text-muted-foreground" />
-  <p className="text-caption">Loading...</p>
+  <p className="text-xs text-muted-foreground">Loading...</p>
 </div>
 ```
 
@@ -311,7 +309,7 @@ Apply to: sessions page, runs page, run detail, session detail.
 
 | File | Changes |
 |------|---------|
-| `app/globals.css` | Warm neutral foundation, status tokens, dim variants, brand token, typography scale, shadows, scrollbars, radius, transitions, animations |
+| `app/globals.css` | Warm neutral foundation, status tokens, dim variants, brand token, shadows, scrollbars, radius, transitions, animations (NO custom typography classes — Tailwind directly at call sites) |
 | `components/status-badge.tsx` | Chromatic status colors with dim backgrounds, live dot |
 | `components/ui/empty.tsx` | Illustration variant, EmptyActions |
 | `components/sessions/chat-input.tsx` | Breathing glow on active |

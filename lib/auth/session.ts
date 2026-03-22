@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
   member,
+  organization,
   session as sessionTable,
 } from "@/lib/db/auth-schema";
 import { and, eq } from "drizzle-orm";
@@ -81,6 +82,30 @@ export async function getSessionWithOrgAdmin() {
   }
 
   return { session, orgId };
+}
+
+/**
+ * Resolve org ID from slug. Use in server pages under [orgSlug] instead of
+ * getSessionWithOrg() to avoid race conditions with the layout's org switch.
+ * The layout already validates the slug and membership — this is a fast lookup.
+ */
+export async function getOrgIdBySlug(slug: string): Promise<string | null> {
+  const [org] = await db
+    .select({ id: organization.id })
+    .from(organization)
+    .where(eq(organization.slug, slug))
+    .limit(1);
+  return org?.id ?? null;
+}
+
+export async function getOrgSlugById(orgId: string): Promise<string> {
+  const [org] = await db
+    .select({ slug: organization.slug })
+    .from(organization)
+    .where(eq(organization.id, orgId))
+    .limit(1);
+  if (!org) throw new Error(`Organization not found: ${orgId}`);
+  return org.slug;
 }
 
 export async function hasOrganizationMembership(

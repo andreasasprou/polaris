@@ -71,6 +71,7 @@ This program deliberately does **not** introduce a first-class `Task` aggregate 
 - All prompt-like execution paths (`prompt`, `review`, sweeper retry) use the same executor and the same typed proxy envelope.
 - All job-specific behavior is owned by a `JobSpec` implementation, not by `switch (job.type)` branches.
 - Any new code added during this program treats `interactive_session` as a continuation/session boundary, not as the permanent top-level product noun.
+- Review-specific pre-dispatch concerns that already exist today — repo-config-as-code loading, runtime-drift continuity policy, and review prompt construction — remain explicit domain concerns and are not pushed into the generic executor.
 
 ### Program Shape
 
@@ -241,6 +242,7 @@ Keep only resolved transport fields:
 - `nativeAgentSessionId`
 - `nextEventIndex`
 - `env`
+- `mcpServers`
 - `branch` if still needed by the proxy path
 
 The only module allowed to resolve semantic agent intent remains `lib/sandbox-agent/agent-profiles.ts`.
@@ -253,6 +255,7 @@ The only module allowed to resolve semantic agent intent remains `lib/sandbox-ag
 - provision or restore a sandbox if needed
 - create or reuse the job/attempt boundary supplied by the caller
 - compute resume fields (`sdkSessionId`, `nativeAgentSessionId`, `nextEventIndex`)
+- carry fully resolved tool/runtime transport inputs such as MCP server configuration
 - POST the typed prompt envelope through `proxy-client.ts`
 - normalize outcomes into `accepted`, `failed`, and `dispatch_unknown`
 - invoke lifecycle services for rollback and timeout ownership
@@ -300,7 +303,7 @@ The executor must support both:
 **Refactor call sites**
 
 - `lib/orchestration/prompt-dispatch.ts` becomes a thin adapter that validates the interactive prompt request and delegates to the executor
-- `lib/orchestration/pr-review.ts` builds review prompt/context, resolves agent config, then delegates to the executor
+- `lib/orchestration/pr-review.ts` keeps review-domain preparation responsibilities that already exist today — repo-config loading/merge, runtime-coherence validation, credential-slug resolution, runtime-drift session selection, diff/guideline gathering, and review prompt construction — then delegates the actual dispatch to the executor
 - `lib/orchestration/sweeper.ts` delegates review retry dispatch to the same executor instead of recreating the POST flow
 - `app/api/callbacks/route.ts` validates and decodes the callback body through the shared Zod schemas before invoking orchestration
 - `lib/orchestration/callback-processor.ts` accepts typed `CallbackEnvelope` input instead of `Record<string, unknown>` callback payloads
@@ -352,7 +355,7 @@ type JobSpec<TPayload, TResult> = {
 **Responsibilities by spec**
 
 - `prompt` — no-op postprocess, no retry-specific cleanup beyond generic lifecycle handling
-- `review` — owns retry dispatch, review lock cleanup, check failure, queued-review drain, and timeline phase derivation for review jobs
+- `review` — owns retry dispatch, review lock cleanup, check failure, queued-review drain, stale/inline review lifecycle, inline comment-map tracking, runtime-config continuity metadata, and timeline phase derivation for review jobs
 - `coding_task` — owns commit/push/PR creation postprocess and terminal failure cleanup for automation runs
 
 **Refactor existing orchestration**

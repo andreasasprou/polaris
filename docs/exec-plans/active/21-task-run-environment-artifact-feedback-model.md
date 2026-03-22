@@ -62,6 +62,7 @@ This plan introduces the stable product nouns on top of that control plane.
 | 2026-03-21 | Task lifecycle is a small explicit product workflow reduced from linked run state plus explicit user intent | Tasks can outlive individual runs, reopen later, and must not drift through ad hoc status writes |
 | 2026-03-21 | Artifacts may be either run-final or attempt-scoped | Retries produce distinct evidence; logs and failure bundles should not collapse across attempts |
 | 2026-03-22 | Continuation sessions are role-aware and not all of them are user-chat surfaces | Review and automation continuity may need durable context without exposing a prompt box or primary Sessions-list entry |
+| 2026-03-22 | Review GitHub delivery should produce explicit review artifacts, while inline comment maps and thread-resolution bookkeeping remain review state/metadata rather than artifact rows | User-visible outputs and operational bookkeeping are different concerns |
 
 ## Dependencies and Start Gate
 
@@ -440,8 +441,16 @@ where `attempt_id IS NOT NULL` and `dedupe_key IS NOT NULL`.
 **Emit artifacts from existing flows**
 
 - `prompt` jobs should emit summary/result artifacts when appropriate
-- `review` jobs should emit review comment and check artifacts
+- `review` jobs should emit summary comment, GitHub check, and inline review artifacts when those outputs are actually created
 - `coding_task` jobs should emit branch, PR, and summary artifacts
+
+Do **not** model internal review bookkeeping as separate artifacts:
+
+- `inlineCommentMap`
+- active/superseded inline review tracking IDs
+- reply-on-resolve / thread-resolution bookkeeping
+
+Those remain part of review state / metadata until there is a concrete user-facing audit requirement that justifies promoting them.
 
 Primary refactor files:
 
@@ -544,6 +553,8 @@ type EnvironmentSpec = {
 
 Persist requested environment spec on `tasks.requestedEnvironment`.
 
+`toolProfileId` should be capable of representing the effective tool/MCP bundle, not just a generic preset label. The current codebase already resolves org-level MCP servers during dispatch, so this wave must make that tool surface visible in the environment model instead of treating it as an invisible transport detail.
+
 If a specific run needs to override the task-level environment request, model that as a run-level override in the job payload/read model rather than mutating the task-level requested environment in place.
 
 **Read-model responsibilities**
@@ -555,6 +566,7 @@ If a specific run needs to override the task-level environment request, model th
 - latest runtime history
 - whether continuation is available
 - effective branch/repository pointers
+- effective tool / MCP bundle summary
 - compute-policy summary
 
 **Refactor call sites**
