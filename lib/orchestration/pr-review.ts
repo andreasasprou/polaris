@@ -330,12 +330,24 @@ export async function dispatchPrReview(
       reviewToSha: toSha,
     });
 
-    // 9. Handle "reset" — create new interactive session
-    if (reviewScope === "reset") {
-      const effectiveAgentType = resolvedRuntime?.agentType ?? automation.agentType ?? "claude";
-      const effectiveSecretId = resolvedRuntime?.credentialOverride?.agentSecretId ?? automation.agentSecretId;
-      const effectivePoolId = resolvedRuntime?.credentialOverride?.keyPoolId ?? automation.keyPoolId;
+    // 9. Handle session creation — explicit "reset" or YAML runtime drift
+    const effectiveAgentType = resolvedRuntime?.agentType ?? automation.agentType ?? "claude";
+    const effectiveSecretId = resolvedRuntime?.credentialOverride?.agentSecretId ?? automation.agentSecretId;
+    const effectivePoolId = resolvedRuntime?.credentialOverride?.keyPoolId ?? automation.keyPoolId;
 
+    // Detect if YAML changed the agent or credential vs what the existing session was created with.
+    // If so, we need a fresh session — the old sandbox, agent session IDs, and credentials are stale.
+    const { getInteractiveSession: getSessionForDriftCheck } = await import("@/lib/sessions/actions");
+    const currentSession = await getSessionForDriftCheck(targetSessionId);
+    const runtimeDrifted = currentSession && resolvedRuntime && (
+      currentSession.agentType !== effectiveAgentType ||
+      (resolvedRuntime.credentialOverride && (
+        currentSession.agentSecretId !== effectiveSecretId ||
+        currentSession.keyPoolId !== effectivePoolId
+      ))
+    );
+
+    if (reviewScope === "reset" || runtimeDrifted) {
       const { createInteractiveSession } = await import("@/lib/sessions/actions");
       const newSession = await createInteractiveSession({
         organizationId: orgId,
