@@ -76,9 +76,17 @@ export function proxy(request: NextRequest) {
       loginUrl.searchParams.set("returnTo", pathname);
       return NextResponse.redirect(loginUrl);
     }
-    // Cookie is set in the [orgSlug] layout after org validation — not here,
-    // to avoid poisoning the cookie with non-existent slugs.
-    return NextResponse.next();
+    // Set the org slug cookie here so it's available for legacy redirects.
+    // If the slug is invalid the layout will notFound(), and the browser won't
+    // store the cookie from a non-2xx response (Set-Cookie on 404 is ignored).
+    const response = NextResponse.next();
+    response.cookies.set("polaris_org_slug", firstSegment, {
+      path: "/",
+      httpOnly: false,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 24 * 365, // 1 year
+    });
+    return response;
   }
 
   return NextResponse.next();
