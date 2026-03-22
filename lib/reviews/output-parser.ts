@@ -19,7 +19,7 @@ const VERDICT_EMOJI: Record<ReviewVerdict, string> = {
 function buildHeaderRegex(verdict?: ReviewVerdict, passNumber?: number): RegExp {
   if (verdict && passNumber != null) {
     const emoji = VERDICT_EMOJI[verdict];
-    const escaped = `##\\s+${emoji}\\s+Polaris Review(?:\\s+Pass\\s+${passNumber}|\\s+#${passNumber})`;
+    const escaped = `##\\s+${emoji}\\s+Polaris Review(?:\\s+Pass\\s+${passNumber}(?!\\d)|\\s+#${passNumber}(?!\\d))`;
     return new RegExp(escaped, "gu");
   }
   // Fallback: any Polaris Review header

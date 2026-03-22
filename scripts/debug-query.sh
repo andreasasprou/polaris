@@ -11,25 +11,20 @@ set -euo pipefail
 
 OP_ITEM="uyhidsxgst4qgcl6yizdap3yua"
 
-# Build connection string with password injected via op at runtime
-DATABASE_URL="postgresql://$(
-  op item get "$OP_ITEM" --fields label=username --reveal
-):$(
-  op item get "$OP_ITEM" --fields label=password --reveal
-)@$(
-  op item get "$OP_ITEM" --fields label=hostname --reveal
-)/$(
-  op item get "$OP_ITEM" --fields label=database --reveal
-)?sslmode=require"
-
+# Pass credentials via env vars so special characters in passwords don't break URI parsing
+export PGUSER="$(op item get "$OP_ITEM" --fields label=username --reveal)"
+export PGPASSWORD="$(op item get "$OP_ITEM" --fields label=password --reveal)"
+export PGHOST="$(op item get "$OP_ITEM" --fields label=hostname --reveal)"
+export PGDATABASE="$(op item get "$OP_ITEM" --fields label=database --reveal)"
+export PGSSLMODE=require
 export PGCONNECT_TIMEOUT=10
 
 if [[ "${1:-}" == "-f" && -n "${2:-}" ]]; then
-  psql "$DATABASE_URL" -f "$2"
+  psql -f "$2"
 elif [[ -n "${1:-}" ]]; then
-  psql "$DATABASE_URL" -c "$1"
+  psql -c "$1"
 elif [[ ! -t 0 ]]; then
-  psql "$DATABASE_URL"
+  psql
 else
   echo "Usage:"
   echo "  $0 \"SELECT count(*) FROM sandbox_agent.events\""

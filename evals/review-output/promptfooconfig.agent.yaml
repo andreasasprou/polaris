@@ -2,16 +2,20 @@
 #
 # Review Agent Contract — End-to-End Eval
 #
-# Tests that the Codex agent produces output conforming to the review contract:
+# Tests that an OpenAI model produces output conforming to the review contract:
 # - Correct header format (## emoji Polaris Review Pass N: VERDICT)
 # - Valid metadata JSON block after <!-- polaris:metadata --> marker
 # - Catches real issues (SQL injection in test diff)
 #
-# Uses Codex CLI auth (~/.codex/auth.json) — no OPENAI_API_KEY needed.
+# NOTE: This uses GPT-4.1 Mini as a fast/cheap proxy for format compliance.
+# It does NOT exercise Codex CLI directly — Codex-specific regressions
+# (e.g. reasoning leaks, tool-call formatting) require a separate suite
+# with a real Codex provider.
+#
 # Run separately from parser tests:
 #   npx promptfoo@latest eval -c evals/review-output/promptfooconfig.agent.yaml --no-cache
 
-description: "Review agent contract: Codex produces parseable review output"
+description: "Review agent contract: OpenAI model produces parseable review output"
 
 prompts:
   - file://prompts/review.txt

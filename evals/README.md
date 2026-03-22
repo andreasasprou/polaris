@@ -18,7 +18,7 @@ Vitest tests verify the code works. Promptfoo evals verify the agent produces ou
 # Run all parser evals (free, fast, deterministic)
 npx promptfoo@latest eval -c evals/review-output/promptfooconfig.yaml --no-cache
 
-# Run agent contract evals (uses ~/.codex/auth.json, no OPENAI_API_KEY needed)
+# Run agent contract evals (uses OPENAI_API_KEY, GPT-4.1 Mini)
 npx promptfoo@latest eval -c evals/review-output/promptfooconfig.agent.yaml --no-cache
 
 # View results in browser
@@ -30,7 +30,7 @@ npx promptfoo@latest view
 | Suite | What it tests | Provider |
 |-------|--------------|----------|
 | `review-output/` | Output parser: reasoning stripping, metadata extraction, header matching | JS → `parseReviewOutput()` |
-| `review-output/` (agent) | Agent contract: Codex produces parseable review output | Codex SDK |
+| `review-output/` (agent) | Agent contract: OpenAI model produces parseable review output | GPT-4.1 Mini |
 
 ## Writing a new eval
 
