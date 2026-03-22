@@ -6,7 +6,10 @@ import {
   getCatalogTemplate,
   resolveCatalogServerUrl,
 } from "@/lib/mcp-servers/catalog";
-import { isValidUrl, validateServerFetchUrl } from "@/lib/mcp-servers/url-validation";
+import {
+  isValidUrl,
+  validateOAuthEndpoints,
+} from "@/lib/mcp-servers/url-validation";
 import { withEvlog } from "@/lib/evlog";
 
 export const GET = withEvlog(async () => {
@@ -47,25 +50,6 @@ function normalizeHeaders(input: unknown): Record<string, string> {
   }
 
   return headers;
-}
-
-async function validateOAuthEndpoints(
-  authorizationEndpoint: string,
-  tokenEndpoint: string,
-) {
-  if (!isValidUrl(authorizationEndpoint)) {
-    throw new ApiError(
-      "oauthAuthorizationEndpoint must be a valid HTTPS URL (private/internal hosts blocked)",
-      400,
-    );
-  }
-
-  if (!(await validateServerFetchUrl(tokenEndpoint))) {
-    throw new ApiError(
-      "oauthTokenEndpoint must be a valid HTTPS URL that does not resolve to a private/internal address",
-      400,
-    );
-  }
 }
 
 export const POST = withEvlog(async (req: Request) => {
@@ -223,7 +207,14 @@ export const POST = withEvlog(async (req: Request) => {
         );
       }
 
-      await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+      try {
+        await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+      } catch (error) {
+        throw new ApiError(
+          error instanceof Error ? error.message : "Invalid OAuth endpoints",
+          400,
+        );
+      }
 
       oauthClientId = clientId;
       oauthAuthorizationEndpoint = authorizationEndpoint;

@@ -7,6 +7,7 @@ import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { signMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { withEvlog } from "@/lib/evlog";
+import { validateOAuthEndpoints } from "@/lib/mcp-servers/url-validation";
 
 export const GET = withEvlog(async (req: Request) => {
   const admin = await getSessionWithOrgAdmin();
@@ -67,12 +68,40 @@ export const GET = withEvlog(async (req: Request) => {
     authorizationEndpoint = discovered.authorizationEndpoint;
     tokenEndpoint = discovered.tokenEndpoint;
 
+    try {
+      await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Invalid OAuth metadata for this MCP server",
+        },
+        { status: 400 },
+      );
+    }
+
     await updateMcpServerOAuthMetadata(server.id, orgId, {
       oauthClientId: server.oauthClientId,
       oauthAuthorizationEndpoint: authorizationEndpoint,
       oauthTokenEndpoint: tokenEndpoint,
       oauthScopes: server.oauthScopes,
     });
+  }
+
+  try {
+    await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Invalid OAuth metadata for this MCP server",
+      },
+      { status: 400 },
+    );
   }
 
   // Generate PKCE

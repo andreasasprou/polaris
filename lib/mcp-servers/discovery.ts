@@ -1,4 +1,8 @@
-import { isValidUrl, safeFetch } from "./url-validation";
+import {
+  isValidUrl,
+  safeFetch,
+  validateOAuthEndpoints,
+} from "./url-validation";
 
 export type DiscoveredOAuthConfig = {
   authorizationEndpoint: string;
@@ -152,6 +156,12 @@ export async function discoverOAuthConfig(
     typeof authorizationEndpoint !== "string" ||
     typeof tokenEndpoint !== "string"
   ) {
+    return null;
+  }
+
+  try {
+    await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+  } catch {
     return null;
   }
 
