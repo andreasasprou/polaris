@@ -10,6 +10,9 @@ import { StatusBadge } from "@/components/status-badge";
 import { VerdictBadge } from "@/components/verdict-badge";
 import { SessionChat } from "@/components/sessions/session-chat";
 import { useSessionChat } from "@/hooks/use-session-chat";
+import {
+  ExternalLinkIcon,
+} from "lucide-react";
 
 type Run = {
   id: string;
@@ -37,6 +40,9 @@ type Run = {
   reviewFromSha: string | null;
   reviewToSha: string | null;
   githubCommentId: string | null;
+  // PR info (extracted from trigger_event)
+  prNumber: number | null;
+  prTitle: string | null;
   // Repo info
   repoOwner: string | null;
   repoName: string | null;
@@ -44,6 +50,22 @@ type Run = {
 
 function isReviewRun(run: Run): boolean {
   return run.verdict != null || run.reviewScope != null;
+}
+
+function formatDuration(start: string | null, end: string | null): string {
+  if (!start) return "\u2014";
+  const s = new Date(start).getTime();
+  const e = end ? new Date(end).getTime() : Date.now();
+  const secs = Math.round((e - s) / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function prUrl(run: Run): string | null {
+  if (run.prNumber && run.repoOwner && run.repoName) {
+    return `https://github.com/${run.repoOwner}/${run.repoName}/pull/${run.prNumber}`;
+  }
+  return run.prUrl ?? null;
 }
 
 export default function RunDetailPage() {
@@ -105,8 +127,12 @@ export default function RunDetailPage() {
     return <p className="text-sm text-muted-foreground">Run not found.</p>;
   }
 
+  const pr = prUrl(run);
+  const duration = formatDuration(run.startedAt, run.completedAt);
+
   return (
     <div className="flex flex-col gap-6">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Link
           href="/runs"
@@ -121,12 +147,14 @@ export default function RunDetailPage() {
         <StatusBadge status={run.status} />
       </div>
 
+      {/* Metadata cards */}
       {isReviewRun(run) ? (
-        <ReviewMetadataCards run={run} />
+        <ReviewMetadataCards run={run} pr={pr} duration={duration} />
       ) : (
-        <CodingTaskMetadataCards run={run} />
+        <CodingTaskMetadataCards run={run} pr={pr} duration={duration} />
       )}
 
+      {/* Summary — the hero content */}
       {run.summary && (
         <Card>
           <CardHeader className="pb-2">
@@ -142,34 +170,30 @@ export default function RunDetailPage() {
 
       {run.error && <SessionErrorAlert error={run.error} />}
 
-      <div>
-        <div className="mb-3 flex items-center gap-3">
-          <h2 className="text-lg font-medium">Agent Session</h2>
-          {run.interactiveSessionId && (
-            <Link
-              href={`/sessions/${run.interactiveSessionId}`}
-              className="text-sm text-primary hover:underline"
-            >
-              View session &rarr;
-            </Link>
-          )}
-        </div>
-        {run.sdkSessionId ? (
-          <RunSessionChat
-            sdkSessionId={run.sdkSessionId}
-            runStatus={run.status}
-            runStartedAt={run.startedAt}
-            runCompletedAt={run.completedAt}
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Session pending — no agent events yet.
-          </p>
-        )}
-      </div>
+      {/* Agent Trace — collapsed by default */}
+      {run.sdkSessionId && (
+        <AgentTrace
+          sdkSessionId={run.sdkSessionId}
+          runStatus={run.status}
+          runStartedAt={run.startedAt}
+          runCompletedAt={run.completedAt}
+          interactiveSessionId={run.interactiveSessionId}
+        />
+      )}
 
-      {run.jobId && <JobLifecycle jobId={run.jobId} />}
+      {/* Job Lifecycle — collapsed */}
+      {run.jobId && (
+        <details>
+          <summary className="cursor-pointer text-lg font-medium">
+            Job Lifecycle
+          </summary>
+          <div className="mt-3">
+            <JobLifecycle jobId={run.jobId} />
+          </div>
+        </details>
+      )}
 
+      {/* Sandbox Logs — collapsed, lazy-loaded */}
       {run.interactiveSessionId && (
         <SandboxLogs
           sessionId={run.interactiveSessionId}
@@ -182,16 +206,29 @@ export default function RunDetailPage() {
 
 // ── Review metadata cards ──
 
-function ReviewMetadataCards({ run }: { run: Run }) {
+function ReviewMetadataCards({ run, pr, duration }: { run: Run; pr: string | null; duration: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-4">
-        <MetadataCard label="Repository">
-          <p className="font-mono text-sm">
-            {run.repoOwner && run.repoName
-              ? `${run.repoOwner}/${run.repoName}`
-              : run.source}
-          </p>
+        <MetadataCard label="PR">
+          {pr && run.prNumber ? (
+            <a
+              href={pr}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-primary hover:underline"
+              title={run.prTitle ?? undefined}
+            >
+              #{run.prNumber}
+              <ExternalLinkIcon className="h-3 w-3" />
+            </a>
+          ) : (
+            <p className="font-mono text-sm text-muted-foreground">
+              {run.repoOwner && run.repoName
+                ? `${run.repoOwner}/${run.repoName}`
+                : run.source}
+            </p>
+          )}
         </MetadataCard>
         <MetadataCard label="Verdict">
           {run.verdict ? (
@@ -200,32 +237,31 @@ function ReviewMetadataCards({ run }: { run: Run }) {
             <p className="text-muted-foreground">{"\u2014"}</p>
           )}
         </MetadataCard>
-        <MetadataCard label="Review Scope">
-          <p className="font-mono text-sm">{run.reviewScope ?? "\u2014"}</p>
+        <MetadataCard label="Duration">
+          <p className="text-sm">{duration}</p>
         </MetadataCard>
-        <MetadataCard label="Created">
+        <MetadataCard label="Review">
           <p className="text-sm">
-            {new Date(run.createdAt).toLocaleString()}
+            {run.reviewSequence != null ? `#${run.reviewSequence}` : "\u2014"}
+            {run.reviewScope ? ` · ${run.reviewScope}` : ""}
           </p>
         </MetadataCard>
       </div>
-      {(run.severityCounts || (run.reviewFromSha && run.reviewToSha) || run.reviewSequence != null) && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          {run.severityCounts && (
-            <MetadataCard label="Severity">
-              <div className="flex gap-3 text-sm">
-                <span className="text-red-600 dark:text-red-400">
-                  P0: {run.severityCounts.P0}
-                </span>
-                <span className="text-amber-600 dark:text-amber-400">
-                  P1: {run.severityCounts.P1}
-                </span>
-                <span className="text-muted-foreground">
-                  P2: {run.severityCounts.P2}
-                </span>
-              </div>
-            </MetadataCard>
-          )}
+      {run.severityCounts && (
+        <div className="grid gap-4 sm:grid-cols-4">
+          <MetadataCard label="Severity">
+            <div className="flex gap-3 text-sm">
+              <span className="text-red-600 dark:text-red-400">
+                P0: {run.severityCounts.P0}
+              </span>
+              <span className="text-amber-600 dark:text-amber-400">
+                P1: {run.severityCounts.P1}
+              </span>
+              <span className="text-muted-foreground">
+                P2: {run.severityCounts.P2}
+              </span>
+            </div>
+          </MetadataCard>
           {run.reviewFromSha && run.reviewToSha && (
             <MetadataCard label="Commit Range">
               <p className="font-mono text-sm">
@@ -233,11 +269,11 @@ function ReviewMetadataCards({ run }: { run: Run }) {
               </p>
             </MetadataCard>
           )}
-          {run.reviewSequence != null && (
-            <MetadataCard label="Review">
-              <p className="text-sm">#{run.reviewSequence}</p>
-            </MetadataCard>
-          )}
+          <MetadataCard label="Created">
+            <p className="text-sm">
+              {new Date(run.createdAt).toLocaleString()}
+            </p>
+          </MetadataCard>
         </div>
       )}
     </div>
@@ -246,7 +282,7 @@ function ReviewMetadataCards({ run }: { run: Run }) {
 
 // ── Coding task metadata cards ──
 
-function CodingTaskMetadataCards({ run }: { run: Run }) {
+function CodingTaskMetadataCards({ run, pr, duration }: { run: Run; pr: string | null; duration: string }) {
   return (
     <div className="grid gap-4 sm:grid-cols-4">
       <MetadataCard label="Source">
@@ -256,23 +292,22 @@ function CodingTaskMetadataCards({ run }: { run: Run }) {
         <p className="font-mono text-sm">{run.branchName ?? "\u2014"}</p>
       </MetadataCard>
       <MetadataCard label="PR">
-        {run.prUrl ? (
+        {pr ? (
           <a
-            href={run.prUrl}
+            href={pr}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-primary hover:underline"
+            className="flex items-center gap-1.5 text-primary hover:underline"
           >
-            View PR
+            {run.prNumber ? `#${run.prNumber}` : "View PR"}
+            <ExternalLinkIcon className="h-3 w-3" />
           </a>
         ) : (
           <p className="text-muted-foreground">{"\u2014"}</p>
         )}
       </MetadataCard>
-      <MetadataCard label="Created">
-        <p className="text-sm">
-          {new Date(run.createdAt).toLocaleString()}
-        </p>
+      <MetadataCard label="Duration">
+        <p className="text-sm">{duration}</p>
       </MetadataCard>
     </div>
   );
@@ -299,44 +334,70 @@ function MetadataCard({
   );
 }
 
-// ── Session chat ──
+// ── Agent Trace (collapsed session preview) ──
 
 const TERMINAL_RUN_STATUSES = new Set(["completed", "succeeded", "failed", "cancelled"]);
 
-function RunSessionChat({
+function AgentTrace({
   sdkSessionId,
   runStatus,
   runStartedAt,
   runCompletedAt,
+  interactiveSessionId,
 }: {
   sdkSessionId: string;
   runStatus: string;
   runStartedAt: string | null;
   runCompletedAt: string | null;
+  interactiveSessionId: string | null;
 }) {
-  // Derive terminal from the RUN status, not the shared session status.
-  // Multiple runs share one interactive session — a completed run should
-  // show as terminal even if the session is still active for another run.
+  const [expanded, setExpanded] = useState(false);
   const terminal = TERMINAL_RUN_STATUSES.has(runStatus);
 
   const chat = useSessionChat({
     sdkSessionId,
     sessionStatus: terminal ? "completed" : "active",
     terminal,
-    // Scope events to this run's time window so continuous-review runs
-    // don't bleed into each other (many runs share one interactive session).
     filterStartMs: runStartedAt ? new Date(runStartedAt).getTime() : undefined,
     filterEndMs: runCompletedAt ? new Date(runCompletedAt).getTime() : undefined,
   });
 
+  const eventCount = chat.items.length;
+
   return (
-    <SessionChat
-      items={chat.items}
-      turnInProgress={chat.turnInProgress}
-      loading={chat.loading}
-      error={chat.error}
-      sessionStatus={terminal ? "completed" : "active"}
-    />
+    <details
+      open={expanded}
+      onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="flex cursor-pointer items-center gap-3 text-lg font-medium">
+        <span>Agent Trace</span>
+        {eventCount > 0 && (
+          <span className="text-sm font-normal text-muted-foreground">
+            ({eventCount} events)
+          </span>
+        )}
+        {interactiveSessionId && (
+          <Link
+            href={`/sessions/${interactiveSessionId}`}
+            className="ml-auto text-sm font-normal text-primary hover:underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            View session &rarr;
+          </Link>
+        )}
+      </summary>
+      {expanded && (
+        <div className="mt-3">
+          <SessionChat
+            items={chat.items}
+            turnInProgress={chat.turnInProgress}
+            loading={chat.loading}
+            error={chat.error}
+            sessionStatus={terminal ? "completed" : "active"}
+          />
+        </div>
+      )}
+    </details>
   );
 }
 
@@ -425,12 +486,10 @@ function JobLifecycle({ jobId }: { jobId: string }) {
   const sideEffects = job.sideEffectsCompleted ?? {};
 
   return (
-    <div>
-      <h2 className="mb-3 text-lg font-medium">Job Lifecycle</h2>
-
+    <div className="space-y-4">
       {/* Timeline */}
       {events.length > 0 && (
-        <div className="mb-4 space-y-1">
+        <div className="space-y-1">
           {events.map((event, i) => {
             const prev = i > 0 ? events[i - 1] : null;
             const delta = prev
@@ -463,7 +522,7 @@ function JobLifecycle({ jobId }: { jobId: string }) {
 
       {/* Attempts */}
       {attempts.length > 0 && (
-        <details className="mb-4">
+        <details>
           <summary className="cursor-pointer text-sm font-medium">
             Attempts ({attempts.length})
           </summary>
@@ -497,7 +556,7 @@ function JobLifecycle({ jobId }: { jobId: string }) {
 
       {/* Side Effects */}
       {Object.keys(sideEffects).length > 0 && (
-        <details className="mb-4">
+        <details>
           <summary className="cursor-pointer text-sm font-medium">
             Side Effects
           </summary>

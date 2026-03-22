@@ -25,6 +25,7 @@ export const GET = withEvlog(async (
       branchName: automationRuns.branchName,
       summary: automationRuns.summary,
       error: automationRuns.error,
+      triggerEvent: automationRuns.triggerEvent,
       startedAt: automationRuns.startedAt,
       completedAt: automationRuns.completedAt,
       createdAt: automationRuns.createdAt,
@@ -64,5 +65,11 @@ export const GET = withEvlog(async (
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ run: row });
+  // Extract PR number from trigger_event for display
+  const { triggerEvent, ...rest } = row;
+  const pr = triggerEvent?.pull_request as Record<string, unknown> | undefined;
+  const prNumber = pr?.number as number | undefined ?? null;
+  const prTitle = typeof pr?.title === "string" ? pr.title : null;
+
+  return NextResponse.json({ run: { ...rest, prNumber, prTitle } });
 });
