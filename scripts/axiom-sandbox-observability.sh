@@ -220,7 +220,7 @@ axiom_post "/dashboards" "$(cat <<ENDJSON
         "type": "TimeSeries",
         "name": "Sweeper Health",
         "query": {
-          "apl": "['vercel'] | where ['request.path'] == \"/api/cron/sweeper\" | extend p = parse_json(message) | where isnotnull(p.sweep) | project _time, timedOut = toint(p.sweep.timedOut), staleHealed = toint(p.sweep.staleSessionsHealed), retried = toint(p.sweep.retriedJobs), locksReleased = toint(p.sweep.staleLocksReleased) | summarize sum(timedOut), sum(staleHealed), sum(retried), sum(locksReleased) by bin_auto(_time)",
+          "apl": "['vercel'] | where ['request.path'] == \"/api/cron/sweeper\" | extend p = parse_json(message) | where isnotnull(p.sweep) | project _time, timedOut = toint(p.sweep.timedOut), staleKilled = toint(p.sweep.staleKilled), staleHealed = toint(p.sweep.staleSessionsHealed), retried = toint(p.sweep.retriedJobs), locksReleased = toint(p.sweep.staleLocksReleased) | summarize sum(timedOut), sum(staleKilled), sum(staleHealed), sum(retried), sum(locksReleased) by bin_auto(_time)",
           "queryOptions": { "displayNull": "zero", "timeSeriesVariant": "bars", "timeSeriesView": "charts" }
         }
       },
