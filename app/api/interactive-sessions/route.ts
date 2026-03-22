@@ -6,6 +6,12 @@ import { RequestError } from "@/lib/errors/request-error";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
 import { resolveSessionCredentials } from "@/lib/orchestration/prompt-dispatch";
+import type { AgentType } from "@/lib/sandbox-agent/types";
+import {
+  normalizeModel,
+  normalizeModelParams,
+  validateRuntimeConfig,
+} from "@/lib/sandbox-agent/runtime-config";
 import { withEvlog } from "@/lib/evlog";
 
 /**
@@ -40,6 +46,8 @@ export const POST = withEvlog(async (req: Request) => {
   const agentType = body.agentType;
   const repositoryId = body.repositoryId;
   const prompt = body.prompt;
+  const model = normalizeModel(body.model);
+  const modelParams = normalizeModelParams(body.modelParams);
   // Normalize empty strings to null to prevent invalid UUIDs leaking to DB
   const agentSecretId = body.agentSecretId || null;
   const keyPoolId = body.keyPoolId || null;
@@ -73,6 +81,18 @@ export const POST = withEvlog(async (req: Request) => {
     );
   }
 
+  const runtimeConfigError = validateRuntimeConfig({
+    agentType: (agentType ?? "claude") as AgentType,
+    model,
+    modelParams,
+  });
+  if (runtimeConfigError) {
+    return NextResponse.json(
+      { error: runtimeConfigError },
+      { status: 400 },
+    );
+  }
+
   // Validate credentials exist before creating the session
   try {
     await resolveSessionCredentials({
@@ -98,6 +118,8 @@ export const POST = withEvlog(async (req: Request) => {
     keyPoolId,
     repositoryId,
     prompt,
+    model: model || undefined,
+    modelParams,
   });
 
   return NextResponse.json({ session: interactiveSession });

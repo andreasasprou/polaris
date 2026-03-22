@@ -1,6 +1,6 @@
 export type AgentType = "claude" | "codex" | "opencode" | "amp";
 
-/** Typed model parameters stored as JSONB on automations. */
+/** Typed model parameters stored as JSONB on persisted runtime configs. */
 export type ModelParams = {
   effortLevel?: import("./agent-profiles").EffortLevel;
 };

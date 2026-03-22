@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { repositories } from "@/lib/integrations/schema";
 import { secrets } from "@/lib/secrets/schema";
 import { keyPools } from "@/lib/key-pools/schema";
+import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 /**
  * Interactive agent sessions — manual, multi-turn sessions started by users.
@@ -24,6 +25,8 @@ export const interactiveSessions = pgTable("interactive_sessions", {
   keyPoolId: uuid("key_pool_id").references(() => keyPools.id),
   repositoryId: uuid("repository_id").references(() => repositories.id),
   prompt: text("prompt").notNull(),
+  model: text("model"),
+  modelParams: jsonb("model_params").$type<ModelParams>().default({}).notNull(),
 
   // Runtime state
   status: text("status").default("creating").notNull(),
