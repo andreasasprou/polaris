@@ -1,4 +1,3 @@
-export function sendEmail(to: string, subject: string, apiKey: string): void {
-  // Bug: leaks API key
-  console.log(`Sending to ${to}: ${subject} with key=${apiKey}`);
+export function sendEmail(to: string, subject: string, _apiKey: string): void {
+  console.log(`Sending to ${to}: ${subject}`);
 }
