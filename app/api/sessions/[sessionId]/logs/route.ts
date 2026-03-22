@@ -5,6 +5,12 @@ import {
   getActiveRuntime,
   getLatestRuntime,
 } from "@/lib/sessions/actions";
+import {
+  decodeProcessLogEntries,
+  parseProcessLogStream,
+  resolveProcessLogStream,
+  type ProcessLogStream,
+} from "@/lib/sessions/process-logs";
 import { withEvlog } from "@/lib/evlog";
 
 type ProcessInfo = {
@@ -16,6 +22,7 @@ type ProcessInfo = {
   pid: number | null;
   exitCode: number | null;
   createdAtMs: number;
+  tty: boolean;
 };
 
 type LogEntry = {
@@ -34,7 +41,7 @@ type LogEntry = {
  *
  * Query params:
  *   - processId: fetch logs for a specific process (skips discovery)
- *   - stream: stdout | stderr | combined (default: combined)
+ *   - stream: stdout | stderr | combined | pty (default: auto-selects pty for tty processes, combined otherwise)
  *   - tail: number of log entries (default: 200)
  */
 export const GET = withEvlog(async (
@@ -62,15 +69,24 @@ export const GET = withEvlog(async (
 
   const url = new URL(req.url);
   const processId = url.searchParams.get("processId");
-  const stream = url.searchParams.get("stream") ?? "combined";
+  const requestedStream = parseProcessLogStream(url.searchParams.get("stream"));
   const tail = url.searchParams.get("tail") ?? "200";
   const proxyBase = runtime.sandboxBaseUrl;
 
   try {
     // If a specific processId is requested, fetch its logs directly
     if (processId) {
-      const logs = await fetchProcessLogs(proxyBase, processId, stream, tail);
-      return NextResponse.json({ processes: null, logs: { [processId]: logs } });
+      const process = await fetchProcess(proxyBase, processId);
+      const logs = await fetchProcessLogs(
+        proxyBase,
+        processId,
+        resolveProcessLogStream(requestedStream, process),
+        tail,
+      );
+      return NextResponse.json({
+        processes: process ? [process] : null,
+        logs: { [processId]: logs },
+      });
     }
 
     // Otherwise: discover processes, then fetch logs for each
@@ -99,7 +115,7 @@ export const GET = withEvlog(async (
           const logs = await fetchProcessLogs(
             proxyBase,
             proc.id,
-            stream,
+            resolveProcessLogStream(requestedStream, proc),
             tail,
           );
           if (logs.length > 0) {
@@ -126,10 +142,24 @@ export const GET = withEvlog(async (
   }
 });
 
+async function fetchProcess(
+  proxyBase: string,
+  processId: string,
+): Promise<ProcessInfo | null> {
+  const response = await fetch(
+    `${proxyBase}/processes/${encodeURIComponent(processId)}`,
+    { signal: AbortSignal.timeout(10_000) },
+  );
+
+  if (!response.ok) return null;
+
+  return (await response.json()) as ProcessInfo;
+}
+
 async function fetchProcessLogs(
   proxyBase: string,
   processId: string,
-  stream: string,
+  stream: ProcessLogStream,
   tail: string,
 ): Promise<LogEntry[]> {
   const logParams = new URLSearchParams({ stream, tail });
@@ -141,5 +171,5 @@ async function fetchProcessLogs(
   if (!response.ok) return [];
 
   const data = (await response.json()) as { entries?: LogEntry[] };
-  return data.entries ?? [];
+  return decodeProcessLogEntries(data.entries ?? []);
 }

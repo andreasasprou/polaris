@@ -18,38 +18,36 @@ The logs API at `app/api/sessions/[sessionId]/logs/route.ts` does:
 2. Calls `GET ${proxyBase}/processes` to discover running processes
 3. For each process, calls `GET ${proxyBase}/processes/:id/logs` to fetch log output
 
-**Hypothesis**: The REST proxy (`lib/sandbox-proxy/server.ts`, port 2469) may not forward `/processes` and `/processes/:id/logs` requests to the sandbox-agent server (port 2468). The proxy was built for the `/prompt`, `/health`, `/stop` request paths — process/log endpoints may not be proxied.
+The original proxy hypothesis was wrong. `lib/sandbox-proxy/server.ts` already forwards `/processes*` to the sandbox-agent server.
 
-**Alternative hypothesis**: The runtime record stores `sandboxBaseUrl` as the proxy URL, but the processes/logs API is on the **agent server URL** (`agentServerUrl`, port 2468). The logs endpoint should use `runtime.agentServerUrl` instead of `runtime.sandboxBaseUrl`.
+The actual bug is in the logs API:
+
+- Active agent processes are started in **TTY mode**
+- sandbox-agent returns **no entries** for TTY processes when queried with `stream=combined`
+- TTY logs must be fetched with `stream=pty`
+- Returned log payloads are **base64-encoded**, so the API must decode them before the UI renders them
 
 ## Files to Investigate
 
 | File | What to check |
 |------|--------------|
-| `lib/sandbox-proxy/server.ts` | Does the proxy forward `/processes` and `/processes/:id/logs`? Search for route handlers. |
-| `app/api/sessions/[sessionId]/logs/route.ts` | Line 67: uses `runtime.sandboxBaseUrl` — should it use `runtime.agentServerUrl` instead? |
+| `lib/sandbox-proxy/server.ts` | Confirms `/processes*` is already proxied. |
+| `app/api/sessions/[sessionId]/logs/route.ts` | Default stream selection and log decoding. |
 | `lib/sessions/schema.ts` | Runtime schema has both `sandboxBaseUrl` (proxy, 2469) and `agentServerUrl` (agent, 2468) |
 | `lib/sessions/actions.ts` | `getActiveRuntime` / `getLatestRuntime` — do they return `agentServerUrl`? |
 
 ## Likely Fix
 
-If the proxy doesn't forward process/log endpoints (most likely scenario):
+Use the existing proxy URL, but fix the API contract:
 
-**Option A** — Use `agentServerUrl` for logs:
-```ts
-// In logs/route.ts, line 67:
-const proxyBase = runtime.agentServerUrl ?? runtime.sandboxBaseUrl;
-```
-This bypasses the proxy and hits the sandbox-agent directly for process/log data. The agent server runs on port 2468 which is exposed as a sandbox port.
-
-**Option B** — Add proxy forwarding for `/processes*`:
-Add a catch-all route in the proxy that forwards to the agent server. More complex, keeps all traffic through one URL.
-
-Option A is simpler and more correct — the proxy shouldn't need to know about process/log APIs.
+1. When no `stream` query param is provided, auto-select:
+   - `pty` for `process.tty === true`
+   - `combined` otherwise
+2. Decode base64 log payloads before returning JSON to the UI
 
 ## Verification
 
 1. Start a local dev session or trigger a review
 2. While the sandbox is running, hit `GET /api/sessions/:id/logs`
-3. Verify processes are listed and logs are returned
+3. Verify TTY processes return readable log text while still running
 4. Check the run detail page — Sandbox Logs section should show output
