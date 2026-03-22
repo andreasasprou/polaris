@@ -270,10 +270,13 @@ jobs:
               prev.previousReviewBody || ''
             );
 
-            // Write previous state summary for the post-processing step
+            // Write previous state for the post-processing step.
+            // Include the full state so postResults can access inlineCommentMap.
+            const summary = summarizePreviousState(prev);
+            summary.state = prev.state;
             fs.writeFileSync(
               '/tmp/previous-state.json',
-              JSON.stringify(summarizePreviousState(prev))
+              JSON.stringify(summary)
             );
 
             core.setOutput('last_reviewed_sha', prev.lastReviewedSha || '');
