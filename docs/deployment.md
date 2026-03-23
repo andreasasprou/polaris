@@ -79,10 +79,9 @@ cp .env.example .env.local
 | `VERCEL_TEAM_ID` | Yes | Vercel dashboard |
 | `VERCEL_PROJECT_ID` | Yes | Vercel project settings |
 | `APP_BASE_URL` | Prod | Your deployment URL (e.g. `https://plrs.sh`) |
+| `SENTRY_MCP_CLIENT_ID` | No | Enables the built-in Sentry marketplace install — see [MCP Servers: Sentry OAuth setup](features/mcp-servers.md#operator-setup-sentry-oauth-client) |
 
 > **Agent API keys** (Anthropic, OpenAI) are configured per-organization in **Settings → Secrets**, not as platform env vars. Each org manages its own credentials.
-
-> **Slack and Sentry integrations** are planned for a future release with full multi-tenant support (per-org OAuth flows).
 
 ## 3. Install & Build
 

@@ -47,7 +47,7 @@ SENTRY_MCP_CLIENT_ID=<client_id from response>
 `NEXT_PUBLIC_SENTRY_MCP_CLIENT_ID` is also supported as a local-development fallback, but production deployments should prefer the server-side variable.
 
 **Notes:**
-- The `redirect_uris` must match your `NEXT_PUBLIC_APP_URL` (or `VERCEL_URL`) exactly — the callback path is always `/api/mcp-servers/oauth/callback`.
+- The `redirect_uris` must match whatever base URL `getAppBaseUrl()` resolves for your environment — the callback path is always `/api/mcp-servers/oauth/callback`. In production this is `NEXT_PUBLIC_APP_URL` (or `VERCEL_URL`); for self-hosted deployments it's `APP_BASE_URL`; in local dev it falls back to `http://localhost:<PORT>`.
 - Each environment (production, preview, local) needs its own registered client with the correct redirect URI.
 - The client is public (no `client_secret`) — PKCE (S256) secures the flow.
 
