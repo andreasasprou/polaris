@@ -6,6 +6,12 @@ import { RequestError } from "@/lib/errors/request-error";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
 import { resolveSessionCredentials } from "@/lib/orchestration/prompt-dispatch";
+import { isValidAgentType, type AgentType } from "@/lib/sandbox-agent/types";
+import {
+  normalizeModel,
+  normalizeModelParams,
+  validateRuntimeConfig,
+} from "@/lib/sandbox-agent/runtime-config";
 import { withEvlog } from "@/lib/evlog";
 
 /**
@@ -40,6 +46,8 @@ export const POST = withEvlog(async (req: Request) => {
   const agentType = body.agentType;
   const repositoryId = body.repositoryId;
   const prompt = body.prompt;
+  const model = normalizeModel(body.model);
+  const modelParams = normalizeModelParams(body.modelParams);
   // Normalize empty strings to null to prevent invalid UUIDs leaking to DB
   const agentSecretId = body.agentSecretId || null;
   const keyPoolId = body.keyPoolId || null;
@@ -73,11 +81,31 @@ export const POST = withEvlog(async (req: Request) => {
     );
   }
 
+  const resolvedAgentType = agentType ?? "claude";
+  if (!isValidAgentType(resolvedAgentType)) {
+    return NextResponse.json(
+      { error: `Invalid agent type "${resolvedAgentType}". Valid types: claude, codex, opencode, amp` },
+      { status: 400 },
+    );
+  }
+
+  const runtimeConfigError = validateRuntimeConfig({
+    agentType: resolvedAgentType,
+    model,
+    modelParams,
+  });
+  if (runtimeConfigError) {
+    return NextResponse.json(
+      { error: runtimeConfigError },
+      { status: 400 },
+    );
+  }
+
   // Validate credentials exist before creating the session
   try {
     await resolveSessionCredentials({
       organizationId: orgId,
-      agentType: agentType ?? "claude",
+      agentType: resolvedAgentType,
       agentSecretId,
       keyPoolId,
       repositoryId,
@@ -93,11 +121,13 @@ export const POST = withEvlog(async (req: Request) => {
   const interactiveSession = await createInteractiveSession({
     organizationId: orgId,
     createdBy: session.user.id,
-    agentType: agentType ?? "claude",
+    agentType: resolvedAgentType,
     agentSecretId,
     keyPoolId,
     repositoryId,
     prompt,
+    model: model || undefined,
+    modelParams,
   });
 
   return NextResponse.json({ session: interactiveSession });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useOrgPath } from "@/hooks/use-org-path";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getEnabledAgents } from "@/lib/sandbox-agent/agent-profiles";
+import {
+  type EffortLevel,
+  getEnabledAgents,
+  getModels,
+  getThoughtLevels,
+} from "@/lib/sandbox-agent/agent-profiles";
+import type { AgentType } from "@/lib/sandbox-agent/types";
 
 type Repo = {
   id: string;
@@ -45,6 +51,17 @@ export default function NewSessionPage() {
   const [repositoryId, setRepositoryId] = useState("__none__");
   const [agentSecretId, setAgentSecretId] = useState("__none__");
   const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState("");
+  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
+
+  const models = useMemo(
+    () => getModels(agentType as AgentType),
+    [agentType],
+  );
+  const thoughtLevels = useMemo(
+    () => getThoughtLevels(agentType as AgentType),
+    [agentType],
+  );
 
   useEffect(() => {
     fetch("/api/repositories")
@@ -57,6 +74,23 @@ export default function NewSessionPage() {
       .then((data) => setSecrets(data.secrets ?? []))
       .catch(() => {});
   }, []);
+
+  const handleAgentTypeChange = (newType: string) => {
+    setAgentType(newType);
+
+    const nextModels = getModels(newType as AgentType);
+    if (model && !nextModels.includes(model)) {
+      setModel("");
+    }
+
+    const nextThoughtLevels = getThoughtLevels(newType as AgentType);
+    if (
+      effortLevel &&
+      (!nextThoughtLevels || !nextThoughtLevels.includes(effortLevel))
+    ) {
+      setEffortLevel("");
+    }
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,15 +106,16 @@ export default function NewSessionPage() {
           repositoryId: repositoryId === "__none__" ? undefined : repositoryId,
           agentSecretId: agentSecretId === "__none__" ? undefined : agentSecretId,
           prompt,
+          model: model || undefined,
+          modelParams: effortLevel ? { effortLevel } : {},
         }),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error ?? "Failed to create session");
       }
-
-      const data = await res.json();
       const sessionId = data.session.id;
 
       // Dispatch the initial prompt before navigating — the session starts
@@ -119,7 +154,7 @@ export default function NewSessionPage() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label htmlFor="agent">Agent</Label>
-              <Select value={agentType} onValueChange={setAgentType}>
+              <Select value={agentType} onValueChange={handleAgentTypeChange}>
                 <SelectTrigger id="agent">
                   <SelectValue />
                 </SelectTrigger>
@@ -133,6 +168,62 @@ export default function NewSessionPage() {
                   </SelectGroup>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {models.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="model">Model</Label>
+                  <Select
+                    value={model || "__default__"}
+                    onValueChange={(value) =>
+                      setModel(value === "__default__" ? "" : value)
+                    }
+                  >
+                    <SelectTrigger id="model">
+                      <SelectValue placeholder="Default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="__default__">Default</SelectItem>
+                        {models.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {thoughtLevels && thoughtLevels.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="effortLevel">Reasoning effort</Label>
+                  <Select
+                    value={effortLevel || "__default__"}
+                    onValueChange={(value) =>
+                      setEffortLevel(
+                        value === "__default__" ? "" : (value as EffortLevel),
+                      )
+                    }
+                  >
+                    <SelectTrigger id="effortLevel">
+                      <SelectValue placeholder="Default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="__default__">Default</SelectItem>
+                        {thoughtLevels.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">

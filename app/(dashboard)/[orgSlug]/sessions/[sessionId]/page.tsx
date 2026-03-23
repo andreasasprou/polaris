@@ -18,10 +18,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DiffReviewPane } from "@/components/sessions/diff-review/diff-review-pane";
 import { useDiffReview } from "@/hooks/use-diff-review";
 import { Badge } from "@/components/ui/badge";
+import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 type InteractiveSession = {
   id: string;
   agentType: string;
+  model: string | null;
+  modelParams: ModelParams;
   status: string;
   sdkSessionId: string | null;
   sandboxBaseUrl: string | null;
@@ -389,6 +392,16 @@ export default function SessionDetailPage() {
         <span className="text-muted-foreground/50">/</span>
         <div className="flex items-center gap-2">
           <h1 className="text-sm font-semibold capitalize">{session.agentType}</h1>
+          {session.model && (
+            <Badge variant="secondary" className="h-5 text-[11px]">
+              {session.model}
+            </Badge>
+          )}
+          {session.modelParams.effortLevel && (
+            <Badge variant="secondary" className="h-5 text-[11px] capitalize">
+              {session.modelParams.effortLevel}
+            </Badge>
+          )}
           <StatusBadge status={session.status} />
         </div>
         <div className="ml-auto flex items-center gap-2">

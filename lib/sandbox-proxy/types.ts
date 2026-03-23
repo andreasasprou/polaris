@@ -15,8 +15,7 @@ export type PromptConfig = {
   agent: AgentType;
   mode?: string;
   model?: string;
-  effortLevel?: string;
-  modeIntent?: "autonomous" | "read-only" | "interactive";
+  thoughtLevel?: string;
   sdkSessionId?: string;
   nativeAgentSessionId?: string;
   branch?: string;

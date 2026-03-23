@@ -64,6 +64,13 @@
       "when": 1774415505874,
       "tag": "0008_light_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1774415505875,
+      "tag": "0009_interactive-session-runtime-config",
+      "breakpoints": true
     }
   ]
 }

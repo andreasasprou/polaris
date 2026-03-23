@@ -20,6 +20,8 @@ export async function createInteractiveSession(input: {
   keyPoolId?: string | null;
   repositoryId?: string;
   prompt: string;
+  model?: string | null;
+  modelParams?: import("@/lib/sandbox-agent/types").ModelParams;
   cwd?: string;
 }) {
   const [row] = await db

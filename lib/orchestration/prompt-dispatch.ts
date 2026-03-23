@@ -8,6 +8,7 @@
 import { getCallbackUrl } from "@/lib/config/urls";
 import { generateJobHmacKey } from "@/lib/jobs/callback-auth";
 import { RequestError } from "@/lib/errors/request-error";
+import type { AgentType } from "@/lib/sandbox-agent/types";
 import {
   createJob,
   createJobAttempt,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/sessions/actions";
 import { ensureSandboxReady } from "./sandbox-lifecycle";
 import { getNextEventIndex } from "@/lib/sandbox-agent/queries";
+import { resolveInteractiveRuntimeConfig } from "@/lib/sandbox-agent/runtime-config";
 import { useLogger } from "@/lib/evlog";
 import { createStepTimer } from "@/lib/metrics/step-timer";
 
@@ -95,6 +97,12 @@ export async function dispatchPromptToSession(input: {
   let claimCreated = false;
 
   try {
+    const resolvedRuntime = resolveInteractiveRuntimeConfig({
+      agentType: session.agentType as AgentType,
+      model: session.model,
+      modelParams: session.modelParams,
+    });
+
     // Resolve credentials
     const creds = await timer.time("resolveCredentials", () => resolveSessionCredentials(session));
 
@@ -200,7 +208,10 @@ export async function dispatchPromptToSession(input: {
         hmacKey,
         requestId,
         config: {
-          agent: session.agentType,
+          agent: resolvedRuntime.agent,
+          mode: resolvedRuntime.mode,
+          model: resolvedRuntime.model,
+          thoughtLevel: resolvedRuntime.thoughtLevel,
           cwd: "/vercel/sandbox",
           sdkSessionId: session.sdkSessionId ?? undefined,
           nativeAgentSessionId: session.nativeAgentSessionId ?? undefined,

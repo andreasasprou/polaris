@@ -3,6 +3,7 @@ import yaml from "js-yaml";
 import type { Octokit } from "octokit";
 import type { PRReviewConfig } from "./types";
 import type { AgentType, ModelParams } from "@/lib/sandbox-agent/types";
+import { validateRuntimeConfig } from "@/lib/sandbox-agent/runtime-config";
 import { fetchFileContent, isGitHub404 } from "./repo-content";
 
 // ── Zod schema (YAML keys normalized to camelCase at parse boundary) ──
@@ -272,22 +273,7 @@ export function mergeWithConnector(
  * Returns null if valid, or an error message string if not.
  */
 export async function validateRuntimeCoherence(resolved: ResolvedReviewConfig): Promise<string | null> {
-  const { agentType, model, modelParams } = resolved;
-  const { getModels, getThoughtLevels } = await import("@/lib/sandbox-agent/agent-profiles");
-
-  // Validate model against agent's allowed list
-  const allowedModels = getModels(agentType);
-  if (model && allowedModels.length > 0 && !allowedModels.includes(model)) {
-    return `Invalid model "${model}" for agent "${agentType}". Valid models: ${allowedModels.join(", ")}`;
-  }
-
-  // Validate effort against agent's allowed levels
-  const allowedEffort = getThoughtLevels(agentType);
-  if (modelParams.effortLevel && allowedEffort && !allowedEffort.includes(modelParams.effortLevel)) {
-    return `Invalid effort level "${modelParams.effortLevel}" for agent "${agentType}". Valid levels: ${allowedEffort.join(", ")}`;
-  }
-
-  return null;
+  return validateRuntimeConfig(resolved);
 }
 
 // ── Credential slug resolution ──

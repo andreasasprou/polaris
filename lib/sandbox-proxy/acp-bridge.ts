@@ -176,6 +176,7 @@ export class AcpBridge {
       agent: config.agent,
       model: config.model,
       mode: config.mode,
+      thoughtLevel: config.thoughtLevel,
       cwd,
       mcpServers: config.mcpServers,
     };
@@ -227,7 +228,14 @@ export class AcpBridge {
    * falls back to bare session + manual session/set_mode RPC.
    */
   private async createSessionWithFallback(
-    config: { agent: AgentType; model?: string; mode?: string; cwd: string; mcpServers?: PromptConfig["mcpServers"] },
+    config: {
+      agent: AgentType;
+      model?: string;
+      mode?: string;
+      thoughtLevel?: string;
+      cwd: string;
+      mcpServers?: PromptConfig["mcpServers"];
+    },
     resumeSdkSessionId?: string,
   ): Promise<AgentSession> {
     if (!this.sdk) throw new Error("Not connected");
@@ -236,6 +244,7 @@ export class AcpBridge {
       agent: config.agent,
       model: config.model,
       mode: config.mode,
+      ...(config.thoughtLevel ? { thoughtLevel: config.thoughtLevel } : {}),
       sessionInit: { cwd: config.cwd, mcpServers: toSdkMcpServers(config.mcpServers) },
     };
 
@@ -272,13 +281,33 @@ export class AcpBridge {
       // Best-effort mode set via direct RPC
       if (config.mode) {
         try {
-          await session.rawSend("session/set_mode", {
-            modeId: config.mode,
-          });
+          await session.setMode(config.mode);
         } catch (modeError) {
           proxyLog.warn("set_mode_failed", {
             mode: config.mode,
             error: modeError instanceof Error ? modeError.message : String(modeError),
+          });
+        }
+      }
+
+      if (config.model) {
+        try {
+          await session.setModel(config.model);
+        } catch (modelError) {
+          proxyLog.warn("set_model_failed", {
+            model: config.model,
+            error: modelError instanceof Error ? modelError.message : String(modelError),
+          });
+        }
+      }
+
+      if (config.thoughtLevel) {
+        try {
+          await session.setThoughtLevel(config.thoughtLevel);
+        } catch (thoughtLevelError) {
+          proxyLog.warn("set_thought_level_failed", {
+            thoughtLevel: config.thoughtLevel,
+            error: thoughtLevelError instanceof Error ? thoughtLevelError.message : String(thoughtLevelError),
           });
         }
       }
