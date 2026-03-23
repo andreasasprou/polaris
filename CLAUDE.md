@@ -54,6 +54,7 @@ These have caused real production bugs — avoid them:
 - **Never pass production credentials (DATABASE_URL, secrets) to sandbox VMs** — the sandbox runs untrusted agent code that can read process env vars. Use callback-based patterns to persist data platform-side instead. The proxy collects events in-memory and sends them in callbacks; the platform persists them.
 - **Never use `useEffect` directly** — use derived state, event handlers, `useQuery`, `useMountEffect`, or `key` resets. See [`docs/guides/no-use-effect.md`](docs/guides/no-use-effect.md).
 - **Never hand-write migration files** — always use `drizzle-kit generate` so the SQL, journal entry, and snapshot stay in sync. Hand-written SQL without a journal entry won't run on deploy (`scripts/vercel-build.mjs` calls `drizzle-kit migrate` which reads `meta/_journal.json`).
+- **After merging migrations from parallel branches, verify `when` timestamps in `_journal.json` are monotonically increasing** — `drizzle-kit migrate` uses timestamps (not `idx`) to determine applied status. If a later migration has an earlier timestamp than one already applied, it will be silently skipped in production.
 
 ## Testing & Verification
 
