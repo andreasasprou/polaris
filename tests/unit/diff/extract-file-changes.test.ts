@@ -157,6 +157,51 @@ describe("extractFileChanges", () => {
     expect(result.files[0].deletions).toBe(2);
   });
 
+  it("resolves file path from tool_call locations when diff part has no path", () => {
+    const items: ChatItem[] = [
+      makeToolCall(
+        [
+          {
+            type: "diff",
+            oldText: "const greeting = \"hello\";\n",
+            newText: "const greeting = \"hello world\";\n",
+          },
+        ],
+        { locations: [{ path: "src/app.ts" }] },
+      ),
+    ];
+
+    const result = extractFileChanges(items);
+    expect(result.totalFiles).toBe(1);
+    expect(result.files[0].path).toBe("src/app.ts");
+    expect(result.files[0].additions).toBeGreaterThan(0);
+  });
+
+  it("resolves separate files from locations across multiple tool_calls", () => {
+    const items: ChatItem[] = [
+      makeToolCall(
+        [{ type: "diff", oldText: "a\n", newText: "b\n" }],
+        { toolCallId: "tc-1", locations: [{ path: "src/app.ts" }] },
+      ),
+      makeToolCall(
+        [{ type: "diff", oldText: "", newText: "export function add() {}\n" }],
+        { toolCallId: "tc-2", locations: [{ path: "src/utils.ts" }] },
+      ),
+      makeToolCall(
+        [{ type: "diff", oldText: "port = 3000\n", newText: "port = 8080\n" }],
+        { toolCallId: "tc-3", locations: [{ path: "src/config.ts" }] },
+      ),
+    ];
+
+    const result = extractFileChanges(items);
+    expect(result.totalFiles).toBe(3);
+    expect(result.files.map((f) => f.path)).toEqual([
+      "src/app.ts",
+      "src/utils.ts",
+      "src/config.ts",
+    ]);
+  });
+
   it("aggregates multiple files correctly", () => {
     const diff1 = "@@ -1,1 +1,2 @@\n context\n+added";
     const diff2 = "@@ -1,2 +1,1 @@\n context\n-removed";

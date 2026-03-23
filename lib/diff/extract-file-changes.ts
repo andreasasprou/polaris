@@ -142,6 +142,10 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
     const content = item.content;
     if (!content || content.length === 0) continue;
 
+    // Resolve the file path from the tool_call's locations as a fallback
+    // when content parts don't carry their own path.
+    const locationPath = item.locations?.[0]?.path ?? null;
+
     // Track the path from a file_ref for associating with diff parts
     let lastFileRefPath: string | null = null;
 
@@ -160,7 +164,7 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
       }
 
       if (isDiffPart(part)) {
-        const filePath = part.path ?? lastFileRefPath ?? "unknown";
+        const filePath = part.path ?? lastFileRefPath ?? locationPath ?? "unknown";
         const fullPatch = createTwoFilesPatch(
           filePath,
           filePath,
