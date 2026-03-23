@@ -394,6 +394,8 @@ export async function dispatchPrReview(
         keyPoolId: effectivePoolId ?? undefined,
         repositoryId: automation.repositoryId!,
         prompt: reviewPrompt,
+        model: effectiveModel ?? undefined,
+        modelParams: effectiveEffort ? { effortLevel: effectiveEffort } : {},
       });
       targetSessionId = newSession.id;
 

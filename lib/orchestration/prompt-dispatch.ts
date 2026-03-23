@@ -90,12 +90,6 @@ export async function dispatchPromptToSession(input: {
     );
   }
 
-  const resolvedRuntime = resolveInteractiveRuntimeConfig({
-    agentType: session.agentType as AgentType,
-    model: session.model,
-    modelParams: session.modelParams,
-  });
-
   // Everything after CAS is wrapped in try/catch with rollback.
   // If any step fails, we roll back session status + clean up the claim/job
   // so the session doesn't get stuck in 'active' forever.
@@ -103,6 +97,12 @@ export async function dispatchPromptToSession(input: {
   let claimCreated = false;
 
   try {
+    const resolvedRuntime = resolveInteractiveRuntimeConfig({
+      agentType: session.agentType as AgentType,
+      model: session.model,
+      modelParams: session.modelParams,
+    });
+
     // Resolve credentials
     const creds = await timer.time("resolveCredentials", () => resolveSessionCredentials(session));
 

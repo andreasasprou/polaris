@@ -6,7 +6,7 @@ import { RequestError } from "@/lib/errors/request-error";
 import { interactiveSessions } from "@/lib/sessions/schema";
 import { createInteractiveSession } from "@/lib/sessions/actions";
 import { resolveSessionCredentials } from "@/lib/orchestration/prompt-dispatch";
-import type { AgentType } from "@/lib/sandbox-agent/types";
+import { isValidAgentType, type AgentType } from "@/lib/sandbox-agent/types";
 import {
   normalizeModel,
   normalizeModelParams,
@@ -81,8 +81,16 @@ export const POST = withEvlog(async (req: Request) => {
     );
   }
 
+  const resolvedAgentType = agentType ?? "claude";
+  if (!isValidAgentType(resolvedAgentType)) {
+    return NextResponse.json(
+      { error: `Invalid agent type "${resolvedAgentType}". Valid types: claude, codex, opencode, amp` },
+      { status: 400 },
+    );
+  }
+
   const runtimeConfigError = validateRuntimeConfig({
-    agentType: (agentType ?? "claude") as AgentType,
+    agentType: resolvedAgentType,
     model,
     modelParams,
   });
@@ -97,7 +105,7 @@ export const POST = withEvlog(async (req: Request) => {
   try {
     await resolveSessionCredentials({
       organizationId: orgId,
-      agentType: agentType ?? "claude",
+      agentType: resolvedAgentType,
       agentSecretId,
       keyPoolId,
       repositoryId,
@@ -113,7 +121,7 @@ export const POST = withEvlog(async (req: Request) => {
   const interactiveSession = await createInteractiveSession({
     organizationId: orgId,
     createdBy: session.user.id,
-    agentType: agentType ?? "claude",
+    agentType: resolvedAgentType,
     agentSecretId,
     keyPoolId,
     repositoryId,
