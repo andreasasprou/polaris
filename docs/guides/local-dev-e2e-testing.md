@@ -288,7 +288,68 @@ agent-browser --session $SESSION screenshot screenshots/review-tab.png
 agent-browser --session $SESSION close
 ```
 
-## 9. Webhook Forwarding (Optional)
+## 9. CI / Agent Testing with `emulate` (No GitHub App Needed)
+
+For automated tests in CI or agent-driven E2E flows where you can't
+install a real GitHub App, use the `emulate` package to run a local
+GitHub API emulator.
+
+```bash
+# Start the GitHub emulator
+npx emulate --service github --port 4001
+```
+
+Or in vitest:
+
+```typescript
+import { createEmulator } from 'emulate'
+
+let github: Awaited<ReturnType<typeof createEmulator>>
+
+beforeAll(async () => {
+  github = await createEmulator({
+    service: 'github',
+    port: 4001,
+    seed: {
+      users: [{ login: 'testbot', name: 'Test Bot', email: 'bot@test.dev' }],
+      repos: [{ owner: 'testbot', name: 'fixture', language: 'TypeScript', auto_init: true }],
+      oauth_apps: [{
+        client_id: 'test-client-id',
+        client_secret: 'test-client-secret',
+        name: 'Polaris Test',
+        redirect_uris: ['https://polaris.localhost:1355/api/auth/callback/github'],
+      }],
+    },
+  })
+  process.env.GITHUB_EMULATOR_URL = github.url
+})
+
+afterAll(() => github.close())
+```
+
+Point Polaris at the emulator via env vars:
+
+```bash
+GITHUB_EMULATOR_URL=http://localhost:4001
+GITHUB_CLIENT_ID=test-client-id
+GITHUB_CLIENT_SECRET=test-client-secret
+```
+
+The emulator provides full-fidelity GitHub API responses (repos, PRs,
+webhooks, OAuth) without needing a real GitHub App or private key.
+See `.agents/skills/emulate/SKILL.md` for the full API reference.
+
+### When to use which approach
+
+| Scenario | Approach |
+|----------|----------|
+| Local dev (human) | Test GitHub App (Section 4) |
+| Agent E2E via `agent-browser` | Either — emulator is faster |
+| CI pipeline | Emulator (no secrets needed) |
+| Testing webhook flows | Emulator + seed webhooks |
+| Testing real GitHub integration | Test GitHub App |
+
+## 11. Webhook Forwarding (Optional)
 
 For testing GitHub webhooks locally:
 
@@ -303,7 +364,7 @@ ngrok http 3001
 # Update the GitHub App webhook URL to the ngrok URL
 ```
 
-## 10. Troubleshooting
+## 12. Troubleshooting
 
 ### "source column does not exist"
 Run migrations: `pnpm drizzle-kit push`
