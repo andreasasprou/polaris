@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
+import { useTheme } from "next-themes";
 import { ChevronRightIcon } from "lucide-react";
 import {
   Collapsible,
@@ -23,21 +25,29 @@ const statusConfig: Record<string, { icon: string; className: string }> = {
 
 // ── Content part renderers ──
 
+const LazyDiffViewer = dynamic(() => import("react-diff-viewer-continued"), {
+  ssr: false,
+  loading: () => <div className="py-2 text-xs text-muted-foreground">Loading diff...</div>,
+});
+
 function DiffContent({ oldText, newText }: { oldText: string; newText: string }) {
+  const { resolvedTheme } = useTheme();
   return (
-    <div className="max-h-60 overflow-auto font-mono text-xs">
-      {oldText.split("\n").map((line, i) => (
-        <div key={`old-${i}`} className="bg-red-500/5 text-red-600 dark:text-red-400">
-          <span className="mr-2 select-none text-red-400/60">-</span>
-          {line}
-        </div>
-      ))}
-      {newText.split("\n").map((line, i) => (
-        <div key={`new-${i}`} className="bg-emerald-500/5 text-emerald-600 dark:text-emerald-400">
-          <span className="mr-2 select-none text-emerald-400/60">+</span>
-          {line}
-        </div>
-      ))}
+    <div className="max-h-80 overflow-auto">
+      <LazyDiffViewer
+        oldValue={oldText}
+        newValue={newText}
+        splitView={false}
+        useDarkTheme={resolvedTheme === "dark"}
+        hideLineNumbers={false}
+        styles={{
+          contentText: {
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            fontSize: "12px",
+            lineHeight: "1.5",
+          },
+        }}
+      />
     </div>
   );
 }
@@ -68,23 +78,60 @@ function FileRefContent({ path, action, diff }: { path: string; action?: string;
         )}
       </button>
       {showDiff && diff && (
-        <div className="mt-1 max-h-60 overflow-auto rounded-md border border-border bg-muted/20 p-2 font-mono text-xs">
-          {diff.split("\n").map((line, i) => {
-            const color = line.startsWith("+")
-              ? "text-emerald-600 bg-emerald-500/5 dark:text-emerald-400"
-              : line.startsWith("-")
-                ? "text-red-600 bg-red-500/5 dark:text-red-400"
-                : line.startsWith("@@")
-                  ? "text-blue-500"
-                  : "text-muted-foreground";
-            return (
-              <div key={i} className={color}>
-                {line}
-              </div>
-            );
-          })}
-        </div>
+        <InlineUnifiedDiff diff={diff} />
       )}
+    </div>
+  );
+}
+
+function InlineUnifiedDiff({ diff }: { diff: string }) {
+  const { resolvedTheme } = useTheme();
+
+  // Split unified diff into old/new content.
+  // Only skip ---/+++ as file headers before the first hunk; inside hunks
+  // they are real content lines (e.g. deleting "-- comment").
+  const lines = diff.split("\n");
+  const oldLines: string[] = [];
+  const newLines: string[] = [];
+  let inHunk = false;
+
+  for (const line of lines) {
+    if (line.startsWith("@@ ")) { inHunk = true; continue; }
+    if (
+      line.startsWith("diff --git") ||
+      line.startsWith("index ") ||
+      line.startsWith("\\") ||
+      (!inHunk && (line.startsWith("--- ") || line.startsWith("+++ ")))
+    ) {
+      continue;
+    }
+    if (line.startsWith("+")) {
+      newLines.push(line.slice(1));
+    } else if (line.startsWith("-")) {
+      oldLines.push(line.slice(1));
+    } else {
+      const content = line.startsWith(" ") ? line.slice(1) : line;
+      oldLines.push(content);
+      newLines.push(content);
+    }
+  }
+
+  return (
+    <div className="mt-1 max-h-80 overflow-auto rounded-md border border-border">
+      <LazyDiffViewer
+        oldValue={oldLines.join("\n")}
+        newValue={newLines.join("\n")}
+        splitView={false}
+        useDarkTheme={resolvedTheme === "dark"}
+        hideLineNumbers={false}
+        styles={{
+          contentText: {
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            fontSize: "12px",
+            lineHeight: "1.5",
+          },
+        }}
+      />
     </div>
   );
 }

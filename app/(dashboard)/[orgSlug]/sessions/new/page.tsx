@@ -18,10 +18,9 @@ import {
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  type EffortLevel,
+  getCompatibleProviders,
   getEnabledAgents,
-  getModels,
-  getThoughtLevels,
+  type ProviderType,
 } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
 
@@ -51,17 +50,23 @@ export default function NewSessionPage() {
   const [repositoryId, setRepositoryId] = useState("__none__");
   const [agentSecretId, setAgentSecretId] = useState("__none__");
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState("");
-  const [effortLevel, setEffortLevel] = useState<EffortLevel | "">("");
-
-  const models = useMemo(
-    () => getModels(agentType as AgentType),
+  const compatibleProviders = useMemo(
+    () => getCompatibleProviders(agentType as AgentType),
     [agentType],
   );
-  const thoughtLevels = useMemo(
-    () => getThoughtLevels(agentType as AgentType),
-    [agentType],
+  const filteredSecrets = useMemo(
+    () =>
+      secrets.filter((secret) =>
+        compatibleProviders.includes(secret.provider as ProviderType),
+      ),
+    [compatibleProviders, secrets],
   );
+  const validatedAgentSecretId = useMemo(() => {
+    if (agentSecretId === "__none__") return "__none__";
+    return filteredSecrets.some((secret) => secret.id === agentSecretId)
+      ? agentSecretId
+      : "__none__";
+  }, [agentSecretId, filteredSecrets]);
 
   useEffect(() => {
     fetch("/api/repositories")
@@ -75,23 +80,6 @@ export default function NewSessionPage() {
       .catch(() => {});
   }, []);
 
-  const handleAgentTypeChange = (newType: string) => {
-    setAgentType(newType);
-
-    const nextModels = getModels(newType as AgentType);
-    if (model && !nextModels.includes(model)) {
-      setModel("");
-    }
-
-    const nextThoughtLevels = getThoughtLevels(newType as AgentType);
-    if (
-      effortLevel &&
-      (!nextThoughtLevels || !nextThoughtLevels.includes(effortLevel))
-    ) {
-      setEffortLevel("");
-    }
-  };
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -104,18 +92,20 @@ export default function NewSessionPage() {
         body: JSON.stringify({
           agentType,
           repositoryId: repositoryId === "__none__" ? undefined : repositoryId,
-          agentSecretId: agentSecretId === "__none__" ? undefined : agentSecretId,
+          agentSecretId:
+            validatedAgentSecretId === "__none__"
+              ? undefined
+              : validatedAgentSecretId,
           prompt,
-          model: model || undefined,
-          modelParams: effortLevel ? { effortLevel } : {},
         }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
+        const data = await res.json();
         throw new Error(data.error ?? "Failed to create session");
       }
+
+      const data = await res.json();
       const sessionId = data.session.id;
 
       // Dispatch the initial prompt before navigating — the session starts
@@ -154,7 +144,24 @@ export default function NewSessionPage() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label htmlFor="agent">Agent</Label>
-              <Select value={agentType} onValueChange={handleAgentTypeChange}>
+              <Select
+                value={agentType}
+                onValueChange={(nextAgentType) => {
+                  setAgentType(nextAgentType);
+                  const nextProviders = getCompatibleProviders(
+                    nextAgentType as AgentType,
+                  );
+                  const selectedSecret = secrets.find(
+                    (secret) => secret.id === validatedAgentSecretId,
+                  );
+                  if (
+                    selectedSecret &&
+                    !nextProviders.includes(selectedSecret.provider as ProviderType)
+                  ) {
+                    setAgentSecretId("__none__");
+                  }
+                }}
+              >
                 <SelectTrigger id="agent">
                   <SelectValue />
                 </SelectTrigger>
@@ -168,62 +175,6 @@ export default function NewSessionPage() {
                   </SelectGroup>
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              {models.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="model">Model</Label>
-                  <Select
-                    value={model || "__default__"}
-                    onValueChange={(value) =>
-                      setModel(value === "__default__" ? "" : value)
-                    }
-                  >
-                    <SelectTrigger id="model">
-                      <SelectValue placeholder="Default" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="__default__">Default</SelectItem>
-                        {models.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              {thoughtLevels && thoughtLevels.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <Label htmlFor="effortLevel">Reasoning effort</Label>
-                  <Select
-                    value={effortLevel || "__default__"}
-                    onValueChange={(value) =>
-                      setEffortLevel(
-                        value === "__default__" ? "" : (value as EffortLevel),
-                      )
-                    }
-                  >
-                    <SelectTrigger id="effortLevel">
-                      <SelectValue placeholder="Default" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="__default__">Default</SelectItem>
-                        {thoughtLevels.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -257,14 +208,17 @@ export default function NewSessionPage() {
                   (optional — falls back to env)
                 </span>
               </Label>
-              <Select value={agentSecretId} onValueChange={setAgentSecretId}>
+              <Select
+                value={validatedAgentSecretId}
+                onValueChange={setAgentSecretId}
+              >
                 <SelectTrigger id="apiKey">
                   <SelectValue placeholder="Use environment default" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
                     <SelectItem value="__none__">Use environment default</SelectItem>
-                    {secrets.map((s) => (
+                    {filteredSecrets.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.label} ({s.provider})
                       </SelectItem>
@@ -284,6 +238,11 @@ export default function NewSessionPage() {
                 placeholder="What do you want the agent to do?"
                 required
               />
+              {!prompt.trim() && (
+                <p className="text-xs text-muted-foreground">
+                  Enter a prompt to start a session.
+                </p>
+              )}
             </div>
 
             {error && (

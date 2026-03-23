@@ -6,11 +6,25 @@ export type DiffLine = {
   newLineNo?: number;
 };
 
+/** A single hunk of changes, preserving original line context. */
+export type DiffHunk = {
+  /** The raw unified diff string for this hunk (with @@ header). */
+  diff: string;
+  /** Old content (deletions + context lines). */
+  oldValue: string;
+  /** New content (additions + context lines). */
+  newValue: string;
+  additions: number;
+  deletions: number;
+};
+
 /** A file change extracted from tool call content parts. */
 export type FileChange = {
   path: string;
   action: string;
-  diff: string;
+  /** All hunks for this file, in session order. */
+  hunks: DiffHunk[];
+  /** Aggregated parsed lines (for line counting / truncation check). */
   parsedLines: DiffLine[];
   additions: number;
   deletions: number;

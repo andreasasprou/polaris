@@ -5,6 +5,7 @@ import {
 } from "@/lib/integrations/queries";
 import { credentialRefFromRow } from "@/lib/key-pools/types";
 import { allocateKeyFromPool, resolveSecretKey } from "@/lib/key-pools/resolve";
+import { validateCredentialRefForAgent } from "@/lib/key-pools/validate";
 import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export type ResolvedCredentials = {
@@ -33,7 +34,9 @@ export type ResolvedCredentials = {
  * Resolve all credentials and config needed to execute an automation run.
  *
  * This is a dispatch-level function — for pools, it allocates a key
- * via LRU and advances lastSelectedAt.
+ * via LRU and advances lastSelectedAt. It also re-validates provider
+ * compatibility against the persisted automation row so legacy or
+ * externally-written mismatches fail before sandbox setup.
  */
 export async function resolveCredentials(
   automationId: string,
@@ -49,6 +52,8 @@ export async function resolveCredentials(
     keyPoolId: automation.keyPoolId,
   });
   if (!credRef) return null;
+
+  await validateCredentialRefForAgent(credRef, orgId, automation.agentType);
 
   let agentApiKey: string;
   let provider: string;

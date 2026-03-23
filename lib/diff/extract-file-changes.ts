@@ -91,20 +91,48 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
     const additions = parsedLines.filter((l) => l.type === "addition").length;
     const deletions = parsedLines.filter((l) => l.type === "deletion").length;
 
+    // Build old/new value pair from the unified diff for this hunk.
+    // Only skip ---/+++ as file headers BEFORE the first hunk header;
+    // inside hunks they are real content lines (e.g. deleting "-- comment").
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
+    let inHunk = false;
+    for (const line of diff.split("\n")) {
+      if (line.startsWith("@@ ")) { inHunk = true; continue; }
+      if (
+        line.startsWith("diff --git") || line.startsWith("index ") ||
+        line.startsWith("\\") ||
+        (!inHunk && (line.startsWith("--- ") || line.startsWith("+++ ")))
+      ) continue;
+      if (line.startsWith("+")) { newLines.push(line.slice(1)); }
+      else if (line.startsWith("-")) { oldLines.push(line.slice(1)); }
+      else {
+        const c = line.startsWith(" ") ? line.slice(1) : line;
+        oldLines.push(c);
+        newLines.push(c);
+      }
+    }
+
+    const hunk: import("./types").DiffHunk = {
+      diff,
+      oldValue: oldLines.join("\n"),
+      newValue: newLines.join("\n"),
+      additions,
+      deletions,
+    };
+
     const existing = changesByPath.get(path);
     if (existing) {
-      // Accumulate: append hunks, sum counts
-      existing.diff += "\n" + diff;
+      existing.hunks.push(hunk);
       existing.parsedLines.push(...parsedLines);
       existing.additions += additions;
       existing.deletions += deletions;
-      // Keep the latest action (e.g., "write" supersedes "patch")
       existing.action = action;
     } else {
       changesByPath.set(path, {
         path,
         action,
-        diff,
+        hunks: [hunk],
         parsedLines,
         additions,
         deletions,
@@ -117,6 +145,10 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
 
     const content = item.content;
     if (!content || content.length === 0) continue;
+
+    // Resolve the file path from the tool_call's locations as a fallback
+    // when content parts don't carry their own path.
+    const locationPath = item.locations?.[0]?.path ?? null;
 
     // Track the path from a file_ref for associating with diff parts
     let lastFileRefPath: string | null = null;
@@ -136,7 +168,7 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
       }
 
       if (isDiffPart(part)) {
-        const filePath = part.path ?? lastFileRefPath ?? "unknown";
+        const filePath = part.path ?? lastFileRefPath ?? locationPath ?? "unknown";
         const fullPatch = createTwoFilesPatch(
           filePath,
           filePath,

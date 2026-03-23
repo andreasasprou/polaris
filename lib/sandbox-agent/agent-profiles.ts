@@ -298,3 +298,8 @@ export function getEnabledAgents(): { value: AgentType; label: string }[] {
 export function getEnabledAgentTypes(): AgentType[] {
   return getEnabledAgents().map((a) => a.value);
 }
+
+/** All defined agent type keys, including disabled legacy profiles. */
+export function getAllAgentTypes(): AgentType[] {
+  return Object.keys(PROFILES) as AgentType[];
+}

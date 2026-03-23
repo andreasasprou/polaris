@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useTheme } from "next-themes";
 import { ChevronRightIcon } from "lucide-react";
 import {
@@ -9,71 +10,23 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { DiffView, DiffModeEnum } from "@git-diff-view/react";
-import "@git-diff-view/react/styles/diff-view.css";
+import { DiffMethod } from "react-diff-viewer-continued";
 import type { FileChange } from "@/lib/diff/types";
 
-const MAX_DISPLAY_LINES = 5000;
+const ReactDiffViewer = dynamic(
+  () => import("react-diff-viewer-continued"),
+  { ssr: false, loading: () => <div className="py-2 text-xs text-muted-foreground">Loading diff...</div> },
+);
 
-/** Map common file extensions to highlight.js language identifiers. */
-function langFromPath(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    mjs: "javascript",
-    cjs: "javascript",
-    json: "json",
-    md: "markdown",
-    mdx: "markdown",
-    css: "css",
-    scss: "scss",
-    html: "html",
-    yaml: "yaml",
-    yml: "yaml",
-    py: "python",
-    rs: "rust",
-    go: "go",
-    rb: "ruby",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    sql: "sql",
-    graphql: "graphql",
-    gql: "graphql",
-    toml: "toml",
-    xml: "xml",
-    svg: "xml",
-    java: "java",
-    kt: "kotlin",
-    swift: "swift",
-    c: "c",
-    cpp: "cpp",
-    h: "c",
-    hpp: "cpp",
-  };
-  return map[ext] ?? "";
-}
+const MAX_DISPLAY_LINES = 5000;
 
 export function DiffFileSection({ file }: { file: FileChange }) {
   const [open, setOpen] = useState(true);
   const { resolvedTheme } = useTheme();
 
   const fileName = file.path.split("/").pop() ?? file.path;
-  const lang = langFromPath(file.path);
-  const diffTheme = resolvedTheme === "dark" ? "dark" : "light";
   const tooLarge = file.parsedLines.length > MAX_DISPLAY_LINES;
-
-  const diffData = useMemo(
-    () => ({
-      oldFile: { fileName: file.path, fileLang: lang, content: "" },
-      newFile: { fileName: file.path, fileLang: lang, content: "" },
-      hunks: [file.diff],
-    }),
-    [file.path, file.diff, lang],
-  );
+  const isDark = resolvedTheme === "dark";
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -110,20 +63,32 @@ export function DiffFileSection({ file }: { file: FileChange }) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="mt-1 overflow-hidden rounded-md border border-border">
+        <div className="mt-1 flex flex-col gap-1">
           {tooLarge ? (
-            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground rounded-md border border-border">
               Diff too large to display ({file.parsedLines.length.toLocaleString()} lines)
             </div>
           ) : (
-            <DiffView
-              data={diffData}
-              diffViewMode={DiffModeEnum.Unified}
-              diffViewTheme={diffTheme}
-              diffViewHighlight
-              diffViewWrap
-              diffViewFontSize={12}
-            />
+            file.hunks.map((hunk, i) => (
+              <div key={i} className="overflow-hidden rounded-md border border-border">
+                <ReactDiffViewer
+                  oldValue={hunk.oldValue}
+                  newValue={hunk.newValue}
+                  splitView={false}
+                  useDarkTheme={isDark}
+                  compareMethod={DiffMethod.LINES}
+                  hideLineNumbers={false}
+                  extraLinesSurroundingDiff={10000}
+                  styles={{
+                    contentText: {
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      fontSize: "12px",
+                      lineHeight: "1.5",
+                    },
+                  }}
+                />
+              </div>
+            ))
           )}
         </div>
       </CollapsibleContent>

@@ -61,14 +61,17 @@ export const PUT = withEvlog(async (
   else if (hasSecretInBody && agentSecretId) keyPoolId = null;
 
   try {
+    const agentType = body.agentType ?? existing.agentType ?? "claude";
     const validated = await validateAutomationRelationsForOrg({
       organizationId: orgId,
+      agentType,
       repositoryId,
       agentSecretId,
       keyPoolId,
     });
     const automation = await updateAutomation(id, {
       ...body,
+      agentType,
       repositoryId: validated.repositoryId,
       agentSecretId: validated.agentSecretId,
       keyPoolId: validated.keyPoolId,
