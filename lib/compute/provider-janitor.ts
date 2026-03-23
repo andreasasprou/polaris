@@ -73,7 +73,12 @@ export async function reconcileProvider(): Promise<JanitorResult> {
 
     // Unknown + past grace → stop it
     try {
-      const sandbox = await Sandbox.get({ sandboxId: vSandbox.id, token, teamId });
+      const sandbox = await Sandbox.get({
+        sandboxId: vSandbox.id,
+        projectId,
+        token,
+        teamId,
+      });
       await sandbox.stop();
       result.unknownStopped++;
       log.set({

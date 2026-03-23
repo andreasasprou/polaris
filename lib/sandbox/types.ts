@@ -15,6 +15,10 @@ export type SandboxConfig = {
   timeoutMs?: number;
   env?: Record<string, string>;
   ports?: number[];
+  observability?: {
+    axiomIngestUrl?: string;
+    axiomToken?: string;
+  };
 };
 
 export type CommandResult = {
@@ -33,4 +37,15 @@ export type GitCommitResult = {
   commitSha: string;
   pushed: boolean;
   pushStderr?: string;
+};
+
+export type SandboxUsageSummary = {
+  sandboxId: string;
+  status: string;
+  createdAt?: string;
+  stoppedAt: string;
+  timeoutMs?: number;
+  activeCpuUsageMs?: number;
+  networkUsage?: { ingress: number; egress: number };
+  ageMs?: number;
 };

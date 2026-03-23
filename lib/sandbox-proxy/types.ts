@@ -82,6 +82,7 @@ export type CallbackType =
   | "prompt_accepted"
   | "prompt_complete"
   | "prompt_failed"
+  | "proxy_diagnostics"
   | "permission_requested"
   | "question_requested"
   | "permission_resumed"
@@ -117,6 +118,99 @@ export type OutboxEntry = {
 
 export type ProxyState = "idle" | "running" | "stopping";
 
+export type ProxyLogLevel = "info" | "warn" | "error";
+
+export type ProxyLogEntry = {
+  ts: string;
+  level: ProxyLogLevel;
+  component: "proxy";
+  jobId?: string;
+  attemptId?: string;
+  epoch?: number;
+  msg: string;
+} & Record<string, unknown>;
+
+export type AgentHealthStatus =
+  | "idle"
+  | "starting"
+  | "healthy"
+  | "degraded"
+  | "unreachable";
+
+export type AgentHealthSnapshot = {
+  status: AgentHealthStatus;
+  totalChecks: number;
+  failedChecks: number;
+  consecutiveFailures: number;
+  lastCheckAt?: string;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  lastLatencyMs?: number;
+  lastError?: string;
+  abortReason?: string;
+};
+
+export type ProxyActivitySnapshot = {
+  eventCount: number;
+  lastEventAt?: string;
+  lastCallbackAttemptAt?: string;
+  lastCallbackDeliveredAt?: string;
+  lastCallbackType?: CallbackType;
+  lastCallbackAttemptSucceeded?: boolean;
+};
+
+export type ProxyOutboxSnapshot = {
+  pendingCount: number;
+  failedCount: number;
+  deliveredCount: number;
+  pendingNonDiagnosticCount: number;
+  failedNonDiagnosticCount: number;
+};
+
+export type ProxyResourceSnapshot = {
+  process: {
+    uptimeSec: number;
+    rssBytes: number;
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    externalBytes: number;
+    arrayBuffersBytes: number;
+    userCpuMicros: number;
+    systemCpuMicros: number;
+    maxRssKilobytes: number;
+  };
+  host: {
+    loadAvg1m: number;
+    loadAvg5m: number;
+    loadAvg15m: number;
+    totalMemBytes: number;
+    freeMemBytes: number;
+  };
+  disk?: {
+    path: string;
+    totalBytes: number;
+    freeBytes: number;
+    availableBytes: number;
+  };
+};
+
+export type ProxyManagedProcess = {
+  id: string;
+  command: string;
+  args: string[];
+  status: string;
+  owner: string;
+  pid: number | null;
+  exitCode: number | null;
+  createdAtMs: number;
+  tty: boolean;
+};
+
+export type ProxyObservabilityState = {
+  rawLogDebugEnabled: boolean;
+  rawLogDebugExpiresAt?: string;
+};
+
 export type ProxyStatus = {
   state: ProxyState;
   jobId?: string;
@@ -124,6 +218,13 @@ export type ProxyStatus = {
   epoch?: number;
   startedAt?: string;
   agentPid?: number;
+  agentHealth: AgentHealthSnapshot;
+  activity: ProxyActivitySnapshot;
+  outbox: ProxyOutboxSnapshot;
+  observability: ProxyObservabilityState;
+  managedProcesses: ProxyManagedProcess[];
+  resources: ProxyResourceSnapshot;
+  recentLogs: ProxyLogEntry[];
 };
 
 // ── Agent Session Interface ──
@@ -165,4 +266,10 @@ export type ProxyMetrics = {
   callbackDeliveries: CallbackDeliveryMetric[];
   healthChecks: { total: number; failed: number };
   eventCount: number;
+};
+
+export type ProxyDiagnosticsPayload = {
+  kind: "heartbeat";
+  observedAt: string;
+  status: ProxyStatus;
 };

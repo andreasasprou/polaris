@@ -157,8 +157,8 @@ export class SandboxAgentBootstrap {
   async startProxy(
     env: Record<string, string> = {},
     port: number = PROXY_PORT,
-  ): Promise<string> {
-    await this.sandbox.runCommand({
+  ): Promise<{ baseUrl: string; cmdId: string }> {
+    const command = await this.sandbox.runCommand({
       cmd: "sh",
       args: [
         "-c",
@@ -183,7 +183,7 @@ export class SandboxAgentBootstrap {
         });
         if (res.ok) {
           const body = await res.json().catch(() => null);
-          if (body?.ok === true) return baseUrl;
+          if (body?.ok === true) return { baseUrl, cmdId: command.cmdId };
         }
       } catch {
         // Not ready yet
@@ -192,6 +192,6 @@ export class SandboxAgentBootstrap {
     }
 
     // Return URL anyway — caller will handle unhealthy proxy
-    return baseUrl;
+    return { baseUrl, cmdId: command.cmdId };
   }
 }

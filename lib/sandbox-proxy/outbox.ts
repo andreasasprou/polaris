@@ -8,7 +8,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import type { OutboxEntry, OutboxEntryStatus, CallbackType } from "./types";
+import type {
+  OutboxEntry,
+  OutboxEntryStatus,
+  CallbackType,
+  ProxyOutboxSnapshot,
+} from "./types";
 
 const OUTBOX_DIR = "/tmp/polaris-proxy/outbox";
 
@@ -83,6 +88,35 @@ export function readPendingEntries(): OutboxEntry[] {
   return readAllEntries().filter(
     (e) => e.status === "pending" || e.status === "failed",
   );
+}
+
+export function summarizeOutbox(): ProxyOutboxSnapshot {
+  const entries = readAllEntries();
+  let pendingCount = 0;
+  let failedCount = 0;
+  let deliveredCount = 0;
+  let pendingNonDiagnosticCount = 0;
+  let failedNonDiagnosticCount = 0;
+
+  for (const entry of entries) {
+    const isDiagnostic = entry.callbackType === "proxy_diagnostics";
+    if (entry.status === "pending") {
+      pendingCount++;
+      if (!isDiagnostic) pendingNonDiagnosticCount++;
+    } else if (entry.status === "failed") {
+      failedCount++;
+      if (!isDiagnostic) failedNonDiagnosticCount++;
+    }
+    else if (entry.status === "delivered") deliveredCount++;
+  }
+
+  return {
+    pendingCount,
+    failedCount,
+    deliveredCount,
+    pendingNonDiagnosticCount,
+    failedNonDiagnosticCount,
+  };
 }
 
 /**

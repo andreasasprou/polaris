@@ -16,6 +16,7 @@ import { useSessionChat } from "@/hooks/use-session-chat";
 import { getStatusConfig } from "@/lib/sessions/status";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DiffReviewPane } from "@/components/sessions/diff-review/diff-review-pane";
+import { SessionObservability } from "@/components/sessions/session-observability";
 import { useDiffReview } from "@/hooks/use-diff-review";
 import { Badge } from "@/components/ui/badge";
 import type { ModelParams } from "@/lib/sandbox-agent/types";
@@ -237,6 +238,7 @@ function SessionChatInput({
 // ── Session Tabs ──
 
 function SessionTabs({
+  sessionId,
   items,
   turnInProgress,
   loading,
@@ -244,6 +246,7 @@ function SessionTabs({
   sessionStatus,
   pendingPrompt,
 }: {
+  sessionId: string;
   items: import("@/lib/sandbox-agent/event-types").ChatItem[];
   turnInProgress: boolean;
   loading?: boolean;
@@ -265,6 +268,7 @@ function SessionTabs({
             </Badge>
           )}
         </TabsTrigger>
+        <TabsTrigger value="observability">Observability</TabsTrigger>
       </TabsList>
 
       {/* forceMount keeps chat mounted when Review tab is active,
@@ -285,6 +289,10 @@ function SessionTabs({
 
       <TabsContent value="review" className="min-h-0 flex flex-col">
         <DiffReviewPane summary={summary} prUrl={prUrl} />
+      </TabsContent>
+
+      <TabsContent value="observability" className="min-h-0 flex flex-col">
+        <SessionObservability sessionId={sessionId} />
       </TabsContent>
     </Tabs>
   );
@@ -432,6 +440,7 @@ export default function SessionDetailPage() {
         onStop={handleStop}
       >
         <SessionTabs
+          sessionId={session.id}
           items={chat.items}
           turnInProgress={chat.turnInProgress}
           loading={chat.loading}

@@ -37,12 +37,16 @@
 │  Vercel Sandbox VM  (ephemeral, 1-hour timeout)                  │
 │                                                                  │
 │  REST Proxy :2469  (lib/sandbox-proxy/, bundled)                │
-│    Structured JSON logs → stdout (visible via followProcessLogs) │
+│    Structured JSON logs → stdout + local rolling file            │
+│    Structured logs → direct Axiom ingest over HTTPS              │
 │    Proxy metrics → embedded in prompt_complete/prompt_failed     │
 │    callback payloads (piggybacks on existing HMAC delivery)     │
+│    Proxy diagnostics → proxy_diagnostics callbacks + GET /status │
+│    Managed process inventory → sandbox-agent /v1/processes       │
 │                                                                  │
 │  sandbox-agent :2468  (ACP JSON-RPC server)                     │
 │    Events persisted via SDK persist driver → Postgres           │
+│    Managed process logs → buffered fetch / SSE follow           │
 │                                                                  │
 │  Agent CLI (claude / codex)                                      │
 │    Token usage via usage_update events                           │
@@ -59,7 +63,11 @@
 | **sandbox_agent.events** | Postgres via persist-postgres | ACP JSON-RPC events: tool calls, text, permissions, questions, usage | `GET /api/sessions/:id/events` |
 | **StepMetrics** | `lib/metrics/step-timer.ts` | Per-step timing for automation pipelines | `automationRuns.metrics` JSONB |
 | **Proxy metrics** | Embedded in callback payloads | Sandbox-internal timing: connect, session create, prompt execution, resume type | Axiom (logged by callback-processor), `jobAttempts.resultPayload` |
-| **Proxy structured logs** | stdout inside sandbox VM | Request handling, callback delivery, health checks, resume decisions | `followProcessLogs()` API (future) |
+| **Proxy diagnostics** | `proxy_diagnostics` callbacks + `GET /status` | Agent health, last event/callback timestamps, outbox backlog, recent proxy logs, resource snapshots | Axiom `vercel`, callback inbox, sweeper probe logs |
+| **Proxy structured logs** | stdout, local rotating file, direct Axiom ingest | Request handling, callback delivery, health checks, resume decisions | Axiom proxy dataset, local teardown artifacts, `followProcessLogs()` |
+| **Managed process inventory** | sandbox-agent `/v1/processes` via proxy | Running/exited process list, PID, tty, exit code | `GET /status`, `GET /api/sessions/:id/logs`, teardown bundles |
+| **Org debug settings** | Better Auth `organization.metadata` | Temporary raw-log capture windows, expiry, reason | `GET/POST /api/observability/settings`, Settings → Observability |
+| **Runtime stop summaries** | `interactive_session_runtimes` | `proxyCmdId`, stop reason, teardown artifacts, post-stop CPU/network summary | Postgres + Axiom `vercel` lifecycle logs |
 
 ## Gap Matrix
 
@@ -71,10 +79,10 @@
 | Prompt dispatch | **Yes** | Tier 1/2 decision, credential resolution, sandbox health, job/attempt creation | — |
 | Callback processing | **Yes** | Epoch fence, dedup, CAS transitions, proxy metrics extraction | — |
 | Sandbox provisioning | **Yes** | Cold vs snapshot, timing per step (StepTimer) | — |
-| **Sandbox proxy** | **Partial** | Metrics in callback payloads; structured logs to VM stdout | Logs not shipped to Axiom (future: followProcessLogs) |
+| **Sandbox proxy** | **Yes** | Metrics in callbacks, periodic diagnostics, direct Axiom shipping, local rolling log file, managed-process status, sweeper probes | Raw command stdout/stderr is still secondary, not the primary path |
 | **Agent execution** | **Partial** | ACP events persisted to Postgres; token usage in events | No real-time streaming to external systems |
-| **Callback delivery** | **Partial** | Delivery metrics in callback payloads | File-based outbox lost if VM dies before delivery |
-| Resource usage | **No** | — | CPU, memory, disk of sandbox unmeasured |
+| **Callback delivery** | **Mostly** | Delivery metrics in callback payloads, outbox backlog in `/status`, recent callback attempts in diagnostics | File-based outbox still lost if VM dies before delivery |
+| Resource usage | **Partial** | Process memory/CPU, host memory/load, `/tmp` disk stats in diagnostics | No external long-term metrics backend for sandbox resources |
 
 ## Sweeper Cron
 
@@ -143,6 +151,39 @@ The sandbox proxy emits JSON to stdout:
   "durationMs": 120
 }
 ```
+
+### Proxy Status Snapshot
+
+`GET /status` on the sandbox proxy now returns:
+
+- `agentHealth` — health-check state from the proxy to `sandbox-agent`
+- `activity` — event count, last event timestamp, last callback attempt/delivery
+- `outbox` — delivered/pending/failed callback counts, split by diagnostic vs non-diagnostic
+- `observability` — whether temporary raw-log debug mode is active and when it expires
+- `managedProcesses` — current sandbox-agent process inventory (command, status, pid, tty, exitCode)
+- `resources` — process memory/CPU, host memory/load, `/tmp` disk capacity
+- `recentLogs` — in-memory tail of recent proxy log entries
+
+The sweeper uses `/status` instead of `/health` when deciding whether a stale job is truly dead, merely callback-backed-up, or still making progress inside the sandbox.
+
+### Runtime Stop Summary
+
+When Polaris intentionally destroys a sandbox, it now:
+
+- fetches `/status`
+- captures proxy log tails, sandbox-agent managed process inventory, buffered process logs, and lightweight process snapshots
+- records the detached proxy `cmdId`
+- performs a blocking sandbox stop
+- persists post-stop CPU/network/age metadata on `interactive_session_runtimes`
+
+That gives a durable Postgres-side summary even when the sandbox itself is gone.
+
+## Runtime Debug Controls
+
+- Org admins can enable **temporary raw sandbox log debugging** at `/{orgSlug}/settings/observability`.
+- The setting is stored in `organization.metadata` and always carries an expiry timestamp.
+- When active, the session observability UI enables live SSE log follow for sandbox-agent managed processes.
+- Even when inactive, Polaris still exposes structured proxy telemetry, process inventory, buffered process logs, and teardown artifacts.
 
 ## Sandbox Lifecycle Observability
 

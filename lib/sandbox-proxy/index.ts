@@ -12,6 +12,8 @@
  */
 
 import { ensureOutboxDir } from "./outbox";
+import { createAxiomLogDrainFromEnv } from "./axiom";
+import { proxyLog } from "./logger";
 import { ProxyServer } from "./server";
 
 // Conditionally import persist driver — may not be available in all environments
@@ -36,6 +38,15 @@ try {
 
 // Ensure outbox directory exists
 ensureOutboxDir();
+const axiomDrain = createAxiomLogDrainFromEnv();
+proxyLog.setDrain(axiomDrain);
+proxyLog.setContext({
+  sessionId: process.env.POLARIS_SESSION_ID,
+  runtimeId: process.env.POLARIS_RUNTIME_ID,
+  sandboxId: process.env.POLARIS_SANDBOX_ID,
+  rawLogDebugEnabled: process.env.POLARIS_RAW_LOG_DEBUG === "true",
+  rawLogDebugExpiresAt: process.env.POLARIS_RAW_LOG_DEBUG_EXPIRES_AT,
+});
 
 // Start the proxy server
 const port = parseInt(process.env.PROXY_PORT ?? "2469", 10);
@@ -44,13 +55,34 @@ await server.start(port);
 
 console.log(`[proxy] Sandbox REST Proxy started on port ${port}`);
 
+async function flushAndExit(code: number): Promise<never> {
+  axiomDrain?.stop();
+  await proxyLog.flush().catch(() => {});
+  process.exit(code);
+}
+
 // Graceful shutdown
 process.on("SIGTERM", () => {
   console.log("[proxy] Received SIGTERM, shutting down");
-  process.exit(0);
+  void flushAndExit(0);
 });
 
 process.on("SIGINT", () => {
   console.log("[proxy] Received SIGINT, shutting down");
-  process.exit(0);
+  void flushAndExit(0);
+});
+
+process.on("beforeExit", () => {
+  axiomDrain?.stop();
+  return proxyLog.flush();
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[proxy] Uncaught exception:", error);
+  void flushAndExit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[proxy] Unhandled rejection:", reason);
+  void flushAndExit(1);
 });

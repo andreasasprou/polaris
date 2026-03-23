@@ -7,6 +7,7 @@
 
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type {
   PromptRequest,
@@ -16,17 +17,24 @@ import type {
   AgentEvent,
   ProxyMetrics,
   CallbackDeliveryMetric,
+  CallbackType,
+  ProxyDiagnosticsPayload,
+  ProxyManagedProcess,
 } from "./types";
 import { AcpBridge, resolveSdkSessionId } from "./acp-bridge";
 import { AgentMonitor } from "./agent-monitor";
 import { SessionEventBatcher, reconstructOutput } from "./event-batcher";
-import { emitCallback, replayPendingCallbacks } from "./callback-delivery";
-import { readPendingEntries } from "./outbox";
+import {
+  emitCallback,
+  type CallbackDeliveryResult,
+} from "./callback-delivery";
+import { readPendingEntries, summarizeOutbox } from "./outbox";
 import { proxyLog } from "./logger";
 import type { SessionPersistDriver } from "sandbox-agent";
 
 const ACTIVE_PROMPT_PATH = "/tmp/polaris-proxy/active-prompt.json";
 const PROMPT_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+const DIAGNOSTICS_INTERVAL_MS = 30_000;
 
 export class ProxyServer {
   private state: ProxyState = "idle";
@@ -36,6 +44,16 @@ export class ProxyServer {
   private server: http.Server | null = null;
   private callbackDeliveries: CallbackDeliveryMetric[] = [];
   private eventCount = 0;
+  private lastEventAt?: string;
+  private lastCallbackAttemptAt?: string;
+  private lastCallbackDeliveredAt?: string;
+  private lastCallbackType?: CallbackType;
+  private lastCallbackAttemptSucceeded?: boolean;
+  private diagnosticsTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly rawLogDebugEnabled =
+    process.env.POLARIS_RAW_LOG_DEBUG === "true";
+  private readonly rawLogDebugExpiresAt =
+    process.env.POLARIS_RAW_LOG_DEBUG_EXPIRES_AT;
 
   constructor(persist?: SessionPersistDriver) {
     this.bridge = new AcpBridge(persist);
@@ -194,6 +212,11 @@ export class ProxyServer {
     proxyLog.setContext({ jobId: body.jobId, attemptId: body.attemptId, epoch: body.epoch });
     this.callbackDeliveries = [];
     this.eventCount = 0;
+    this.lastEventAt = undefined;
+    this.lastCallbackAttemptAt = undefined;
+    this.lastCallbackDeliveredAt = undefined;
+    this.lastCallbackType = undefined;
+    this.lastCallbackAttemptSucceeded = undefined;
 
     proxyLog.info("prompt_accepted", {
       agent: body.config.agent,
@@ -283,7 +306,7 @@ export class ProxyServer {
 
       // Emit prompt_accepted callback — includes sdkSessionId so the platform
       // can persist it immediately, making events queryable from the first turn.
-      const acceptedEntry = await emitCallback({
+      await this.emitTrackedCallback({
         jobId,
         attemptId,
         epoch,
@@ -297,11 +320,11 @@ export class ProxyServer {
         callbackUrl,
         hmacKey,
       });
-      this.recordCallbackDelivery("prompt_accepted", acceptedEntry);
 
       // Start health monitor
       this.monitor.reset();
       this.monitor.start();
+      this.startDiagnosticsHeartbeat({ jobId, attemptId, epoch, callbackUrl, hmacKey });
 
       // Session event batcher: assigns driver-compatible metadata to events
       // and flushes incremental batches via session_events callbacks for
@@ -310,18 +333,19 @@ export class ProxyServer {
         sdkSessionId,
         attemptId,
         async (sid, events) => {
-          await emitCallback({
+          await this.emitTrackedCallback({
             jobId, attemptId, epoch,
             callbackType: "session_events",
             payload: { sessionId: sid, events },
             callbackUrl, hmacKey,
-          });
+          }, { recordMetric: false });
         },
         { nextEventIndex: config.nextEventIndex },
       );
 
       const onEvent = (event: AgentEvent) => {
         this.eventCount++;
+        this.lastEventAt = new Date().toISOString();
         batcher.push(event);
         this.handleAgentEvent(event, jobId, attemptId, epoch, callbackUrl, hmacKey);
       };
@@ -359,7 +383,7 @@ export class ProxyServer {
         });
 
         // Emit prompt_complete callback (events already persisted via session_events)
-        const completeEntry = await emitCallback({
+        await this.emitTrackedCallback({
           jobId,
           attemptId,
           epoch,
@@ -380,7 +404,6 @@ export class ProxyServer {
           callbackUrl,
           hmacKey,
         });
-        this.recordCallbackDelivery("prompt_complete", completeEntry);
       } else {
         const reason = result.error?.includes("timed out")
           ? "agent_timeout"
@@ -395,7 +418,7 @@ export class ProxyServer {
           durationMs: result.durationMs,
         });
 
-        const failedEntry = await emitCallback({
+        await this.emitTrackedCallback({
           jobId,
           attemptId,
           epoch,
@@ -412,10 +435,10 @@ export class ProxyServer {
           callbackUrl,
           hmacKey,
         });
-        this.recordCallbackDelivery("prompt_failed", failedEntry);
       }
     } catch (err) {
       this.monitor.stop();
+      this.stopDiagnosticsHeartbeat();
 
       const error = err instanceof Error ? err.message : String(err);
       const reason = error.includes("timed out")
@@ -427,7 +450,7 @@ export class ProxyServer {
       const metrics = buildMetrics();
       proxyLog.error("prompt_exception", { error, reason });
 
-      await emitCallback({
+      await this.emitTrackedCallback({
         jobId,
         attemptId,
         epoch,
@@ -446,6 +469,7 @@ export class ProxyServer {
         hmacKey,
       });
     } finally {
+      this.stopDiagnosticsHeartbeat();
       this.state = "idle";
       this.clearActivePrompt();
       proxyLog.clearContext();
@@ -464,14 +488,190 @@ export class ProxyServer {
   /** Record a callback delivery metric from an outbox entry. */
   private recordCallbackDelivery(
     type: CallbackDeliveryMetric["type"],
-    entry: { status: string; attempts: number; createdAt: string },
+    entry: { createdAt: string },
+    result: CallbackDeliveryResult,
   ): void {
     this.callbackDeliveries.push({
       type,
-      deliveryMs: Date.now() - new Date(entry.createdAt).getTime(),
-      attempts: entry.attempts,
-      success: entry.status === "delivered",
+      deliveryMs: result.deliveryMs || Date.now() - new Date(entry.createdAt).getTime(),
+      attempts: result.attempts,
+      success: result.success,
     });
+  }
+
+  private async emitTrackedCallback(
+    params: {
+      jobId: string;
+      attemptId: string;
+      epoch: number;
+      callbackType: CallbackType;
+      payload: Record<string, unknown>;
+      callbackUrl: string;
+      hmacKey: string;
+    },
+    opts?: { recordMetric?: boolean },
+  ): Promise<{ success: boolean }> {
+    const { entry, result } = await emitCallback(params);
+    this.lastCallbackAttemptAt = new Date().toISOString();
+    this.lastCallbackType = params.callbackType;
+    this.lastCallbackAttemptSucceeded = result.success;
+    if (result.success) {
+      this.lastCallbackDeliveredAt = new Date().toISOString();
+    }
+    if (opts?.recordMetric !== false) {
+      this.recordCallbackDelivery(params.callbackType, entry, result);
+    }
+    return { success: result.success };
+  }
+
+  private startDiagnosticsHeartbeat(params: {
+    jobId: string;
+    attemptId: string;
+    epoch: number;
+    callbackUrl: string;
+    hmacKey: string;
+  }): void {
+    this.stopDiagnosticsHeartbeat();
+
+    const emitHeartbeat = async () => {
+      const payload = await this.buildDiagnosticsPayload();
+      return this.emitTrackedCallback(
+        {
+          ...params,
+          callbackType: "proxy_diagnostics",
+          payload,
+        },
+        { recordMetric: false },
+      ).catch((err) =>
+        proxyLog.warn("proxy_diagnostics_emit_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    };
+
+    void emitHeartbeat();
+
+    this.diagnosticsTimer = setInterval(() => {
+      void emitHeartbeat();
+    }, DIAGNOSTICS_INTERVAL_MS);
+
+    if (typeof this.diagnosticsTimer === "object" && "unref" in this.diagnosticsTimer) {
+      this.diagnosticsTimer.unref();
+    }
+  }
+
+  private stopDiagnosticsHeartbeat(): void {
+    if (!this.diagnosticsTimer) return;
+    clearInterval(this.diagnosticsTimer);
+    this.diagnosticsTimer = null;
+  }
+
+  private async buildDiagnosticsPayload(): Promise<ProxyDiagnosticsPayload> {
+    return {
+      kind: "heartbeat",
+      observedAt: new Date().toISOString(),
+      status: await this.buildStatusSnapshot(),
+    };
+  }
+
+  private async buildStatusSnapshot(): Promise<ProxyStatus> {
+    const managedProcesses = await this.collectManagedProcesses();
+    const status: ProxyStatus = {
+      state: this.state,
+      agentHealth: this.monitor.snapshot,
+      activity: {
+        eventCount: this.eventCount,
+        lastEventAt: this.lastEventAt,
+        lastCallbackAttemptAt: this.lastCallbackAttemptAt,
+        lastCallbackDeliveredAt: this.lastCallbackDeliveredAt,
+        lastCallbackType: this.lastCallbackType,
+        lastCallbackAttemptSucceeded: this.lastCallbackAttemptSucceeded,
+      },
+      outbox: summarizeOutbox(),
+      observability: {
+        rawLogDebugEnabled: this.rawLogDebugEnabled,
+        rawLogDebugExpiresAt: this.rawLogDebugExpiresAt,
+      },
+      managedProcesses,
+      resources: this.collectResourceSnapshot(),
+      recentLogs: proxyLog.getRecentEntries(20),
+    };
+
+    if (this.activePrompt) {
+      status.jobId = this.activePrompt.jobId;
+      status.attemptId = this.activePrompt.attemptId;
+      status.epoch = this.activePrompt.epoch;
+      status.startedAt = this.activePrompt.startedAt;
+    }
+
+    return status;
+  }
+
+  private async collectManagedProcesses(): Promise<ProxyManagedProcess[]> {
+    try {
+      const response = await fetch("http://localhost:2468/v1/processes", {
+        signal: AbortSignal.timeout(2_500),
+      });
+      if (!response.ok) return [];
+
+      const body = (await response.json()) as {
+        processes?: ProxyManagedProcess[];
+      };
+
+      return (body.processes ?? [])
+        .slice()
+        .sort((a, b) => {
+          if (a.status === b.status) return b.createdAtMs - a.createdAtMs;
+          if (a.status === "running") return -1;
+          if (b.status === "running") return 1;
+          return b.createdAtMs - a.createdAtMs;
+        })
+        .slice(0, 20);
+    } catch {
+      return [];
+    }
+  }
+
+  private collectResourceSnapshot(): ProxyStatus["resources"] {
+    const memory = process.memoryUsage();
+    const resource = process.resourceUsage();
+    const [loadAvg1m, loadAvg5m, loadAvg15m] = os.loadavg();
+
+    let disk: ProxyStatus["resources"]["disk"];
+    try {
+      const statfs = fs.statfsSync("/tmp");
+      const blockSize = Number(statfs.bsize);
+      disk = {
+        path: "/tmp",
+        totalBytes: Number(statfs.blocks) * blockSize,
+        freeBytes: Number(statfs.bfree) * blockSize,
+        availableBytes: Number(statfs.bavail) * blockSize,
+      };
+    } catch {
+      disk = undefined;
+    }
+
+    return {
+      process: {
+        uptimeSec: process.uptime(),
+        rssBytes: memory.rss,
+        heapUsedBytes: memory.heapUsed,
+        heapTotalBytes: memory.heapTotal,
+        externalBytes: memory.external,
+        arrayBuffersBytes: memory.arrayBuffers,
+        userCpuMicros: resource.userCPUTime,
+        systemCpuMicros: resource.systemCPUTime,
+        maxRssKilobytes: resource.maxRSS,
+      },
+      host: {
+        loadAvg1m,
+        loadAvg5m,
+        loadAvg15m,
+        totalMemBytes: os.totalmem(),
+        freeMemBytes: os.freemem(),
+      },
+      disk,
+    };
   }
 
   /**
@@ -498,7 +698,7 @@ export class ProxyServer {
       const toolName = (claudeCode?.toolName as string) ?? "unknown";
       const toolInput = update!.rawInput as Record<string, unknown> ?? {};
 
-      emitCallback({
+      void this.emitTrackedCallback({
         jobId,
         attemptId,
         epoch,
@@ -511,7 +711,7 @@ export class ProxyServer {
         },
         callbackUrl,
         hmacKey,
-      }).catch((err) =>
+      }, { recordMetric: false }).catch((err) =>
         proxyLog.error("callback_emit_failed", {
           callbackType: "permission_requested",
           error: err instanceof Error ? err.message : String(err),
@@ -522,7 +722,7 @@ export class ProxyServer {
       const question = update!.prompt as string;
       const options = update!.options as string[] | undefined;
 
-      emitCallback({
+      void this.emitTrackedCallback({
         jobId,
         attemptId,
         epoch,
@@ -535,7 +735,7 @@ export class ProxyServer {
         },
         callbackUrl,
         hmacKey,
-      }).catch((err) =>
+      }, { recordMetric: false }).catch((err) =>
         proxyLog.error("callback_emit_failed", {
           callbackType: "question_requested",
           error: err instanceof Error ? err.message : String(err),
@@ -579,7 +779,7 @@ export class ProxyServer {
       this.activePrompt;
     const durationMs = Date.now() - new Date(startedAt).getTime();
 
-    await emitCallback({
+    await this.emitTrackedCallback({
       jobId,
       attemptId,
       epoch,
@@ -623,7 +823,7 @@ export class ProxyServer {
       // Emit permission_resumed callback
       const { jobId, attemptId, epoch, callbackUrl, hmacKey } =
         this.activePrompt;
-      emitCallback({
+      void this.emitTrackedCallback({
         jobId,
         attemptId,
         epoch,
@@ -634,7 +834,7 @@ export class ProxyServer {
         },
         callbackUrl,
         hmacKey,
-      }).catch((err) =>
+      }, { recordMetric: false }).catch((err) =>
         proxyLog.error("callback_emit_failed", {
           callbackType: "permission_resumed",
           error: err instanceof Error ? err.message : String(err),
@@ -684,7 +884,7 @@ export class ProxyServer {
 
       const { jobId, attemptId, epoch, callbackUrl, hmacKey } =
         this.activePrompt;
-      emitCallback({
+      void this.emitTrackedCallback({
         jobId,
         attemptId,
         epoch,
@@ -695,7 +895,7 @@ export class ProxyServer {
         },
         callbackUrl,
         hmacKey,
-      }).catch((err) =>
+      }, { recordMetric: false }).catch((err) =>
         proxyLog.error("callback_emit_failed", {
           callbackType: "question_resumed",
           error: err instanceof Error ? err.message : String(err),
@@ -712,19 +912,8 @@ export class ProxyServer {
 
   // ── GET /status ──
 
-  private handleStatus(res: http.ServerResponse): void {
-    const status: ProxyStatus = {
-      state: this.state,
-    };
-
-    if (this.activePrompt) {
-      status.jobId = this.activePrompt.jobId;
-      status.attemptId = this.activePrompt.attemptId;
-      status.epoch = this.activePrompt.epoch;
-      status.startedAt = this.activePrompt.startedAt;
-    }
-
-    sendJson(res, 200, status);
+  private async handleStatus(res: http.ServerResponse): Promise<void> {
+    sendJson(res, 200, await this.buildStatusSnapshot());
   }
 
   // ── GET /outbox ──
@@ -766,7 +955,7 @@ export class ProxyServer {
         proxyLog.warn("orphan_recovery", { jobId: orphan.jobId, attemptId: orphan.attemptId });
 
         // Emit prompt_failed for the orphan
-        await emitCallback({
+        await this.emitTrackedCallback({
           jobId: orphan.jobId,
           attemptId: orphan.attemptId,
           epoch: orphan.epoch,
@@ -810,11 +999,18 @@ export class ProxyServer {
   ): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
     const queryString = url.search;
+    const follow = url.searchParams.get("follow") === "true";
     const targetUrl = `http://localhost:2468${agentPath}${queryString}`;
+    const acceptHeader = Array.isArray(req.headers.accept)
+      ? req.headers.accept.join(", ")
+      : req.headers.accept;
 
     try {
       const response = await fetch(targetUrl, {
-        signal: AbortSignal.timeout(30_000),
+        headers: acceptHeader
+          ? { Accept: acceptHeader }
+          : undefined,
+        signal: follow ? undefined : AbortSignal.timeout(30_000),
       });
 
       // Forward status and content-type

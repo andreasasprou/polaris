@@ -279,6 +279,18 @@ async function processCallback(input: {
       break;
     }
 
+    case "proxy_diagnostics": {
+      const log = useLogger();
+      log.set({
+        proxyDiagnostics: {
+          jobId,
+          attemptId,
+          payload,
+        },
+      });
+      break;
+    }
+
     case "permission_requested": {
       // Include "accepted" — HITL callbacks fire immediately while
       // session_events (which transitions accepted→running) is batched

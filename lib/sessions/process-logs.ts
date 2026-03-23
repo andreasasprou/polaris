@@ -12,6 +12,10 @@ export type ProcessLogEntry = {
   encoding: string;
 };
 
+export function parseFollowLogs(value: string | null): boolean {
+  return value === "1" || value === "true";
+}
+
 const VALID_PROCESS_LOG_STREAMS = new Set<ProcessLogStream>([
   "stdout",
   "stderr",

@@ -72,11 +72,21 @@ export const interactiveSessionRuntimes = pgTable(
     sandboxId: text("sandbox_id"),
     sandboxBaseUrl: text("sandbox_base_url"),
     agentServerUrl: text("agent_server_url"), // sandbox-agent server URL (port 2468) for process logs
+    proxyCmdId: text("proxy_cmd_id"), // Detached proxy command ID for SDK log retrieval
     sdkSessionId: text("sdk_session_id"),
     epoch: integer("epoch").notNull(), // Session epoch at creation time — fencing token
     restoreSource: text("restore_source").notNull(), // 'base_snapshot' | 'hibernate_snapshot' | 'fresh'
     restoreSnapshotId: text("restore_snapshot_id"),
     status: text("status").default("creating").notNull(), // creating | running | idle | stopped | failed
+    stopReason: text("stop_reason"),
+    usageSummary: jsonb("usage_summary")
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
+    teardownArtifacts: jsonb("teardown_artifacts")
+      .$type<Record<string, unknown>>()
+      .default({})
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
