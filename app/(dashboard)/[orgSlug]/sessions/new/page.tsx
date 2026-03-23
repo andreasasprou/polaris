@@ -238,6 +238,11 @@ export default function NewSessionPage() {
                 placeholder="What do you want the agent to do?"
                 required
               />
+              {!prompt.trim() && (
+                <p className="text-xs text-muted-foreground">
+                  Enter a prompt to start a session.
+                </p>
+              )}
             </div>
 
             {error && (

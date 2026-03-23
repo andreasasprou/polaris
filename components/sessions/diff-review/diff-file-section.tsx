@@ -72,6 +72,7 @@ export function DiffFileSection({ file }: { file: FileChange }) {
                   useDarkTheme={isDark}
                   compareMethod={DiffMethod.LINES}
                   hideLineNumbers={false}
+                  extraLinesSurroundingDiff={10000}
                   styles={{
                     contentText: {
                       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",

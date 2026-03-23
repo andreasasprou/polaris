@@ -23,7 +23,7 @@ export function DiffReviewPane({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-none">
+    <div className="flex flex-col">
       <DiffReviewHeader summary={summary} prUrl={prUrl} />
       <div className="flex flex-col gap-2 px-1 pb-4">
         {summary.files.map((file) => (

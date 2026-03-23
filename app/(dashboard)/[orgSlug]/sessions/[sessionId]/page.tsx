@@ -283,7 +283,7 @@ function SessionTabs({
         </div>
       </TabsContent>
 
-      <TabsContent value="review" className="min-h-0 flex flex-col">
+      <TabsContent value="review" className="min-h-0 flex-1 overflow-y-auto">
         <DiffReviewPane summary={summary} prUrl={prUrl} />
       </TabsContent>
     </Tabs>
