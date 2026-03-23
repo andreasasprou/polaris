@@ -63,6 +63,7 @@ export const PUT = withEvlog(async (
   try {
     const validated = await validateAutomationRelationsForOrg({
       organizationId: orgId,
+      agentType: body.agentType ?? existing.agentType,
       repositoryId,
       agentSecretId,
       keyPoolId,

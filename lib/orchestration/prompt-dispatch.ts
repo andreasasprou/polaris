@@ -305,7 +305,9 @@ export async function resolveSessionCredentials(session: {
   repositoryId: string | null;
 }) {
   const { credentialRefFromRow } = await import("@/lib/key-pools/types");
-  const { validateCredentialRef } = await import("@/lib/key-pools/validate");
+  const { validateCredentialRefForAgent } = await import(
+    "@/lib/key-pools/validate"
+  );
 
   const credentialRef = credentialRefFromRow({
     agentSecretId: session.agentSecretId,
@@ -319,8 +321,12 @@ export async function resolveSessionCredentials(session: {
     );
   }
 
-  // Validate existence, org-scoping, revocation — no key decryption
-  await validateCredentialRef(credentialRef, session.organizationId);
+  // Validate existence, org-scoping, revocation, and provider compatibility
+  await validateCredentialRefForAgent(
+    credentialRef,
+    session.organizationId,
+    session.agentType as AgentType,
+  );
 
   let repositoryOwner: string | undefined;
   let repositoryName: string | undefined;
