@@ -1,0 +1,36 @@
+tokens:
+  gho_test_token_admin:
+    login: andreasasprou
+    scopes:
+      - repo
+      - user
+      - admin:org
+      - admin:repo_hook
+
+github:
+  users:
+    - login: andreasasprou
+      name: Andreas Asprou
+      email: andreas@polaris.dev
+  orgs:
+    - login: polaris-test
+      name: Polaris Test Org
+  repos:
+    - owner: andreasasprou
+      name: polaris-test-fixture
+      description: Test repo for Polaris E2E testing
+      language: TypeScript
+      auto_init: true
+      default_branch: main
+    - owner: polaris-test
+      name: test-app
+      description: Org test repo
+      language: TypeScript
+      auto_init: true
+  oauth_apps:
+    - client_id: polaris_test_client
+      client_secret: polaris_test_secret
+      name: Polaris Local Dev
+      redirect_uris:
+        - https://polaris.local.plrs.sh/api/auth/callback/github
+        - http://localhost:3000/api/auth/callback/github
