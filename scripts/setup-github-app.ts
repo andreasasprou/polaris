@@ -21,19 +21,32 @@ import { execSync } from "node:child_process";
 const PORT = 3456;
 const CALLBACK_URL = `http://localhost:${PORT}/callback`;
 
+// Detect the portless URL (e.g., https://polaris.localhost:1355)
+// Falls back to localhost:3001 if portless is not running
+function getAppUrl(): string {
+  try {
+    const result = execSync("portless get polaris 2>/dev/null", { encoding: "utf-8" }).trim();
+    if (result) return result;
+  } catch {}
+  return "http://localhost:3001";
+}
+
+const APP_URL = getAppUrl();
+console.log(`Using app URL: ${APP_URL}\n`);
+
 // The manifest defines the GitHub App's configuration
 const manifest = {
   name: "polaris-test-dev",
-  url: "http://localhost:3001",
+  url: APP_URL,
   description: "Polaris local development & testing GitHub App",
   public: false,
   hook_attributes: {
-    url: "http://localhost:3001/api/webhooks/github",
+    url: `${APP_URL}/api/webhooks/github`,
     active: false, // Webhooks disabled by default for local dev
   },
   redirect_url: CALLBACK_URL,
-  callback_urls: ["http://localhost:3001/api/integrations/github/callback"],
-  setup_url: "http://localhost:3001/api/integrations/github/callback",
+  callback_urls: [`${APP_URL}/api/integrations/github/callback`],
+  setup_url: `${APP_URL}/api/integrations/github/callback`,
   setup_on_update: true,
   default_permissions: {
     contents: "write",
@@ -51,17 +64,15 @@ async function main() {
   console.log("This will create a GitHub App for local development.");
   console.log("You'll be redirected to GitHub to confirm.\n");
 
-  // Start a temporary server to handle the OAuth-like callback
-  const { code, cleanup } = await startCallbackServer();
-
-  // Open browser to GitHub App creation page
-  const manifestParam = encodeURIComponent(JSON.stringify(manifest));
-  const githubUrl = `https://github.com/settings/apps/new?manifest=${manifestParam}`;
+  // Start a temporary server that:
+  // 1. Serves a page with a form that POSTs the manifest to GitHub
+  // 2. Handles the callback after GitHub creates the app
+  const { code, cleanup, localUrl } = await startCallbackServer();
 
   console.log("Opening browser...\n");
-  openBrowser(githubUrl);
+  openBrowser(localUrl);
   console.log("If the browser didn't open, go to:");
-  console.log(`  ${githubUrl}\n`);
+  console.log(`  ${localUrl}\n`);
   console.log("Waiting for GitHub redirect...\n");
 
   // Wait for the code from the callback
@@ -135,6 +146,7 @@ async function main() {
 function startCallbackServer(): Promise<{
   code: Promise<string>;
   cleanup: () => void;
+  localUrl: string;
 }> {
   return new Promise((resolveSetup) => {
     let resolveCode: (code: string) => void;
@@ -142,6 +154,26 @@ function startCallbackServer(): Promise<{
 
     const server = createServer((req, res) => {
       const url = new URL(req.url!, `http://localhost:${PORT}`);
+
+      if (url.pathname === "/" || url.pathname === "/setup") {
+        // Serve an HTML page that auto-submits the manifest to GitHub via POST
+        const manifestJson = JSON.stringify(manifest);
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(`
+          <!DOCTYPE html>
+          <html>
+          <body style="font-family: system-ui; text-align: center; padding: 60px;">
+            <h2>Creating Polaris Test GitHub App...</h2>
+            <p>Redirecting to GitHub...</p>
+            <form id="manifest-form" action="https://github.com/settings/apps/new" method="post">
+              <input type="hidden" name="manifest" value='${manifestJson.replace(/'/g, "&#39;")}' />
+            </form>
+            <script>document.getElementById('manifest-form').submit();</script>
+          </body>
+          </html>
+        `);
+        return;
+      }
 
       if (url.pathname === "/callback") {
         const code = url.searchParams.get("code");
@@ -168,6 +200,7 @@ function startCallbackServer(): Promise<{
       resolveSetup({
         code: codePromise,
         cleanup: () => server.close(),
+        localUrl: `http://localhost:${PORT}/setup`,
       });
     });
   });

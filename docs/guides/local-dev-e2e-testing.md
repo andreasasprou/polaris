@@ -8,11 +8,35 @@ create automated E2E tests that agents can run via `agent-browser`.
 ## 1. Prerequisites
 
 ```bash
+# Install portless globally (HTTPS proxy for local dev)
+npm install -g portless
+
+# Start services
 docker compose up -d          # PostgreSQL
 pnpm install
 ```
 
-## 2. Environment Variables
+## 2. Running the Dev Server
+
+Polaris uses [portless](https://github.com/nicolo-ribaudo/portless)
+for local HTTPS with a stable URL. This is required for GitHub OAuth
+callbacks and GitHub App webhooks (which reject bare `localhost`).
+
+```bash
+pnpm dev
+# → https://polaris.localhost:1355 (HTTPS, auto-generated certs)
+```
+
+On first run, portless generates a local CA and adds it to your system
+trust store. No browser warnings.
+
+If you need to bypass portless (e.g., debugging):
+```bash
+pnpm dev:raw
+# → http://localhost:3000 (plain Next.js)
+```
+
+## 3. Environment Variables
 
 Copy `.env.example` → `.env` and set:
 
@@ -22,76 +46,69 @@ DATABASE_URL=postgresql://polaris:polaris@localhost:5432/polaris
 BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 
+# ── Better Auth URL (portless URL) ──
+BETTER_AUTH_URL=https://polaris.localhost:1355
+
 # ── GitHub OAuth (for login button — can be dummy for email/password) ──
 GITHUB_CLIENT_ID=placeholder
 GITHUB_CLIENT_SECRET=placeholder
 
-# ── Test GitHub App (see Section 3) ──
+# ── Test GitHub App (see Section 4 — auto-populated by setup script) ──
 GITHUB_APP_ID=<test-app-id>
 GITHUB_APP_PRIVATE_KEY_B64=<base64-encoded-pem>
 GITHUB_APP_WEBHOOK_SECRET=$(openssl rand -hex 20)
 GITHUB_APP_SLUG=polaris-test-dev
 ```
 
-## 3. Create a Dedicated Test GitHub App
+## 4. Create a Dedicated Test GitHub App
 
 This app is **only for local development and testing**. It's installed
 on a single throwaway repo so there's no risk to real codebases.
 
-### Step 1: Create the test repo
+### Automated setup (recommended)
 
-1. Go to https://github.com/new
-2. Create `andreasasprou/polaris-test-fixture` (public or private)
-3. Add a README.md and a few dummy files so the agent has something to edit
-
-### Step 2: Create the GitHub App
-
-1. Go to https://github.com/settings/apps/new
-2. Fill in:
-   - **App name**: `polaris-test-dev`
-   - **Homepage URL**: `http://localhost:3001`
-   - **Callback URL**: `http://localhost:3001/api/integrations/github/callback`
-   - **Setup URL**: `http://localhost:3001/api/integrations/github/callback` (check "Redirect on update")
-   - **Webhook URL**: `https://smee.io/YOUR_CHANNEL` (use [smee.io](https://smee.io) for local webhook forwarding, or leave blank and disable webhooks for now)
-   - **Webhook secret**: same as `GITHUB_APP_WEBHOOK_SECRET` in your `.env`
-3. **Permissions**:
-   - Repository:
-     - Contents: Read & Write
-     - Pull requests: Read & Write
-     - Issues: Read & Write
-     - Checks: Read & Write
-     - Metadata: Read-only
-   - Organization:
-     - Members: Read-only
-4. **Subscribe to events**: `pull_request`, `push` (optional for testing)
-5. Click "Create GitHub App"
-6. Note the **App ID** → set as `GITHUB_APP_ID`
-7. Generate a **private key** → download the `.pem` file
-
-### Step 3: Encode and store the private key
+The setup script uses the GitHub App Manifest flow — it opens your
+browser, you click "Create GitHub App", and it writes credentials to
+`.env` automatically:
 
 ```bash
-# Encode the PEM file
-base64 < polaris-test-dev.private-key.pem | tr -d '\n'
-# Copy the output → GITHUB_APP_PRIVATE_KEY_B64 in .env
+# Start portless proxy first (so the script detects your URL)
+portless proxy start --https
+
+# Run the setup script
+pnpm tsx scripts/setup-github-app.ts
 ```
 
-### Step 4: Install on the test repo
+The script:
+1. Opens `http://localhost:3456/setup` in your browser
+2. Auto-submits a manifest to GitHub with correct permissions and URLs
+3. You click "Create GitHub App" on GitHub
+4. GitHub redirects back, the script exchanges the code for credentials
+5. Writes `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_B64`,
+   `GITHUB_APP_WEBHOOK_SECRET`, and `GITHUB_APP_SLUG` to your `.env`
 
-1. Go to `https://github.com/apps/polaris-test-dev/installations/new`
-2. Select your account
-3. Choose "Only select repositories" → pick `polaris-test-fixture`
-4. Click Install
+### After creating the app
 
-### Step 5: Verify
+1. Create a test fixture repo: `andreasasprou/polaris-test-fixture`
+2. Install the app on it:
+   ```
+   https://github.com/apps/polaris-test-dev/installations/new
+   ```
+   Select "Only select repositories" → pick the test fixture repo.
 
-```bash
-pnpm dev
-# Go to http://localhost:3001, sign up, complete onboarding
-# The test repo should appear in the repo selector
-```
+### Manual setup
 
-## 4. Run Migrations
+If the script doesn't work, see the
+[GitHub docs on creating apps from a manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+or create the app manually at https://github.com/settings/apps/new with:
+
+- **Homepage URL**: your portless URL (e.g., `https://polaris.localhost:1355`)
+- **Callback URL**: `{portless-url}/api/integrations/github/callback`
+- **Permissions**: Contents (R/W), Pull requests (R/W), Issues (R/W),
+  Checks (R/W), Metadata (Read), Members (Read)
+- Generate a private key → `base64 < key.pem | tr -d '\n'` → `GITHUB_APP_PRIVATE_KEY_B64`
+
+## 5. Run Migrations
 
 ```bash
 pnpm drizzle-kit push
@@ -102,13 +119,13 @@ pnpm drizzle-kit migrate
 This ensures your local DB schema matches the code (e.g., the `source`
 column on `interactive_sessions`).
 
-## 5. Automated Test User Creation
+## 6. Automated Test User Creation
 
 Agents can create test users programmatically without browser interaction:
 
 ```bash
 # Create a test user via the auth API
-curl -X POST http://localhost:3001/api/auth/sign-up/email \
+curl -X POST https://polaris.localhost:1355/api/auth/sign-up/email \
   -H "Content-Type: application/json" \
   -d '{
     "email": "e2e-test@polaris.dev",
@@ -124,7 +141,7 @@ curl -X POST http://localhost:3001/api/auth/sign-up/email \
 
 ```bash
 # 1. Open the app
-agent-browser --session e2e open http://localhost:3001/login
+agent-browser --session e2e open https://polaris.localhost:1355/login
 
 # 2. Sign up
 agent-browser --session e2e snapshot -i
@@ -158,7 +175,7 @@ WHERE id = (
 );
 ```
 
-## 6. Seeding Test Data
+## 7. Seeding Test Data
 
 ### Seed a session with diff events (for Review tab testing)
 
@@ -225,11 +242,11 @@ VALUES
 ### Verify the seeded data
 
 ```bash
-curl http://localhost:3001/api/sessions/test-sdk-session-001/events \
+curl https://polaris.localhost:1355/api/sessions/test-sdk-session-001/events \
   -H "Cookie: <session-cookie>"
 ```
 
-## 7. E2E Test Flow (agent-browser)
+## 8. E2E Test Flow (agent-browser)
 
 A complete E2E test that an agent can run:
 
@@ -238,7 +255,7 @@ A complete E2E test that an agent can run:
 SESSION="polaris-e2e"
 
 # 1. Create test user
-agent-browser --session $SESSION open http://localhost:3001/login
+agent-browser --session $SESSION open https://polaris.localhost:1355/login
 agent-browser --session $SESSION wait --load networkidle
 agent-browser --session $SESSION snapshot -i
 agent-browser --session $SESSION click @signUpTab
@@ -254,7 +271,7 @@ agent-browser --session $SESSION wait --load networkidle
 psql $DATABASE_URL -c "UPDATE organization SET metadata = ... "
 
 # 3. Navigate to dashboard
-agent-browser --session $SESSION open http://localhost:3001/<org-slug>/dashboard
+agent-browser --session $SESSION open https://polaris.localhost:1355/<org-slug>/dashboard
 agent-browser --session $SESSION screenshot screenshots/dashboard.png
 
 # 4. Check sidebar sessions
@@ -262,7 +279,7 @@ agent-browser --session $SESSION snapshot -i
 # Verify session list renders
 
 # 5. Navigate to a seeded session with diffs
-agent-browser --session $SESSION open http://localhost:3001/<org-slug>/sessions/<session-id>
+agent-browser --session $SESSION open https://polaris.localhost:1355/<org-slug>/sessions/<session-id>
 agent-browser --session $SESSION click @reviewTab
 agent-browser --session $SESSION screenshot screenshots/review-tab.png
 # Verify diff viewer renders
@@ -271,13 +288,13 @@ agent-browser --session $SESSION screenshot screenshots/review-tab.png
 agent-browser --session $SESSION close
 ```
 
-## 8. Webhook Forwarding (Optional)
+## 9. Webhook Forwarding (Optional)
 
 For testing GitHub webhooks locally:
 
 ```bash
 # Install smee-client
-npx smee-client --url https://smee.io/YOUR_CHANNEL --target http://localhost:3001/api/webhooks/github
+npx smee-client --url https://smee.io/YOUR_CHANNEL --target https://polaris.localhost:1355/api/webhooks/github
 ```
 
 Or use `ngrok`:
@@ -286,7 +303,7 @@ ngrok http 3001
 # Update the GitHub App webhook URL to the ngrok URL
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### "source column does not exist"
 Run migrations: `pnpm drizzle-kit push`

@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "portless run --https next dev --turbopack",
+    "dev:raw": "next dev --turbopack",
     "build": "node scripts/vercel-build.mjs",
     "build:next": "next build",
     "start": "next start",
