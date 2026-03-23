@@ -129,6 +129,7 @@ export async function createRuntime(input: {
   sandboxId?: string;
   sandboxBaseUrl?: string;
   agentServerUrl?: string;
+  proxyCmdId?: string;
   sdkSessionId?: string;
   epoch: number;
   restoreSource: string;
@@ -148,8 +149,12 @@ export async function updateRuntime(
     sandboxId: string;
     sandboxBaseUrl: string;
     agentServerUrl: string;
+    proxyCmdId: string;
     sdkSessionId: string;
     status: string;
+    stopReason: string;
+    usageSummary: Record<string, unknown>;
+    teardownArtifacts: Record<string, unknown>;
     endedAt: Date;
   }>,
 ) {
@@ -171,6 +176,15 @@ export async function getActiveRuntime(sessionId: string) {
         inArray(interactiveSessionRuntimes.status, LIVE_RUNTIME_STATUSES),
       ),
     )
+    .limit(1);
+  return row ?? null;
+}
+
+export async function getRuntimeById(id: string) {
+  const [row] = await db
+    .select()
+    .from(interactiveSessionRuntimes)
+    .where(eq(interactiveSessionRuntimes.id, id))
     .limit(1);
   return row ?? null;
 }

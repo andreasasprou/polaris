@@ -164,7 +164,8 @@ export const callbackInbox = pgTable(
     // Payload
     callbackType: text("callback_type").notNull(),
     // Values: 'prompt_accepted', 'prompt_complete', 'prompt_failed',
-    //         'permission_requested', 'question_requested', 'permission_resumed'
+    //         'proxy_diagnostics', 'permission_requested',
+    //         'question_requested', 'permission_resumed'
     payload: jsonb("payload")
       .$type<Record<string, unknown>>()
       .default({})

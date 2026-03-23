@@ -49,6 +49,16 @@ export default async function SettingsPage({
             </CardHeader>
           </Card>
         </Link>
+        <Link href={op("/settings/observability")} className="block transition-colors hover:opacity-80">
+          <Card>
+            <CardHeader>
+              <CardTitle>Observability</CardTitle>
+              <CardDescription>
+                Configure sandbox debug capture, raw logs, and support tooling.
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        </Link>
       </div>
     </div>
   );

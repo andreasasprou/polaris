@@ -19,6 +19,13 @@ import { proxyLog } from "./logger";
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1000; // 1s, 4s, 16s
 
+export type CallbackDeliveryResult = {
+  success: boolean;
+  attempts: number;
+  deliveryMs: number;
+  statusCode?: number;
+};
+
 /**
  * Sign a callback body with HMAC-SHA256.
  */
@@ -36,7 +43,7 @@ async function deliverEntry(
   entry: OutboxEntry,
   callbackUrl: string,
   hmacKey: string,
-): Promise<boolean> {
+): Promise<CallbackDeliveryResult> {
   const body: CallbackBody = {
     jobId: entry.jobId,
     attemptId: entry.attemptId,
@@ -79,7 +86,12 @@ async function deliverEntry(
           status: res.status,
           deliveryMs: Date.now() - deliveryStart,
         });
-        return true;
+        return {
+          success: true,
+          attempts: attempt + 1,
+          deliveryMs: Date.now() - deliveryStart,
+          statusCode: res.status,
+        };
       }
 
       // 4xx (non-409) = permanent failure, don't retry
@@ -90,7 +102,12 @@ async function deliverEntry(
           status: res.status,
         });
         markFailed(entry.callbackId);
-        return false;
+        return {
+          success: false,
+          attempts: attempt + 1,
+          deliveryMs: Date.now() - deliveryStart,
+          statusCode: res.status,
+        };
       }
 
       // 5xx = retry
@@ -118,7 +135,11 @@ async function deliverEntry(
     deliveryMs: Date.now() - deliveryStart,
   });
   markFailed(entry.callbackId);
-  return false;
+  return {
+    success: false,
+    attempts: MAX_RETRIES,
+    deliveryMs: Date.now() - deliveryStart,
+  };
 }
 
 /**
@@ -133,7 +154,7 @@ export async function emitCallback(params: {
   payload: Record<string, unknown>;
   callbackUrl: string;
   hmacKey: string;
-}): Promise<OutboxEntry> {
+}): Promise<{ entry: OutboxEntry; result: CallbackDeliveryResult }> {
   // Write to outbox first (durable before delivery attempt)
   const entry = createOutboxEntry({
     jobId: params.jobId,
@@ -144,9 +165,9 @@ export async function emitCallback(params: {
   });
 
   // Attempt delivery (non-blocking on failure — sweeper picks up later)
-  await deliverEntry(entry, params.callbackUrl, params.hmacKey);
+  const result = await deliverEntry(entry, params.callbackUrl, params.hmacKey);
 
-  return entry;
+  return { entry, result };
 }
 
 /**

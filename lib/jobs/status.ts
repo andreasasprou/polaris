@@ -107,6 +107,7 @@ export const CALLBACK_TYPES = [
   "prompt_accepted",
   "prompt_complete",
   "prompt_failed",
+  "proxy_diagnostics",
   "permission_requested",
   "question_requested",
   "permission_resumed",

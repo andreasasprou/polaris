@@ -198,7 +198,7 @@ export async function dispatchCodingTask(
     }
 
     const { destroySandbox } = await import("./sandbox-lifecycle");
-    await destroySandbox(session.id).catch(() => {});
+    await destroySandbox(session.id, "coding_task_dispatch_failed").catch(() => {});
 
     const { casSessionStatus } = await import("@/lib/sessions/actions");
     await casSessionStatus(session.id, ["creating", "active", "idle"], "failed").catch(() => {});

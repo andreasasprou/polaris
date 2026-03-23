@@ -22,12 +22,38 @@ export PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
 
 PSQL_ARGS=(-X -v ON_ERROR_STOP=1)
 
+is_neon_pooler_host() {
+  local host_lower
+  host_lower="$(printf '%s' "$PGHOST" | tr '[:upper:]' '[:lower:]')"
+  [[ "$host_lower" == *"pooler"* && "$host_lower" == *"neon.tech"* ]]
+}
+
+run_read_only_psql() {
+  {
+    printf 'BEGIN READ ONLY;\n'
+    cat
+    printf '\nROLLBACK;\n'
+  } | psql "${PSQL_ARGS[@]}"
+}
+
 if [[ "${1:-}" == "-f" && -n "${2:-}" ]]; then
-  psql "${PSQL_ARGS[@]}" -f "$2"
+  if is_neon_pooler_host; then
+    run_read_only_psql <"$2"
+  else
+    psql "${PSQL_ARGS[@]}" -f "$2"
+  fi
 elif [[ -n "${1:-}" ]]; then
-  psql "${PSQL_ARGS[@]}" -c "$1"
+  if is_neon_pooler_host; then
+    printf '%s\n' "$1" | run_read_only_psql
+  else
+    psql "${PSQL_ARGS[@]}" -c "$1"
+  fi
 elif [[ ! -t 0 ]]; then
-  psql "${PSQL_ARGS[@]}"
+  if is_neon_pooler_host; then
+    run_read_only_psql
+  else
+    psql "${PSQL_ARGS[@]}"
+  fi
 else
   echo "Usage:"
   echo "  $0 \"SELECT count(*) FROM sandbox_agent.events\""

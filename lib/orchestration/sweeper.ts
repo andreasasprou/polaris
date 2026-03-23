@@ -23,9 +23,11 @@ import {
   casJobStatus,
   casAttemptStatus,
   appendJobEvent,
+  getActiveAttempt,
 } from "@/lib/jobs/actions";
 import { runPostProcessing } from "./postprocess";
 import { useLogger } from "@/lib/evlog";
+import type { ProxyStatus } from "@/lib/sandbox-proxy/types";
 
 const SWEEPER_LOCK_ID = 42_000_001; // Arbitrary advisory lock ID
 
@@ -173,7 +175,7 @@ async function sweepTimedOutJobs(): Promise<number> {
         if (job.sessionId) {
           try {
             const { destroySandbox } = await import("./sandbox-lifecycle");
-            await destroySandbox(job.sessionId);
+            await destroySandbox(job.sessionId, "sweeper_timeout");
           } catch {
             // Best-effort — controller will catch it next cycle
           }
@@ -205,50 +207,35 @@ async function sweepTimedOutJobs(): Promise<number> {
 async function sweepStaleRunningJobs(): Promise<number> {
   const log = useLogger();
   const { getStaleRunningJobs } = await import("@/lib/jobs/actions");
-  const staleJobs = await getStaleRunningJobs(5);
+  const staleMinutes = 5;
+  const staleJobs = await getStaleRunningJobs(staleMinutes);
   let count = 0;
 
   for (const job of staleJobs) {
-    // Probe sandbox health with three-state result:
-    // "alive" = sandbox responded OK, "dead" = sandbox URL missing or
-    // responded with non-OK, "inconclusive" = network/DNS/timeout error.
-    // Only kill on "dead" — inconclusive could be a transient hiccup.
-    let probeResult: "alive" | "dead" | "inconclusive" = "dead";
-    if (job.sessionId) {
-      try {
-        const { getInteractiveSession } = await import("@/lib/sessions/actions");
-        const session = await getInteractiveSession(job.sessionId);
-        if (session?.sandboxBaseUrl) {
-          try {
-            const response = await fetch(`${session.sandboxBaseUrl}/health`, {
-              signal: AbortSignal.timeout(5_000),
-            });
-            if (response.ok) {
-              const body = await response.json().catch(() => null);
-              probeResult = body?.ok === true ? "alive" : "dead";
-            } else {
-              // Sandbox responded but not healthy — confirmed dead
-              probeResult = "dead";
-            }
-          } catch {
-            // Network error, DNS failure, timeout — inconclusive
-            probeResult = "inconclusive";
-          }
-        }
-        // No sandboxBaseUrl → confirmed dead (never provisioned or already cleaned up)
-      } catch {
-        probeResult = "inconclusive";
-      }
-    }
+    const probe = await probeSandboxStatus(job.sessionId, staleMinutes);
 
-    if (probeResult === "alive") {
-      log.set({ sweep: { [`staleButAlive_${job.id}`]: true } });
+    if (probe.outcome === "alive") {
+      log.set({
+        sweep: {
+          [`staleButAlive_${job.id}`]: {
+            reason: probe.reason,
+            proxyState: summarizeProxyStatus(probe.status),
+          },
+        },
+      });
       continue;
     }
 
-    if (probeResult === "inconclusive") {
+    if (probe.outcome === "inconclusive") {
       // Don't kill — log and retry on the next sweep cycle
-      log.set({ sweep: { [`staleProbeInconclusive_${job.id}`]: true } });
+      log.set({
+        sweep: {
+          [`staleProbeInconclusive_${job.id}`]: {
+            reason: probe.reason,
+            proxyState: summarizeProxyStatus(probe.status),
+          },
+        },
+      });
       continue;
     }
 
@@ -262,9 +249,30 @@ async function sweepStaleRunningJobs(): Promise<number> {
 
     await appendJobEvent(job.id, "timeout", undefined, {
       reason: "sweeper_stale_progress",
+      probeReason: probe.reason,
     });
     count++;
-    log.set({ sweep: { [`staleKilled_${job.id}`]: true } });
+    log.set({
+      sweep: {
+        [`staleKilled_${job.id}`]: {
+          reason: probe.reason,
+          proxyState: summarizeProxyStatus(probe.status),
+        },
+      },
+    });
+
+    const activeAttempt = await getActiveAttempt(job.id);
+    if (activeAttempt) {
+      await casAttemptStatus(
+        activeAttempt.id,
+        ["dispatching", "dispatch_unknown", "accepted", "running", "waiting_human"],
+        "failed",
+        {
+          error: `Sandbox unresponsive: ${probe.reason}`,
+          completedAt: new Date(),
+        },
+      ).catch(() => {});
+    }
 
     // Heal session
     if (job.sessionId) {
@@ -280,7 +288,7 @@ async function sweepStaleRunningJobs(): Promise<number> {
     } else {
       if (job.sessionId) {
         const { destroySandbox } = await import("./sandbox-lifecycle");
-        await destroySandbox(job.sessionId).catch(() => {});
+        await destroySandbox(job.sessionId, "sweeper_stale_progress").catch(() => {});
       }
       if (job.automationRunId) {
         const { updateAutomationRun } = await import("@/lib/automations/actions");
@@ -294,6 +302,114 @@ async function sweepStaleRunningJobs(): Promise<number> {
   }
 
   return count;
+}
+
+async function probeSandboxStatus(
+  sessionId: string | null,
+  staleMinutes: number,
+): Promise<{
+  outcome: "alive" | "dead" | "inconclusive";
+  reason: string;
+  status?: ProxyStatus;
+}> {
+  if (!sessionId) {
+    return { outcome: "dead", reason: "missing_session" };
+  }
+
+  try {
+    const { getInteractiveSession } = await import("@/lib/sessions/actions");
+    const session = await getInteractiveSession(sessionId);
+    if (!session?.sandboxBaseUrl) {
+      return { outcome: "dead", reason: "missing_sandbox_base_url" };
+    }
+
+    const response = await fetch(`${session.sandboxBaseUrl}/status`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      return { outcome: "dead", reason: `status_http_${response.status}` };
+    }
+
+    const body = (await response.json()) as ProxyStatus;
+    return classifyProxyStatus(body, staleMinutes);
+  } catch (error) {
+    return {
+      outcome: "inconclusive",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function classifyProxyStatus(
+  status: ProxyStatus,
+  staleMinutes: number,
+): {
+  outcome: "alive" | "dead" | "inconclusive";
+  reason: string;
+  status: ProxyStatus;
+} {
+  const staleMs = staleMinutes * 60_000;
+  const now = Date.now();
+  const lastEventMs = parseIso(status.activity.lastEventAt);
+  const lastCallbackAttemptMs = parseIso(status.activity.lastCallbackAttemptAt);
+  const recentEventActivity = lastEventMs != null && now - lastEventMs < staleMs;
+  const recentNonDiagnosticCallback =
+    status.activity.lastCallbackType != null &&
+    status.activity.lastCallbackType !== "proxy_diagnostics" &&
+    lastCallbackAttemptMs != null &&
+    now - lastCallbackAttemptMs < staleMs;
+
+  if (status.state !== "running") {
+    return { outcome: "dead", reason: `proxy_state_${status.state}`, status };
+  }
+
+  if (status.agentHealth.status === "unreachable") {
+    return { outcome: "dead", reason: "agent_unreachable", status };
+  }
+
+  if (recentEventActivity || recentNonDiagnosticCallback) {
+    return { outcome: "alive", reason: "recent_proxy_activity", status };
+  }
+
+  const backlog =
+    status.outbox.pendingNonDiagnosticCount +
+    status.outbox.failedNonDiagnosticCount;
+  if (backlog > 0) {
+    return { outcome: "inconclusive", reason: "callback_backlog_without_recent_activity", status };
+  }
+
+  return { outcome: "dead", reason: "proxy_stalled_without_recent_activity", status };
+}
+
+function parseIso(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function summarizeProxyStatus(status: ProxyStatus | undefined): Record<string, unknown> | undefined {
+  if (!status) return undefined;
+  return {
+    state: status.state,
+    agentHealth: status.agentHealth.status,
+    totalChecks: status.agentHealth.totalChecks,
+    failedChecks: status.agentHealth.failedChecks,
+    eventCount: status.activity.eventCount,
+    lastEventAt: status.activity.lastEventAt,
+    lastCallbackAttemptAt: status.activity.lastCallbackAttemptAt,
+    lastCallbackDeliveredAt: status.activity.lastCallbackDeliveredAt,
+    lastCallbackType: status.activity.lastCallbackType,
+    lastCallbackAttemptSucceeded: status.activity.lastCallbackAttemptSucceeded,
+    outbox: status.outbox,
+    resources: {
+      rssBytes: status.resources.process.rssBytes,
+      heapUsedBytes: status.resources.process.heapUsedBytes,
+      loadAvg1m: status.resources.host.loadAvg1m,
+      freeMemBytes: status.resources.host.freeMemBytes,
+      diskFreeBytes: status.resources.disk?.freeBytes,
+    },
+    recentLogs: status.recentLogs.slice(-5),
+  };
 }
 
 /**
@@ -815,7 +931,7 @@ async function finalizeFailedReviewJob(
   if (job.sessionId) {
     try {
       const { destroySandbox } = await import("./sandbox-lifecycle");
-      await destroySandbox(job.sessionId);
+      await destroySandbox(job.sessionId, "review_failed_terminal");
     } catch {
       // Best-effort — controller will catch it next cycle
     }

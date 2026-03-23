@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeProcessLogEntries,
+  parseFollowLogs,
   parseProcessLogStream,
   resolveProcessLogStream,
 } from "@/lib/sessions/process-logs";
@@ -20,6 +21,13 @@ describe("process log helpers", () => {
     expect(parseProcessLogStream("combined")).toBe("combined");
     expect(parseProcessLogStream("invalid")).toBeNull();
     expect(parseProcessLogStream(null)).toBeNull();
+  });
+
+  it("parses live follow flags", () => {
+    expect(parseFollowLogs("true")).toBe(true);
+    expect(parseFollowLogs("1")).toBe(true);
+    expect(parseFollowLogs("false")).toBe(false);
+    expect(parseFollowLogs(null)).toBe(false);
   });
 
   it("decodes base64-encoded log entries", () => {

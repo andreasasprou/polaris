@@ -263,7 +263,7 @@ async function postprocessCodingTask(job: JobRow): Promise<void> {
     if (job.sessionId && !sideEffects.sandbox_destroyed) {
       try {
         const { destroySandbox } = await import("./sandbox-lifecycle");
-        await destroySandbox(job.sessionId);
+        await destroySandbox(job.sessionId, "coding_task_postprocess_complete");
         await markSideEffect(job.id, "sandbox_destroyed");
       } catch {
         // Best-effort — runtime controller will catch it next cycle
@@ -881,7 +881,7 @@ async function postprocessReview(job: JobRow): Promise<void> {
     if (job.sessionId && !sideEffects.sandbox_destroyed) {
       try {
         const { destroySandbox } = await import("./sandbox-lifecycle");
-        await destroySandbox(job.sessionId);
+        await destroySandbox(job.sessionId, "review_postprocess_complete");
         await markSideEffect(job.id, "sandbox_destroyed");
       } catch {
         // Best-effort — runtime controller will catch it next cycle

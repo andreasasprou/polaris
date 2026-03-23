@@ -6,7 +6,12 @@ import {
   getLatestRuntime,
 } from "@/lib/sessions/actions";
 import {
+  getOrgObservabilitySettings,
+  isSandboxRawLogDebugEnabled,
+} from "@/lib/observability/org-settings";
+import {
   decodeProcessLogEntries,
+  parseFollowLogs,
   parseProcessLogStream,
   resolveProcessLogStream,
   type ProcessLogStream,
@@ -70,10 +75,62 @@ export const GET = withEvlog(async (
   const url = new URL(req.url);
   const processId = url.searchParams.get("processId");
   const requestedStream = parseProcessLogStream(url.searchParams.get("stream"));
+  const follow = parseFollowLogs(url.searchParams.get("follow"));
   const tail = url.searchParams.get("tail") ?? "200";
   const proxyBase = runtime.sandboxBaseUrl;
+  const orgObservability = await getOrgObservabilitySettings(orgId);
 
   try {
+    if (follow) {
+      if (!processId) {
+        return NextResponse.json(
+          { error: "processId is required when follow=true" },
+          { status: 400 },
+        );
+      }
+
+      if (!isSandboxRawLogDebugEnabled(orgObservability)) {
+        return NextResponse.json(
+          { error: "Raw log follow is only available while org debug capture is enabled" },
+          { status: 403 },
+        );
+      }
+
+      const process = await fetchProcess(proxyBase, processId);
+      const stream = resolveProcessLogStream(requestedStream, process);
+      const followParams = new URLSearchParams({
+        stream,
+        tail,
+        follow: "true",
+      });
+
+      const response = await fetch(
+        `${proxyBase}/processes/${encodeURIComponent(processId)}/logs?${followParams}`,
+        {
+          headers: { Accept: "text/event-stream" },
+        },
+      );
+
+      if (!response.ok || !response.body) {
+        return NextResponse.json(
+          {
+            error: "Failed to start process log follow",
+            status: response.status,
+          },
+          { status: 502 },
+        );
+      }
+
+      return new Response(response.body, {
+        status: 200,
+        headers: {
+          "Content-Type": response.headers.get("content-type") ?? "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      });
+    }
+
     // If a specific processId is requested, fetch its logs directly
     if (processId) {
       const process = await fetchProcess(proxyBase, processId);

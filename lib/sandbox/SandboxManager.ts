@@ -1,5 +1,5 @@
 import { Sandbox, type NetworkPolicy } from "@vercel/sandbox";
-import type { SandboxConfig } from "./types";
+import type { SandboxConfig, SandboxUsageSummary } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
 
@@ -8,16 +8,27 @@ const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes
  * Uses Basic auth format (x-access-token:<token>) because git HTTPS requires it —
  * Bearer tokens only work for the GitHub REST/GraphQL API, not git protocol.
  */
-function buildGitNetworkPolicy(gitToken: string): NetworkPolicy {
+function buildSandboxNetworkPolicy(config: {
+  gitToken: string;
+  observability?: SandboxConfig["observability"];
+}): NetworkPolicy {
+  const { gitToken, observability } = config;
   const basicAuth = Buffer.from(`x-access-token:${gitToken}`).toString("base64");
   const rule = [{ transform: [{ headers: { Authorization: `Basic ${basicAuth}` } }] }];
-  return {
-    allow: {
-      "github.com": rule,
-      "*.github.com": rule,
-      "*": [], // allow all other traffic (npm, pip, etc.)
-    },
+  const allow: Record<string, { transform?: Array<{ headers?: Record<string, string> }> }[]> = {
+    "github.com": rule,
+    "*.github.com": rule,
+    "*": [], // allow all other traffic (npm, pip, etc.)
   };
+
+  const axiomIngestUrl = observability?.axiomIngestUrl;
+  const axiomToken = observability?.axiomToken;
+  if (axiomIngestUrl && axiomToken) {
+    const host = new URL(axiomIngestUrl).hostname;
+    allow[host] = [{ transform: [{ headers: { Authorization: `Bearer ${axiomToken}` } }] }];
+  }
+
+  return { allow };
 }
 
 export class SandboxManager {
@@ -35,7 +46,7 @@ export class SandboxManager {
       ports: config.ports,
       env: config.env,
       // Inject GitHub auth at the network level — sandbox never sees raw token
-      networkPolicy: buildGitNetworkPolicy(config.gitToken),
+      networkPolicy: buildSandboxNetworkPolicy(config),
     };
 
     if (source.type === "snapshot") {
@@ -134,6 +145,28 @@ export class SandboxManager {
     }
   }
 
+  async stopAndCollectUsage(
+    sandbox: Sandbox,
+  ): Promise<SandboxUsageSummary> {
+    const createdAt =
+      sandbox.createdAt instanceof Date ? sandbox.createdAt.toISOString() : undefined;
+    const createdAtMs =
+      sandbox.createdAt instanceof Date ? sandbox.createdAt.getTime() : undefined;
+
+    await sandbox.stop({ blocking: true });
+
+    return {
+      sandboxId: sandbox.sandboxId,
+      status: sandbox.status,
+      createdAt,
+      stoppedAt: new Date().toISOString(),
+      timeoutMs: sandbox.timeout,
+      activeCpuUsageMs: sandbox.activeCpuUsageMs,
+      networkUsage: sandbox.networkTransfer,
+      ageMs: createdAtMs != null ? Date.now() - createdAtMs : undefined,
+    };
+  }
+
   /**
    * Snapshot a running sandbox. This stops the sandbox automatically.
    * Returns the snapshot metadata or null if snapshotting failed.
@@ -161,6 +194,7 @@ export class SandboxManager {
     timeoutMs?: number;
     ports?: number[];
     env?: Record<string, string>;
+    observability?: SandboxConfig["observability"];
   }): Promise<Sandbox> {
     return Sandbox.create({
       token: process.env.VERCEL_TOKEN,
@@ -169,7 +203,7 @@ export class SandboxManager {
       timeout: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       ports: config.ports,
       env: config.env,
-      networkPolicy: buildGitNetworkPolicy(config.gitToken),
+      networkPolicy: buildSandboxNetworkPolicy(config),
       source: { type: "snapshot", snapshotId: config.snapshotId },
     });
   }
@@ -179,7 +213,7 @@ export class SandboxManager {
    * Used on warm/suspend resume to refresh expired installation tokens.
    */
   async updateGitToken(sandbox: Sandbox, gitToken: string): Promise<void> {
-    await sandbox.updateNetworkPolicy(buildGitNetworkPolicy(gitToken));
+    await sandbox.updateNetworkPolicy(buildSandboxNetworkPolicy({ gitToken }));
   }
 
   /**
