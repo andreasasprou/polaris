@@ -7,6 +7,7 @@ import {
   refreshMcpServerAuth,
 } from "./actions";
 import { mcpServers } from "./schema";
+import { createMcpOAuthTokenParams } from "./oauth-resource";
 import type {
   CatalogInstallationView,
   McpDiscoveredTool,
@@ -266,7 +267,7 @@ async function resolveServer(row: McpRow): Promise<McpServerEntry | null> {
           const refreshRes = await safeFetch(row.oauthTokenEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
+            body: createMcpOAuthTokenParams(row.serverUrl, {
               grant_type: "refresh_token",
               refresh_token: oauthConfig.refreshToken,
               client_id: row.oauthClientId ?? "",

@@ -9,6 +9,7 @@ const {
   verifyMcpOAuthStateMock,
   findMcpServerByIdAndOrgMock,
   dbSelectMock,
+  safeFetchMock,
 } = vi.hoisted(() => ({
   headersMock: vi.fn(),
   getSessionMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   verifyMcpOAuthStateMock: vi.fn(),
   findMcpServerByIdAndOrgMock: vi.fn(),
   dbSelectMock: vi.fn(),
+  safeFetchMock: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({
@@ -50,7 +52,7 @@ vi.mock("@/lib/mcp-servers/queries", () => ({
 }));
 
 vi.mock("@/lib/mcp-servers/url-validation", () => ({
-  safeFetch: vi.fn(),
+  safeFetch: safeFetchMock,
 }));
 
 vi.mock("@/lib/config/urls", () => ({
@@ -155,5 +157,59 @@ describe("GET /api/mcp-servers/oauth/callback", () => {
     expect(response.headers.get("location")).toBe(
       "https://polaris.example.com/acme/integrations/mcp/sentry?error=server+not+found",
     );
+  });
+
+  it("sends the MCP resource during the token exchange", async () => {
+    verifyMcpOAuthStateMock.mockReturnValue({
+      orgId: "org-1",
+      userId: "user-1",
+      serverId: "server-1",
+      nonce: "nonce-1",
+      exp: Math.floor(Date.now() / 1000) + 300,
+    });
+    findMcpServerByIdAndOrgMock.mockResolvedValue({
+      id: "server-1",
+      serverUrl: "https://mcp.example.com/sse",
+      catalogSlug: "sentry",
+      oauthTokenEndpoint: "https://oauth.example.com/token",
+      oauthClientId: "client-123",
+    });
+    safeFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "access-123",
+          refresh_token: "refresh-123",
+          expires_in: 3600,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await GET(
+      new Request(
+        "https://polaris.example.com/api/mcp-servers/oauth/callback?code=code-123&state=signed-state",
+        {
+          headers: {
+            cookie: "mcp_oauth_verifier_server-1=verifier-123",
+          },
+        },
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    expect(safeFetchMock).toHaveBeenCalledTimes(1);
+
+    const [, init] = safeFetchMock.mock.calls[0];
+    expect(init.body.toString()).toContain(
+      "resource=https%3A%2F%2Fmcp.example.com%2Fsse",
+    );
+    expect(updateMcpServerAuthMock).toHaveBeenCalledWith("server-1", "org-1", {
+      accessToken: "access-123",
+      refreshToken: "refresh-123",
+      expiresAt: expect.any(Number),
+    });
   });
 });

@@ -11,6 +11,7 @@ import { orgPath, getAppBaseUrl } from "@/lib/config/urls";
 import { db } from "@/lib/db";
 import { member } from "@/lib/db/auth-schema";
 import { withEvlog } from "@/lib/evlog";
+import { createMcpOAuthTokenParams } from "@/lib/mcp-servers/oauth-resource";
 
 const ERROR_MESSAGES: Record<string, string> = {
   access_denied: "Access was denied by the provider",
@@ -167,7 +168,7 @@ export const GET = withEvlog(async (req: Request) => {
     tokenRes = await safeFetch(server.oauthTokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+      body: createMcpOAuthTokenParams(server.serverUrl, {
         grant_type: "authorization_code",
         code,
         redirect_uri: callbackUrl,

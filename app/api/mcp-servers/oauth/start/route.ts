@@ -8,6 +8,7 @@ import { signMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { withEvlog } from "@/lib/evlog";
 import { validateOAuthEndpoints } from "@/lib/mcp-servers/url-validation";
+import { getCanonicalMcpResource } from "@/lib/mcp-servers/oauth-resource";
 
 export const GET = withEvlog(async (req: Request) => {
   const url = new URL(req.url);
@@ -159,6 +160,7 @@ export const GET = withEvlog(async (req: Request) => {
   authUrl.searchParams.set("state", state);
   authUrl.searchParams.set("code_challenge", codeChallenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
+  authUrl.searchParams.set("resource", getCanonicalMcpResource(server.serverUrl));
   if (server.oauthScopes) {
     authUrl.searchParams.set("scope", server.oauthScopes);
   }

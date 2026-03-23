@@ -209,6 +209,7 @@ describe("GET /api/mcp-servers/oauth/start", () => {
     );
 
     expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location")!);
     expect(updateMcpServerOAuthMetadataMock).toHaveBeenCalledWith(
       "server-1",
       "org-1",
@@ -216,6 +217,9 @@ describe("GET /api/mcp-servers/oauth/start", () => {
         oauthAuthorizationEndpoint: "https://example.com/authorize",
         oauthTokenEndpoint: "https://example.com/token",
       },
+    );
+    expect(location.searchParams.get("resource")).toBe(
+      "https://mcp.example.com/sse",
     );
   });
 
