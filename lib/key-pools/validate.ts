@@ -1,7 +1,7 @@
 import { RequestError } from "@/lib/errors/request-error";
 import {
+  getAllAgentTypes,
   getCompatibleProviders,
-  getEnabledAgentTypes,
   type ProviderType,
 } from "@/lib/sandbox-agent/agent-profiles";
 import type { AgentType } from "@/lib/sandbox-agent/types";
@@ -46,7 +46,7 @@ export async function validateCredentialRef(
 }
 
 export function assertSupportedAgentType(agentType: string): AgentType {
-  if (getEnabledAgentTypes().includes(agentType as AgentType)) {
+  if (getAllAgentTypes().includes(agentType as AgentType)) {
     return agentType as AgentType;
   }
 
@@ -57,7 +57,7 @@ export function isProviderCompatibleWithAgent(
   provider: string,
   agentType: string,
 ): boolean {
-  if (!getEnabledAgentTypes().includes(agentType as AgentType)) {
+  if (!getAllAgentTypes().includes(agentType as AgentType)) {
     return false;
   }
 

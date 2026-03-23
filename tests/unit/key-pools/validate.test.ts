@@ -23,6 +23,8 @@ describe("credential provider compatibility", () => {
   });
 
   it("throws a request error for unsupported agents", () => {
+    expect(assertSupportedAgentType("opencode")).toBe("opencode");
+    expect(assertSupportedAgentType("amp")).toBe("amp");
     expect(() => assertSupportedAgentType("foo")).toThrow(/Unsupported agent/);
     expect(() =>
       assertProviderCompatibleWithAgent("openai", "foo"),
