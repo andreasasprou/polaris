@@ -18,11 +18,12 @@ export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
+  const agentType = (body.agentType ?? "claude") as AgentType;
 
   try {
     const { repositoryId, agentSecretId, keyPoolId } = await validateAutomationRelationsForOrg({
       organizationId: orgId,
-      agentType: body.agentType as AgentType,
+      agentType,
       repositoryId: body.repositoryId ?? null,
       agentSecretId: body.agentSecretId ?? null,
       keyPoolId: body.keyPoolId ?? null,
@@ -35,7 +36,7 @@ export const POST = withEvlog(async (req: Request) => {
       triggerType: body.triggerType,
       triggerConfig: body.triggerConfig,
       prompt: body.prompt,
-      agentType: body.agentType,
+      agentType,
       model: body.model,
       agentMode: body.agentMode,
       repositoryId: repositoryId ?? undefined,

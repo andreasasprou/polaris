@@ -6,7 +6,7 @@ import type { AgentType } from "@/lib/sandbox-agent/types";
 
 export async function validateAutomationRelationsForOrg(input: {
   organizationId: string;
-  agentType: AgentType;
+  agentType?: AgentType | null;
   repositoryId?: string | null;
   agentSecretId?: string | null;
   keyPoolId?: string | null;
@@ -24,6 +24,7 @@ export async function validateAutomationRelationsForOrg(input: {
 
   const agentSecretId = input.agentSecretId ?? null;
   const keyPoolId = input.keyPoolId ?? null;
+  const agentType = input.agentType ?? "claude";
 
   // Mutual exclusivity
   if (agentSecretId && keyPoolId) {
@@ -42,7 +43,7 @@ export async function validateAutomationRelationsForOrg(input: {
     await validateCredentialRefForAgent(
       credentialRef,
       input.organizationId,
-      input.agentType,
+      agentType,
     );
   }
 
