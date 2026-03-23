@@ -19,21 +19,30 @@ pnpm install
 ## 2. Running the Dev Server
 
 Polaris uses [portless](https://github.com/nicolo-ribaudo/portless)
-for local HTTPS with a stable URL. This is required for GitHub OAuth
-callbacks and GitHub App webhooks (which reject bare `localhost`).
+for local HTTPS with a real TLD (`plrs.sh`). GitHub rejects `.localhost`
+webhook URLs and some OAuth providers reject `.localhost` subdomains.
+
+### One-time portless setup
+
+```bash
+npm install -g portless                              # global install
+sudo portless proxy start --https -p 443 --tld sh    # HTTPS on port 443, .sh TLD
+sudo portless trust                                  # trust local CA (no browser warnings)
+```
+
+Port 443 means no port in URLs. The proxy runs as a background daemon.
+
+### Start the dev server
 
 ```bash
 pnpm dev
-# → https://polaris.localhost:1355 (HTTPS, auto-generated certs)
+# → https://polaris.local.plrs.sh
 ```
 
-On first run, portless generates a local CA and adds it to your system
-trust store. No browser warnings.
-
-If you need to bypass portless (e.g., debugging):
+Bypass portless if needed:
 ```bash
-pnpm dev:raw
-# → http://localhost:3000 (plain Next.js)
+pnpm dev:raw          # http://localhost:3000
+PORTLESS=0 pnpm dev   # same, via env var
 ```
 
 ## 3. Environment Variables
@@ -47,7 +56,7 @@ BETTER_AUTH_SECRET=$(openssl rand -base64 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 
 # ── Better Auth URL (portless URL) ──
-BETTER_AUTH_URL=https://polaris.localhost:1355
+BETTER_AUTH_URL=https://polaris.local.plrs.sh
 
 # ── GitHub OAuth (for login button — can be dummy for email/password) ──
 GITHUB_CLIENT_ID=placeholder
@@ -102,7 +111,7 @@ If the script doesn't work, see the
 [GitHub docs on creating apps from a manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
 or create the app manually at https://github.com/settings/apps/new with:
 
-- **Homepage URL**: your portless URL (e.g., `https://polaris.localhost:1355`)
+- **Homepage URL**: your portless URL (e.g., `https://polaris.local.plrs.sh`)
 - **Callback URL**: `{portless-url}/api/integrations/github/callback`
 - **Permissions**: Contents (R/W), Pull requests (R/W), Issues (R/W),
   Checks (R/W), Metadata (Read), Members (Read)
@@ -125,7 +134,7 @@ Agents can create test users programmatically without browser interaction:
 
 ```bash
 # Create a test user via the auth API
-curl -X POST https://polaris.localhost:1355/api/auth/sign-up/email \
+curl -X POST https://polaris.local.plrs.sh/api/auth/sign-up/email \
   -H "Content-Type: application/json" \
   -d '{
     "email": "e2e-test@polaris.dev",
@@ -141,7 +150,7 @@ curl -X POST https://polaris.localhost:1355/api/auth/sign-up/email \
 
 ```bash
 # 1. Open the app
-agent-browser --session e2e open https://polaris.localhost:1355/login
+agent-browser --session e2e open https://polaris.local.plrs.sh/login
 
 # 2. Sign up
 agent-browser --session e2e snapshot -i
@@ -242,7 +251,7 @@ VALUES
 ### Verify the seeded data
 
 ```bash
-curl https://polaris.localhost:1355/api/sessions/test-sdk-session-001/events \
+curl https://polaris.local.plrs.sh/api/sessions/test-sdk-session-001/events \
   -H "Cookie: <session-cookie>"
 ```
 
@@ -255,7 +264,7 @@ A complete E2E test that an agent can run:
 SESSION="polaris-e2e"
 
 # 1. Create test user
-agent-browser --session $SESSION open https://polaris.localhost:1355/login
+agent-browser --session $SESSION open https://polaris.local.plrs.sh/login
 agent-browser --session $SESSION wait --load networkidle
 agent-browser --session $SESSION snapshot -i
 agent-browser --session $SESSION click @signUpTab
@@ -271,7 +280,7 @@ agent-browser --session $SESSION wait --load networkidle
 psql $DATABASE_URL -c "UPDATE organization SET metadata = ... "
 
 # 3. Navigate to dashboard
-agent-browser --session $SESSION open https://polaris.localhost:1355/<org-slug>/dashboard
+agent-browser --session $SESSION open https://polaris.local.plrs.sh/<org-slug>/dashboard
 agent-browser --session $SESSION screenshot screenshots/dashboard.png
 
 # 4. Check sidebar sessions
@@ -279,7 +288,7 @@ agent-browser --session $SESSION snapshot -i
 # Verify session list renders
 
 # 5. Navigate to a seeded session with diffs
-agent-browser --session $SESSION open https://polaris.localhost:1355/<org-slug>/sessions/<session-id>
+agent-browser --session $SESSION open https://polaris.local.plrs.sh/<org-slug>/sessions/<session-id>
 agent-browser --session $SESSION click @reviewTab
 agent-browser --session $SESSION screenshot screenshots/review-tab.png
 # Verify diff viewer renders
@@ -317,7 +326,7 @@ beforeAll(async () => {
         client_id: 'test-client-id',
         client_secret: 'test-client-secret',
         name: 'Polaris Test',
-        redirect_uris: ['https://polaris.localhost:1355/api/auth/callback/github'],
+        redirect_uris: ['https://polaris.local.plrs.sh/api/auth/callback/github'],
       }],
     },
   })
@@ -355,7 +364,7 @@ For testing GitHub webhooks locally:
 
 ```bash
 # Install smee-client
-npx smee-client --url https://smee.io/YOUR_CHANNEL --target https://polaris.localhost:1355/api/webhooks/github
+npx smee-client --url https://smee.io/YOUR_CHANNEL --target https://polaris.local.plrs.sh/api/webhooks/github
 ```
 
 Or use `ngrok`:

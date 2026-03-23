@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "portless run --https next dev --turbopack",
+    "dev": "portless polaris.local.plrs next dev --turbopack",
     "dev:raw": "next dev --turbopack",
     "build": "node scripts/vercel-build.mjs",
     "build:next": "next build",

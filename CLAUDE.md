@@ -62,7 +62,7 @@ These have caused real production bugs — avoid them:
 
 1. **Typecheck**: `pnpm typecheck` must pass.
 2. **Tests**: `pnpm test` (unit + integration) must pass. Use `pnpm test:unit` for fast feedback.
-3. **Visual verification** (UI changes): Use browser automation at `http://localhost:3001`.
+3. **Visual verification** (UI changes): Use browser automation at `https://polaris.local.plrs.sh`.
    Verify all session states: active (spinner), completed (checkmarks), failed/stopped (interrupted ■), hibernated/resumed.
 4. **Data verification**: Query `/api/interactive-sessions/[id]` and `/api/sessions/[id]/events` to confirm data consistency.
 5. **Run traces**: Query the `jobs` / `job_attempts` tables or hit `GET /api/jobs/[id]` to inspect dispatch lifecycle.
@@ -83,9 +83,11 @@ Production logs go to **Axiom** via evlog. Use Axiom MCP tools to debug.
 
 ## Local Development
 
-- **Dev server**: `pnpm dev` → `https://polaris.localhost:1355` (uses [portless](https://github.com/nicolo-ribaudo/portless) for HTTPS + stable URL). Use `pnpm dev:raw` to bypass portless.
-- **Setup guide**: See [`docs/guides/local-dev-e2e-testing.md`](docs/guides/local-dev-e2e-testing.md) for full setup including GitHub App creation, test user seeding, and E2E testing with `agent-browser`.
-- **GitHub App setup**: `pnpm tsx scripts/setup-github-app.ts` — interactive script that creates a test GitHub App via the manifest flow, exchanges credentials, and writes them to `.env`.
+- **Dev server**: `pnpm dev` → `https://polaris.local.plrs.sh` (uses [portless](https://www.npmjs.com/package/portless) for HTTPS with a real TLD that GitHub OAuth/Apps accept).
+- **Portless setup (one-time)**: `sudo portless proxy start --https -p 443 --tld sh`
+- **Bypass portless**: `pnpm dev:raw` or `PORTLESS=0 pnpm dev`
+- **GitHub App setup**: `pnpm tsx scripts/setup-github-app.ts` — creates a test GitHub App via the manifest flow, writes credentials to `.env`.
+- **Full setup guide**: [`docs/guides/local-dev-e2e-testing.md`](docs/guides/local-dev-e2e-testing.md)
 - **DB migrations**: `pnpm drizzle-kit push` to sync local schema with code.
 
 ## Key Commands
@@ -93,6 +95,6 @@ Production logs go to **Axiom** via evlog. Use Axiom MCP tools to debug.
 - `pnpm typecheck` — must pass before considering work complete
 - `pnpm test` — all tests (unit + integration)
 - `pnpm test:unit` — fast unit tests only (no DB)
-- `pnpm dev` — local dev server at `https://polaris.localhost:1355`
+- `pnpm dev` — local dev server at `https://polaris.local.plrs.sh`
 - `pnpm dev:raw` — plain Next.js at `http://localhost:3000` (no portless)
 - `pnpm tsx scripts/setup-github-app.ts` — create test GitHub App

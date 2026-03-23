@@ -8,6 +8,9 @@
  * 4. Exchanges the code for app credentials (ID, private key, webhook secret)
  * 5. Writes the credentials to .env
  *
+ * Prerequisites:
+ *   sudo portless proxy start --https -p 443 --tld sh
+ *
  * Usage:
  *   pnpm tsx scripts/setup-github-app.ts
  *
@@ -21,20 +24,15 @@ import { execSync } from "node:child_process";
 const PORT = 3456;
 const CALLBACK_URL = `http://localhost:${PORT}/callback`;
 
-// Detect the portless URL (e.g., https://polaris.localhost:1355)
-// Falls back to localhost:3001 if portless is not running
-function getAppUrl(): string {
-  try {
-    const result = execSync("portless get polaris 2>/dev/null", { encoding: "utf-8" }).trim();
-    if (result) return result;
-  } catch {}
-  return "http://localhost:3001";
-}
+// The portless URL for local dev. Requires:
+//   sudo portless proxy start --https -p 443 --tld sh
+// This gives us https://polaris.local.plrs.sh which is a valid public TLD
+// that GitHub accepts for OAuth callbacks and webhook URLs.
+const APP_URL = "https://polaris.local.plrs.sh";
 
-const APP_URL = getAppUrl();
-console.log(`Using app URL: ${APP_URL}\n`);
-
-// The manifest defines the GitHub App's configuration
+// The manifest defines the GitHub App's configuration.
+// Webhook URL uses the portless domain so GitHub can validate it.
+// active: false means GitHub won't actually send webhooks (no smee.io needed).
 const manifest = {
   name: "polaris-test-dev",
   url: APP_URL,
@@ -42,7 +40,7 @@ const manifest = {
   public: false,
   hook_attributes: {
     url: `${APP_URL}/api/webhooks/github`,
-    active: false, // Webhooks disabled by default for local dev
+    active: false,
   },
   redirect_url: CALLBACK_URL,
   callback_urls: [`${APP_URL}/api/integrations/github/callback`],
@@ -61,25 +59,31 @@ const manifest = {
 
 async function main() {
   console.log("🔧 Polaris GitHub App Setup\n");
-  console.log("This will create a GitHub App for local development.");
-  console.log("You'll be redirected to GitHub to confirm.\n");
+  console.log(`App URL:  ${APP_URL}`);
+  console.log("Webhooks: inactive (set active later with smee.io if needed)\n");
 
-  // Start a temporary server that:
-  // 1. Serves a page with a form that POSTs the manifest to GitHub
-  // 2. Handles the callback after GitHub creates the app
+  // Verify portless proxy is running with the right TLD
+  try {
+    const routes = execSync("portless list 2>&1", { encoding: "utf-8" });
+    if (routes.includes("No active routes") || !routes.includes("plrs")) {
+      console.log("⚠️  Portless proxy may not be running with --tld sh.");
+      console.log("   Run: sudo portless proxy start --https -p 443 --tld sh\n");
+    }
+  } catch {
+    console.log("⚠️  Portless not found. Install: npm install -g portless");
+    console.log("   Then: sudo portless proxy start --https -p 443 --tld sh\n");
+  }
+
   const { code, cleanup, localUrl } = await startCallbackServer();
 
-  console.log("Opening browser...\n");
+  console.log("Opening browser...");
   openBrowser(localUrl);
-  console.log("If the browser didn't open, go to:");
-  console.log(`  ${localUrl}\n`);
-  console.log("Waiting for GitHub redirect...\n");
+  console.log(`If the browser didn't open, go to: ${localUrl}\n`);
+  console.log("Click 'Create GitHub App' on GitHub, then wait...\n");
 
-  // Wait for the code from the callback
   const codeValue = await code;
   cleanup();
 
-  // Exchange the code for credentials
   console.log("Exchanging code for credentials...");
   const response = await fetch(
     `https://api.github.com/app-manifests/${codeValue}/conversions`,
@@ -102,12 +106,11 @@ async function main() {
 
   console.log(`\n✅ GitHub App created: "${app.name}" (ID: ${app.id})\n`);
 
-  // Base64-encode the private key
   const pemB64 = Buffer.from(app.pem).toString("base64");
 
   // Write to .env
   const envPath = ".env";
-  const envVars = {
+  const envVars: Record<string, string> = {
     GITHUB_APP_ID: String(app.id),
     GITHUB_APP_PRIVATE_KEY_B64: pemB64,
     GITHUB_APP_WEBHOOK_SECRET: app.webhook_secret,
@@ -116,7 +119,6 @@ async function main() {
 
   if (existsSync(envPath)) {
     let envContent = readFileSync(envPath, "utf-8");
-
     for (const [key, value] of Object.entries(envVars)) {
       const regex = new RegExp(`^${key}=.*$`, "m");
       if (regex.test(envContent)) {
@@ -125,23 +127,23 @@ async function main() {
         envContent += `\n${key}=${value}`;
       }
     }
-
     writeFileSync(envPath, envContent);
-    console.log("✅ Updated .env with GitHub App credentials\n");
   } else {
-    const content = Object.entries(envVars)
-      .map(([k, v]) => `${k}=${v}`)
-      .join("\n");
-    writeFileSync(envPath, content + "\n");
-    console.log("✅ Created .env with GitHub App credentials\n");
+    writeFileSync(
+      envPath,
+      Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join("\n") + "\n",
+    );
   }
 
+  console.log("✅ Wrote credentials to .env\n");
   console.log("Next steps:");
   console.log(`  1. Install the app on a test repo:`);
   console.log(`     https://github.com/apps/${app.slug}/installations/new`);
-  console.log(`  2. Run: pnpm dev`);
-  console.log(`  3. Sign up at http://localhost:3001/login\n`);
+  console.log(`  2. Start the dev server: pnpm dev`);
+  console.log(`  3. Sign up at ${APP_URL}/login\n`);
 }
+
+// ── Local server for the manifest flow ──
 
 function startCallbackServer(): Promise<{
   code: Promise<string>;
@@ -156,22 +158,18 @@ function startCallbackServer(): Promise<{
       const url = new URL(req.url!, `http://localhost:${PORT}`);
 
       if (url.pathname === "/" || url.pathname === "/setup") {
-        // Serve an HTML page that auto-submits the manifest to GitHub via POST
+        // Serve a page that auto-POSTs the manifest to GitHub
         const manifestJson = JSON.stringify(manifest);
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`
-          <!DOCTYPE html>
-          <html>
-          <body style="font-family: system-ui; text-align: center; padding: 60px;">
-            <h2>Creating Polaris Test GitHub App...</h2>
-            <p>Redirecting to GitHub...</p>
-            <form id="manifest-form" action="https://github.com/settings/apps/new" method="post">
-              <input type="hidden" name="manifest" value='${manifestJson.replace(/'/g, "&#39;")}' />
-            </form>
-            <script>document.getElementById('manifest-form').submit();</script>
-          </body>
-          </html>
-        `);
+        res.end(`<!DOCTYPE html>
+<html><body style="font-family:system-ui;text-align:center;padding:60px">
+<h2>Creating Polaris Test GitHub App...</h2>
+<p>Redirecting to GitHub...</p>
+<form id="f" action="https://github.com/settings/apps/new" method="post">
+<input type="hidden" name="manifest" value='${manifestJson.replace(/'/g, "&#39;")}'>
+</form>
+<script>document.getElementById('f').submit()</script>
+</body></html>`);
         return;
       }
 
@@ -179,21 +177,20 @@ function startCallbackServer(): Promise<{
         const code = url.searchParams.get("code");
         if (code) {
           res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(`
-            <html><body style="font-family: system-ui; text-align: center; padding: 60px;">
-              <h1>✅ GitHub App created!</h1>
-              <p>You can close this tab. The CLI is finishing setup...</p>
-            </body></html>
-          `);
+          res.end(`<html><body style="font-family:system-ui;text-align:center;padding:60px">
+<h1>✅ GitHub App created!</h1>
+<p>You can close this tab.</p>
+</body></html>`);
           resolveCode(code);
         } else {
           res.writeHead(400);
           res.end("Missing code parameter");
         }
-      } else {
-        res.writeHead(404);
-        res.end("Not found");
+        return;
       }
+
+      res.writeHead(404);
+      res.end("Not found");
     });
 
     server.listen(PORT, () => {
@@ -208,13 +205,10 @@ function startCallbackServer(): Promise<{
 
 function openBrowser(url: string) {
   try {
-    const platform = process.platform;
-    if (platform === "darwin") execSync(`open "${url}"`);
-    else if (platform === "linux") execSync(`xdg-open "${url}"`);
-    else if (platform === "win32") execSync(`start "" "${url}"`);
-  } catch {
-    // Browser open failed — user can copy URL manually
-  }
+    if (process.platform === "darwin") execSync(`open "${url}"`);
+    else if (process.platform === "linux") execSync(`xdg-open "${url}"`);
+    else if (process.platform === "win32") execSync(`start "" "${url}"`);
+  } catch {}
 }
 
 main().catch((err) => {
