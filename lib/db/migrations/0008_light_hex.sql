@@ -1,0 +1,2 @@
+ALTER TABLE "mcp_servers" DROP CONSTRAINT "mcp_servers_organization_id_name_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_mcp_servers_custom_name" ON "mcp_servers" USING btree ("organization_id","name") WHERE "mcp_servers"."catalog_slug" IS NULL;

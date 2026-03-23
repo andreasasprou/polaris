@@ -39,12 +39,12 @@ export default async function SettingsPage({
             </CardHeader>
           </Card>
         </Link>
-        <Link href={op("/settings/mcp")} className="block transition-colors hover:opacity-80">
+        <Link href={op("/integrations/mcp")} className="block transition-colors hover:opacity-80">
           <Card>
             <CardHeader>
-              <CardTitle>MCP Servers</CardTitle>
+              <CardTitle>MCP Marketplace</CardTitle>
               <CardDescription>
-                Connect external tools to agent sessions.
+                Install marketplace integrations and custom MCP servers.
               </CardDescription>
             </CardHeader>
           </Card>

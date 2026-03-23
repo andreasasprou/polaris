@@ -1,6 +1,18 @@
 import dns from "node:dns/promises";
 import https from "node:https";
+import net from "node:net";
 import { Readable } from "node:stream";
+
+const CROSS_ORIGIN_REDIRECT_HEADER_ALLOWLIST = new Set([
+  "accept",
+  "content-type",
+]);
+
+function normalizeHostname(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+}
 
 /** Check if an IP address is private/internal. */
 function isPrivateIp(ip: string): boolean {
@@ -34,22 +46,23 @@ function isPrivateIp(ip: string): boolean {
 
 /** Check if a hostname looks like a private/internal target (string-level). */
 export function isPrivateHostname(hostname: string): boolean {
+  const normalizedHostname = normalizeHostname(hostname);
   if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname.endsWith(".localhost")
+    normalizedHostname === "localhost" ||
+    normalizedHostname === "127.0.0.1" ||
+    normalizedHostname === "::1" ||
+    normalizedHostname.endsWith(".localhost")
   ) return true;
 
   // Check if hostname is a raw IP
-  if (isPrivateIp(hostname)) return true;
+  if (isPrivateIp(normalizedHostname)) return true;
 
   // Common internal DNS patterns
   if (
-    hostname.endsWith(".internal") ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".corp") ||
-    hostname.endsWith(".lan")
+    normalizedHostname.endsWith(".internal") ||
+    normalizedHostname.endsWith(".local") ||
+    normalizedHostname.endsWith(".corp") ||
+    normalizedHostname.endsWith(".lan")
   ) return true;
 
   return false;
@@ -84,18 +97,7 @@ export async function validateServerFetchUrl(urlStr: string): Promise<string | n
 
   try {
     const url = new URL(urlStr);
-    // Resolve DNS and check all IPs
-    const addresses = await dns.resolve4(url.hostname).catch(() => [] as string[]);
-    const addresses6 = await dns.resolve6(url.hostname).catch(() => [] as string[]);
-    const allAddresses = [...addresses, ...addresses6];
-
-    // If we can't resolve at all, block (fail-closed for server fetches)
-    if (allAddresses.length === 0) return null;
-
-    for (const ip of allAddresses) {
-      if (isPrivateIp(ip)) return null;
-    }
-
+    await resolveToPublicIp(url.hostname);
     return urlStr;
   } catch {
     return null;
@@ -103,22 +105,74 @@ export async function validateServerFetchUrl(urlStr: string): Promise<string | n
 }
 
 /**
- * Resolve a hostname to a validated public IPv4 address.
- * Returns the first safe address, or throws if all resolve to private.
+ * Validate OAuth endpoints before they are persisted or used.
  */
-async function resolveToPublicIp(hostname: string): Promise<string> {
-  // If hostname is already a raw IP, just validate it
-  if (isPrivateIp(hostname)) {
-    throw new Error(`SSRF blocked: ${hostname} is a private address`);
-  }
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return hostname;
-
-  const addresses = await dns.resolve4(hostname).catch(() => [] as string[]);
-  for (const ip of addresses) {
-    if (!isPrivateIp(ip)) return ip;
+export async function validateOAuthEndpoints(
+  authorizationEndpoint: string,
+  tokenEndpoint: string,
+): Promise<void> {
+  if (!isValidUrl(authorizationEndpoint)) {
+    throw new Error(
+      "oauthAuthorizationEndpoint must be a valid HTTPS URL (private/internal hosts blocked)",
+    );
   }
 
-  throw new Error(`SSRF blocked: ${hostname} resolves only to private/unresolvable addresses`);
+  if (!(await validateServerFetchUrl(tokenEndpoint))) {
+    throw new Error(
+      "oauthTokenEndpoint must be a valid HTTPS URL that does not resolve to a private/internal address",
+    );
+  }
+}
+
+type ResolvedPublicIp = {
+  address: string;
+  family: 4 | 6;
+};
+
+/**
+ * Resolve a hostname to a validated public IP address.
+ * Returns the first safe address, or throws if any address is private or
+ * the hostname is unresolvable.
+ */
+async function resolveToPublicIp(hostname: string): Promise<ResolvedPublicIp> {
+  const normalizedHostname = normalizeHostname(hostname);
+
+  if (isPrivateIp(normalizedHostname)) {
+    throw new Error(`SSRF blocked: ${normalizedHostname} is a private address`);
+  }
+
+  const literalFamily = net.isIP(normalizedHostname);
+  if (literalFamily === 4 || literalFamily === 6) {
+    return {
+      address: normalizedHostname,
+      family: literalFamily,
+    };
+  }
+
+  const ipv4Addresses = await dns.resolve4(normalizedHostname).catch(
+    () => [] as string[],
+  );
+  const ipv6Addresses = await dns.resolve6(normalizedHostname).catch(
+    () => [] as string[],
+  );
+  const allAddresses: ResolvedPublicIp[] = [
+    ...ipv4Addresses.map((address) => ({ address, family: 4 as const })),
+    ...ipv6Addresses.map((address) => ({ address, family: 6 as const })),
+  ];
+
+  if (allAddresses.length === 0) {
+    throw new Error(
+      `SSRF blocked: ${normalizedHostname} resolves only to private/unresolvable addresses`,
+    );
+  }
+
+  if (allAddresses.some(({ address }) => isPrivateIp(address))) {
+    throw new Error(
+      `SSRF blocked: ${normalizedHostname} resolves to a private address`,
+    );
+  }
+
+  return allAddresses[0];
 }
 
 /**
@@ -140,6 +194,8 @@ export async function safeFetch(
 ): Promise<Response> {
   const MAX_REDIRECTS = 3;
   let currentUrl = url;
+  let currentHeaders = new Headers(init.headers);
+  let currentBody = init.body ? await bodyToString(init.body) : undefined;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (!isValidUrl(currentUrl)) {
@@ -152,16 +208,14 @@ export async function safeFetch(
     const port = parsed.port ? parseInt(parsed.port) : 443;
 
     const res = await httpsRequestWithPinnedIp({
-      ip: resolvedIp,
+      ip: resolvedIp.address,
+      family: resolvedIp.family,
       port,
       servername: originalHostname,
       method: (init.method ?? "GET") as string,
       path: parsed.pathname + parsed.search,
-      headers: {
-        ...Object.fromEntries(new Headers(init.headers).entries()),
-        Host: parsed.port ? `${originalHostname}:${parsed.port}` : originalHostname,
-      },
-      body: init.body ? await bodyToString(init.body) : undefined,
+      headers: buildRequestHeaders(currentHeaders, originalHostname, parsed.port),
+      body: currentBody,
       signal: init.signal as AbortSignal | undefined,
     });
 
@@ -178,7 +232,10 @@ export async function safeFetch(
     if (!location) {
       throw new Error(`Redirect ${res.statusCode} without Location header`);
     }
-    currentUrl = new URL(location, currentUrl).toString();
+    const nextUrl = new URL(location, currentUrl).toString();
+    currentHeaders = getRedirectHeaders(currentHeaders, currentUrl, nextUrl);
+    currentBody = getRedirectBody(currentBody, currentUrl, nextUrl);
+    currentUrl = nextUrl;
   }
 
   throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
@@ -190,6 +247,8 @@ export async function safeStreamingFetch(
 ): Promise<Response> {
   const MAX_REDIRECTS = 3;
   let currentUrl = url;
+  let currentHeaders = new Headers(init.headers);
+  let currentBody = init.body ? await bodyToString(init.body) : undefined;
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (!isValidUrl(currentUrl)) {
@@ -202,16 +261,14 @@ export async function safeStreamingFetch(
     const port = parsed.port ? parseInt(parsed.port) : 443;
 
     const res = await httpsRequestWithPinnedIpStream({
-      ip: resolvedIp,
+      ip: resolvedIp.address,
+      family: resolvedIp.family,
       port,
       servername: originalHostname,
       method: (init.method ?? "GET") as string,
       path: parsed.pathname + parsed.search,
-      headers: {
-        ...Object.fromEntries(new Headers(init.headers).entries()),
-        Host: parsed.port ? `${originalHostname}:${parsed.port}` : originalHostname,
-      },
-      body: init.body ? await bodyToString(init.body) : undefined,
+      headers: buildRequestHeaders(currentHeaders, originalHostname, parsed.port),
+      body: currentBody,
       signal: init.signal as AbortSignal | undefined,
     });
 
@@ -227,7 +284,10 @@ export async function safeStreamingFetch(
     if (!location) {
       throw new Error(`Redirect ${res.statusCode} without Location header`);
     }
-    currentUrl = new URL(location, currentUrl).toString();
+    const nextUrl = new URL(location, currentUrl).toString();
+    currentHeaders = getRedirectHeaders(currentHeaders, currentUrl, nextUrl);
+    currentBody = getRedirectBody(currentBody, currentUrl, nextUrl);
+    currentUrl = nextUrl;
   }
 
   throw new Error(`Too many redirects (>${MAX_REDIRECTS})`);
@@ -242,9 +302,57 @@ async function bodyToString(body: BodyInit | null | undefined): Promise<string |
   return String(body);
 }
 
+function buildRequestHeaders(
+  headers: Headers,
+  hostname: string,
+  port: string,
+): Record<string, string> {
+  return {
+    ...Object.fromEntries(headers.entries()),
+    Host: port ? `${hostname}:${port}` : hostname,
+  };
+}
+
+function getRedirectHeaders(
+  headers: Headers,
+  currentUrl: string,
+  nextUrl: string,
+): Headers {
+  if (new URL(currentUrl).origin === new URL(nextUrl).origin) {
+    return new Headers(headers);
+  }
+
+  const redirectHeaders = new Headers();
+  for (const [key, value] of headers.entries()) {
+    if (!CROSS_ORIGIN_REDIRECT_HEADER_ALLOWLIST.has(key.toLowerCase())) {
+      continue;
+    }
+    redirectHeaders.set(key, value);
+  }
+
+  return redirectHeaders;
+}
+
+function getRedirectBody(
+  body: string | undefined,
+  currentUrl: string,
+  nextUrl: string,
+): string | undefined {
+  if (!body) {
+    return undefined;
+  }
+
+  if (new URL(currentUrl).origin === new URL(nextUrl).origin) {
+    return body;
+  }
+
+  throw new Error("Cross-origin redirect blocked for request with body");
+}
+
 /** Low-level HTTPS request that connects to a specific IP with TLS SNI override. */
 function httpsRequestWithPinnedIp(opts: {
   ip: string;
+  family: 4 | 6;
   port: number;
   servername: string;
   method: string;
@@ -262,6 +370,7 @@ function httpsRequestWithPinnedIp(opts: {
     const req = https.request(
       {
         hostname: opts.ip,
+        family: opts.family,
         port: opts.port,
         path: opts.path,
         method: opts.method,
@@ -301,6 +410,7 @@ function httpsRequestWithPinnedIp(opts: {
 
 function httpsRequestWithPinnedIpStream(opts: {
   ip: string;
+  family: 4 | 6;
   port: number;
   servername: string;
   method: string;
@@ -318,6 +428,7 @@ function httpsRequestWithPinnedIpStream(opts: {
     const req = https.request(
       {
         hostname: opts.ip,
+        family: opts.family,
         port: opts.port,
         path: opts.path,
         method: opts.method,

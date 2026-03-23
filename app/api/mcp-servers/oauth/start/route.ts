@@ -1,17 +1,36 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdminBySlug } from "@/lib/auth/session";
+import { updateMcpServerOAuthMetadata } from "@/lib/mcp-servers/actions";
+import { discoverOAuthConfig } from "@/lib/mcp-servers/discovery";
 import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { signMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
 import { getAppBaseUrl } from "@/lib/config/urls";
 import { withEvlog } from "@/lib/evlog";
+import { validateOAuthEndpoints } from "@/lib/mcp-servers/url-validation";
+import { getCanonicalMcpResource } from "@/lib/mcp-servers/oauth-resource";
 
 export const GET = withEvlog(async (req: Request) => {
-  const admin = await getSessionWithOrgAdmin();
-  if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
-  const { session, orgId } = admin;
   const url = new URL(req.url);
+  const orgSlug = url.searchParams.get("orgSlug")?.trim() ?? "";
   const serverId = url.searchParams.get("serverId");
+
+  if (!orgSlug) {
+    return NextResponse.json(
+      { error: "orgSlug required" },
+      { status: 400 },
+    );
+  }
+
+  const admin = await getSessionWithOrgAdminBySlug(orgSlug);
+  if (!admin) {
+    return NextResponse.json(
+      { error: "Only organization owners and admins can manage MCP servers" },
+      { status: 403 },
+    );
+  }
+
+  const { session, orgId } = admin;
 
   if (!serverId) {
     return NextResponse.json(
@@ -33,13 +52,74 @@ export const GET = withEvlog(async (req: Request) => {
       { status: 400 },
     );
   }
-  if (
-    !server.oauthClientId ||
-    !server.oauthAuthorizationEndpoint ||
-    !server.oauthTokenEndpoint
-  ) {
+
+  if (!server.oauthClientId) {
     return NextResponse.json(
-      { error: "OAuth metadata incomplete" },
+      { error: "OAuth client ID is missing" },
+      { status: 400 },
+    );
+  }
+
+  let authorizationEndpoint = server.oauthAuthorizationEndpoint;
+  let tokenEndpoint = server.oauthTokenEndpoint;
+
+  if (!authorizationEndpoint || !tokenEndpoint) {
+    const discovered = await discoverOAuthConfig(server.serverUrl);
+    if (!discovered) {
+      return NextResponse.json(
+        { error: "Could not discover OAuth metadata for this MCP server" },
+        { status: 400 },
+      );
+    }
+    if (!discovered.codeChallengeMethodsSupported?.includes("S256")) {
+      return NextResponse.json(
+        { error: "OAuth provider does not support S256 PKCE" },
+        { status: 400 },
+      );
+    }
+
+    const latestServer = await findMcpServerByIdAndOrg(server.id, orgId);
+    if (
+      latestServer?.oauthAuthorizationEndpoint &&
+      latestServer.oauthTokenEndpoint
+    ) {
+      authorizationEndpoint = latestServer.oauthAuthorizationEndpoint;
+      tokenEndpoint = latestServer.oauthTokenEndpoint;
+    } else {
+      authorizationEndpoint = discovered.authorizationEndpoint;
+      tokenEndpoint = discovered.tokenEndpoint;
+
+      try {
+        await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+      } catch (error) {
+        return NextResponse.json(
+          {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Invalid OAuth metadata for this MCP server",
+          },
+          { status: 400 },
+        );
+      }
+
+      await updateMcpServerOAuthMetadata(server.id, orgId, {
+        oauthAuthorizationEndpoint: authorizationEndpoint,
+        oauthTokenEndpoint: tokenEndpoint,
+      });
+    }
+  }
+
+  try {
+    await validateOAuthEndpoints(authorizationEndpoint, tokenEndpoint);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Invalid OAuth metadata for this MCP server",
+      },
       { status: 400 },
     );
   }
@@ -73,13 +153,14 @@ export const GET = withEvlog(async (req: Request) => {
   );
 
   // Build authorization URL
-  const authUrl = new URL(server.oauthAuthorizationEndpoint);
+  const authUrl = new URL(authorizationEndpoint);
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", server.oauthClientId);
   authUrl.searchParams.set("redirect_uri", callbackUrl);
   authUrl.searchParams.set("state", state);
   authUrl.searchParams.set("code_challenge", codeChallenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
+  authUrl.searchParams.set("resource", getCanonicalMcpResource(server.serverUrl));
   if (server.oauthScopes) {
     authUrl.searchParams.set("scope", server.oauthScopes);
   }

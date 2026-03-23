@@ -2,7 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { mcpServers } from "./schema";
 import { encrypt } from "@/lib/credentials/encryption";
-import type { AuthConfig } from "./types";
+import type { AuthConfig, McpDiscoveredTool, McpTestStatus } from "./types";
 
 export async function createMcpServer(input: {
   organizationId: string;
@@ -11,12 +11,15 @@ export async function createMcpServer(input: {
   transport?: string;
   authType: string;
   authConfig?: AuthConfig;
+  catalogSlug?: string | null;
   oauthClientId?: string | null;
   oauthAuthorizationEndpoint?: string | null;
   oauthTokenEndpoint?: string | null;
   oauthScopes?: string | null;
   createdBy?: string;
 }) {
+  const catalogSlug = input.catalogSlug?.trim() ? input.catalogSlug : null;
+
   const [row] = await db
     .insert(mcpServers)
     .values({
@@ -28,6 +31,7 @@ export async function createMcpServer(input: {
       encryptedAuthConfig: input.authConfig
         ? encrypt(JSON.stringify(input.authConfig))
         : null,
+      catalogSlug,
       oauthClientId: input.oauthClientId ?? null,
       oauthAuthorizationEndpoint: input.oauthAuthorizationEndpoint ?? null,
       oauthTokenEndpoint: input.oauthTokenEndpoint ?? null,
@@ -41,10 +45,15 @@ export async function createMcpServer(input: {
       transport: mcpServers.transport,
       authType: mcpServers.authType,
       enabled: mcpServers.enabled,
+      catalogSlug: mcpServers.catalogSlug,
       oauthClientId: mcpServers.oauthClientId,
       oauthAuthorizationEndpoint: mcpServers.oauthAuthorizationEndpoint,
       oauthTokenEndpoint: mcpServers.oauthTokenEndpoint,
       oauthScopes: mcpServers.oauthScopes,
+      lastTestStatus: mcpServers.lastTestStatus,
+      lastTestError: mcpServers.lastTestError,
+      lastTestedAt: mcpServers.lastTestedAt,
+      lastDiscoveredTools: mcpServers.lastDiscoveredTools,
       createdAt: mcpServers.createdAt,
       updatedAt: mcpServers.updatedAt,
     });
@@ -53,6 +62,26 @@ export async function createMcpServer(input: {
 }
 
 export async function updateMcpServerAuth(
+  id: string,
+  organizationId: string,
+  authConfig: AuthConfig,
+) {
+  await db
+    .update(mcpServers)
+    .set({
+      encryptedAuthConfig: encrypt(JSON.stringify(authConfig)),
+      lastTestStatus: null,
+      lastTestError: null,
+      lastTestedAt: null,
+      lastDiscoveredTools: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(mcpServers.id, id), eq(mcpServers.organizationId, organizationId)),
+    );
+}
+
+export async function refreshMcpServerAuth(
   id: string,
   organizationId: string,
   authConfig: AuthConfig,
@@ -76,6 +105,10 @@ export async function clearMcpServerAuth(
     .update(mcpServers)
     .set({
       encryptedAuthConfig: null,
+      lastTestStatus: null,
+      lastTestError: null,
+      lastTestedAt: null,
+      lastDiscoveredTools: null,
       updatedAt: new Date(),
     })
     .where(
@@ -97,6 +130,10 @@ export async function clearMcpServerAuthIfStale(
     .update(mcpServers)
     .set({
       encryptedAuthConfig: null,
+      lastTestStatus: null,
+      lastTestError: null,
+      lastTestedAt: null,
+      lastDiscoveredTools: null,
       updatedAt: new Date(),
     })
     .where(
@@ -138,6 +175,82 @@ export async function updateMcpServerHeaders(
     .update(mcpServers)
     .set({
       encryptedAuthConfig: encrypt(JSON.stringify({ headers })),
+      lastTestStatus: null,
+      lastTestError: null,
+      lastTestedAt: null,
+      lastDiscoveredTools: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(mcpServers.id, id), eq(mcpServers.organizationId, organizationId)),
+    );
+}
+
+export async function updateMcpServerOAuthMetadata(
+  id: string,
+  organizationId: string,
+  metadata: {
+    oauthClientId?: string | null;
+    oauthAuthorizationEndpoint?: string | null;
+    oauthTokenEndpoint?: string | null;
+    oauthScopes?: string | null;
+  },
+) {
+  const updates: {
+    oauthClientId?: string | null;
+    oauthAuthorizationEndpoint?: string | null;
+    oauthTokenEndpoint?: string | null;
+    oauthScopes?: string | null;
+    lastTestStatus: null;
+    lastTestError: null;
+    lastTestedAt: null;
+    lastDiscoveredTools: null;
+    updatedAt: Date;
+  } = {
+    lastTestStatus: null,
+    lastTestError: null,
+    lastTestedAt: null,
+    lastDiscoveredTools: null,
+    updatedAt: new Date(),
+  };
+
+  if (metadata.oauthClientId !== undefined) {
+    updates.oauthClientId = metadata.oauthClientId;
+  }
+  if (metadata.oauthAuthorizationEndpoint !== undefined) {
+    updates.oauthAuthorizationEndpoint = metadata.oauthAuthorizationEndpoint;
+  }
+  if (metadata.oauthTokenEndpoint !== undefined) {
+    updates.oauthTokenEndpoint = metadata.oauthTokenEndpoint;
+  }
+  if (metadata.oauthScopes !== undefined) {
+    updates.oauthScopes = metadata.oauthScopes;
+  }
+
+  await db
+    .update(mcpServers)
+    .set(updates)
+    .where(
+      and(eq(mcpServers.id, id), eq(mcpServers.organizationId, organizationId)),
+    );
+}
+
+export async function updateMcpServerTestResult(
+  id: string,
+  organizationId: string,
+  input: {
+    status: McpTestStatus;
+    error?: string | null;
+    tools?: McpDiscoveredTool[] | null;
+  },
+) {
+  await db
+    .update(mcpServers)
+    .set({
+      lastTestStatus: input.status,
+      lastTestError: input.error ?? null,
+      lastTestedAt: new Date(),
+      lastDiscoveredTools: input.tools ?? null,
       updatedAt: new Date(),
     })
     .where(

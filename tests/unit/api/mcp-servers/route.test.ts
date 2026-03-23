@@ -1,0 +1,126 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const {
+  getSessionWithOrgAdminBySlugMock,
+  getSessionWithOrgMock,
+  getCatalogTemplateMock,
+  getCatalogTemplateAvailabilityMock,
+} = vi.hoisted(() => ({
+  getSessionWithOrgAdminBySlugMock: vi.fn(),
+  getSessionWithOrgMock: vi.fn(),
+  getCatalogTemplateMock: vi.fn(),
+  getCatalogTemplateAvailabilityMock: vi.fn(),
+}));
+
+vi.mock("@/lib/auth/session", () => ({
+  getSessionWithOrgAdmin: vi.fn(),
+  getSessionWithOrgAdminBySlug: getSessionWithOrgAdminBySlugMock,
+  getSessionWithOrg: getSessionWithOrgMock,
+}));
+
+vi.mock("@/lib/mcp-servers/queries", () => ({
+  findMcpServersByOrg: vi.fn(),
+}));
+
+vi.mock("@/lib/mcp-servers/actions", () => ({
+  createMcpServer: vi.fn(),
+}));
+
+vi.mock("@/lib/mcp-servers/catalog", () => ({
+  getCatalogTemplate: getCatalogTemplateMock,
+  getCatalogTemplateAvailability: getCatalogTemplateAvailabilityMock,
+  resolveCatalogServerUrl: vi.fn(),
+}));
+
+vi.mock("@/lib/evlog", () => ({
+  withEvlog: <Args extends unknown[], Result>(
+    handler: (...args: Args) => Result,
+  ) => handler,
+}));
+
+const { POST } = await import("@/app/api/mcp-servers/route");
+
+describe("POST /api/mcp-servers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getSessionWithOrgAdminBySlugMock.mockResolvedValue({
+      orgId: "org-1",
+      session: { user: { id: "user-1" } },
+    });
+    getCatalogTemplateAvailabilityMock.mockReturnValue({
+      available: true,
+      unavailableReason: null,
+    });
+  });
+
+  it("rejects malformed JSON bodies", async () => {
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid JSON body",
+    });
+  });
+
+  it("rejects non-object JSON bodies", async () => {
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "null",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "JSON body must be an object",
+    });
+  });
+
+  it("requires an explicit orgSlug in mutation requests", async () => {
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Example" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "orgSlug is required",
+    });
+    expect(getSessionWithOrgAdminBySlugMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unavailable catalog integrations before install", async () => {
+    getCatalogTemplateMock.mockReturnValue({
+      slug: "sentry",
+      name: "Sentry",
+      authType: "oauth-discovery",
+    });
+    getCatalogTemplateAvailabilityMock.mockReturnValue({
+      available: false,
+      unavailableReason: "Sentry OAuth is not configured in this environment.",
+    });
+
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgSlug: "acme", catalogSlug: "sentry" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Sentry OAuth is not configured in this environment.",
+    });
+  });
+});

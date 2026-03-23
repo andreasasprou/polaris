@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionWithOrgAdmin } from "@/lib/auth/session";
+import { getSessionWithOrgAdminBySlug } from "@/lib/auth/session";
 import {
   deleteMcpServer,
   updateMcpServerEnabled,
@@ -10,10 +10,15 @@ import { withEvlog } from "@/lib/evlog";
 
 export const DELETE = withEvlog(
   async (
-    _req: Request,
+    req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const admin = await getSessionWithOrgAdmin();
+    const orgSlug = new URL(req.url).searchParams.get("orgSlug")?.trim() ?? "";
+    if (!orgSlug) {
+      return NextResponse.json({ error: "orgSlug required" }, { status: 400 });
+    }
+
+    const admin = await getSessionWithOrgAdminBySlug(orgSlug);
     if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
     const { orgId } = admin;
     const { id } = await params;
@@ -28,7 +33,12 @@ export const PATCH = withEvlog(
     req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) => {
-    const admin = await getSessionWithOrgAdmin();
+    const orgSlug = new URL(req.url).searchParams.get("orgSlug")?.trim() ?? "";
+    if (!orgSlug) {
+      return NextResponse.json({ error: "orgSlug required" }, { status: 400 });
+    }
+
+    const admin = await getSessionWithOrgAdminBySlug(orgSlug);
     if (!admin) return NextResponse.json({ error: "Only organization owners and admins can manage MCP servers" }, { status: 403 });
     const { orgId } = admin;
     const { id } = await params;

@@ -2,7 +2,7 @@
  * Integration test for MCP server CRUD and resolution.
  * Requires DATABASE_URL and ENCRYPTION_KEY env vars.
  */
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
 
 // Set env before importing db
@@ -22,6 +22,9 @@ describe("mcp-servers", async () => {
     updateMcpServerEnabled,
     updateMcpServerHeaders,
     updateMcpServerAuth,
+    refreshMcpServerAuth,
+    updateMcpServerTestResult,
+    updateMcpServerOAuthMetadata,
     clearMcpServerAuth,
   } = await import("@/lib/mcp-servers/actions");
   const {
@@ -29,6 +32,31 @@ describe("mcp-servers", async () => {
     findMcpServerByIdAndOrg,
     getResolvedMcpServers,
   } = await import("@/lib/mcp-servers/queries");
+
+  beforeAll(async () => {
+    await db.execute(sql`
+      ALTER TABLE mcp_servers
+      ADD COLUMN IF NOT EXISTS catalog_slug text,
+      ADD COLUMN IF NOT EXISTS last_test_status text,
+      ADD COLUMN IF NOT EXISTS last_test_error text,
+      ADD COLUMN IF NOT EXISTS last_tested_at timestamp with time zone,
+      ADD COLUMN IF NOT EXISTS last_discovered_tools jsonb
+    `);
+    await db.execute(sql`
+      ALTER TABLE mcp_servers
+      DROP CONSTRAINT IF EXISTS mcp_servers_organization_id_name_unique
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_custom_name
+      ON mcp_servers (organization_id, name)
+      WHERE catalog_slug IS NULL
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_catalog_slug
+      ON mcp_servers (organization_id, catalog_slug)
+      WHERE catalog_slug IS NOT NULL
+    `);
+  });
 
   afterAll(async () => {
     // Clean up test data
@@ -89,12 +117,30 @@ describe("mcp-servers", async () => {
     ).rejects.toThrow();
   });
 
+  it("allows a marketplace install to share a name with a custom server", async () => {
+    const server = await createMcpServer({
+      organizationId: TEST_ORG_ID,
+      name: "Test Sentry",
+      serverUrl: "https://mcp.sentry.io/sse",
+      authType: "oauth",
+      catalogSlug: "sentry",
+      oauthClientId: "sentry-client-id",
+      oauthAuthorizationEndpoint: "https://sentry.io/oauth/authorize",
+      oauthTokenEndpoint: "https://sentry.io/oauth/token",
+    });
+
+    expect(server.name).toBe("Test Sentry");
+    expect(server.catalogSlug).toBe("sentry");
+  });
+
   it("lists servers for org with connected flag", async () => {
     const servers = await findMcpServersByOrg(TEST_ORG_ID);
 
-    expect(servers.length).toBe(2);
+    expect(servers.length).toBe(3);
 
-    const staticServer = servers.find((s) => s.name === "Test Sentry");
+    const staticServer = servers.find(
+      (s) => s.serverUrl === "https://mcp.sentry.dev/sse",
+    );
     expect(staticServer).toBeDefined();
     expect(staticServer!.connected).toBe(true); // has encrypted auth config
 
@@ -181,7 +227,7 @@ describe("mcp-servers", async () => {
 
   it("resolves OAuth server after auth config is set", async () => {
     const servers = await findMcpServersByOrg(TEST_ORG_ID);
-    const oauthServer = servers.find((s) => s.authType === "oauth")!;
+    const oauthServer = servers.find((s) => s.name === "Test OAuth")!;
 
     // Simulate completing OAuth flow
     await updateMcpServerAuth(oauthServer.id, TEST_ORG_ID, {
@@ -202,9 +248,66 @@ describe("mcp-servers", async () => {
     );
   });
 
+  it("preserves omitted OAuth metadata fields during partial updates", async () => {
+    const servers = await findMcpServersByOrg(TEST_ORG_ID);
+    const oauthServer = servers.find((s) => s.name === "Test OAuth")!;
+
+    await updateMcpServerOAuthMetadata(oauthServer.id, TEST_ORG_ID, {
+      oauthAuthorizationEndpoint: "https://oauth-provider.dev/new-authorize",
+    });
+
+    const updated = await findMcpServerByIdAndOrg(
+      oauthServer.id,
+      TEST_ORG_ID,
+    );
+    expect(updated!.oauthClientId).toBe("my-client-id");
+    expect(updated!.oauthAuthorizationEndpoint).toBe(
+      "https://oauth-provider.dev/new-authorize",
+    );
+    expect(updated!.oauthTokenEndpoint).toBe(
+      "https://oauth-provider.dev/token",
+    );
+    expect(updated!.oauthScopes).toBe("openid profile");
+  });
+
+  it("preserves cached tool state during token refresh", async () => {
+    const servers = await findMcpServersByOrg(TEST_ORG_ID);
+    const oauthServer = servers.find((s) => s.name === "Test OAuth")!;
+
+    await updateMcpServerTestResult(oauthServer.id, TEST_ORG_ID, {
+      status: "ok",
+      tools: [
+        {
+          name: "search_issues",
+          description: "Search issues",
+          inputSchema: null,
+        },
+      ],
+    });
+
+    await refreshMcpServerAuth(oauthServer.id, TEST_ORG_ID, {
+      accessToken: "eyJ-refreshed-access-token",
+      refreshToken: "test-refresh-token-2",
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+    });
+
+    const refreshed = await findMcpServerByIdAndOrg(
+      oauthServer.id,
+      TEST_ORG_ID,
+    );
+    expect(refreshed!.lastTestStatus).toBe("ok");
+    expect(refreshed!.lastDiscoveredTools).toEqual([
+      {
+        name: "search_issues",
+        description: "Search issues",
+        inputSchema: null,
+      },
+    ]);
+  });
+
   it("clears auth config on clearMcpServerAuth", async () => {
     const servers = await findMcpServersByOrg(TEST_ORG_ID);
-    const oauthServer = servers.find((s) => s.authType === "oauth")!;
+    const oauthServer = servers.find((s) => s.name === "Test OAuth")!;
 
     await clearMcpServerAuth(oauthServer.id, TEST_ORG_ID);
 

@@ -1,11 +1,17 @@
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { getSessionWithOrgAdmin, getOrgSlugById } from "@/lib/auth/session";
-import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
+import { and, eq } from "drizzle-orm";
+import { auth } from "@/lib/auth";
+import { getOrgSlugById, hasOrganizationMembership } from "@/lib/auth/session";
 import { updateMcpServerAuth } from "@/lib/mcp-servers/actions";
 import { verifyMcpOAuthState } from "@/lib/mcp-servers/oauth-state";
+import { findMcpServerByIdAndOrg } from "@/lib/mcp-servers/queries";
 import { safeFetch } from "@/lib/mcp-servers/url-validation";
-import { getAppBaseUrl } from "@/lib/config/urls";
+import { orgPath, getAppBaseUrl } from "@/lib/config/urls";
+import { db } from "@/lib/db";
+import { member } from "@/lib/db/auth-schema";
 import { withEvlog } from "@/lib/evlog";
+import { createMcpOAuthTokenParams } from "@/lib/mcp-servers/oauth-resource";
 
 const ERROR_MESSAGES: Record<string, string> = {
   access_denied: "Access was denied by the provider",
@@ -14,81 +20,155 @@ const ERROR_MESSAGES: Record<string, string> = {
   temporarily_unavailable: "The provider is temporarily unavailable",
 };
 
-export const GET = withEvlog(async (req: Request) => {
-  const admin = await getSessionWithOrgAdmin();
-  if (!admin) return NextResponse.redirect(new URL("/settings/mcp?error=unauthorized", req.url));
-  const { session, orgId } = admin;
-  const url = new URL(req.url);
+async function isOrgAdmin(userId: string, orgId: string) {
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(eq(member.userId, userId), eq(member.organizationId, orgId)),
+    )
+    .limit(1);
 
-  // Check for OAuth error response — normalize to safe error codes
+  return membership?.role === "owner" || membership?.role === "admin";
+}
+
+function getMarketplacePath(orgSlug: string) {
+  return orgPath(orgSlug, "/integrations/mcp");
+}
+
+function getServerPath(
+  orgSlug: string,
+  server: { catalogSlug: string | null } | null,
+) {
+  if (!server?.catalogSlug) {
+    return orgPath(orgSlug, "/integrations/mcp/custom");
+  }
+
+  return orgPath(orgSlug, `/integrations/mcp/${server.catalogSlug}`);
+}
+
+function redirectWithQuery(
+  baseUrl: string,
+  path: string,
+  key: "error" | "success",
+  value: string,
+) {
+  const location = new URL(path, baseUrl);
+  location.searchParams.set(key, value);
+  return NextResponse.redirect(location);
+}
+
+async function getFallbackMarketplacePath(activeOrgId: string | null | undefined) {
+  if (!activeOrgId) {
+    return "/onboarding";
+  }
+
+  const activeOrgSlug = await getOrgSlugById(activeOrgId).catch(() => null);
+  return activeOrgSlug ? getMarketplacePath(activeOrgSlug) : "/integrations";
+}
+
+export const GET = withEvlog(async (req: Request) => {
+  const baseUrl = getAppBaseUrl();
+  const reqHeaders = await headers();
+  const session = await auth.api.getSession({ headers: reqHeaders }).catch(() => null);
+
+  if (!session) {
+    return NextResponse.redirect(new URL("/login", baseUrl));
+  }
+
+  const fallbackMarketplacePath = await getFallbackMarketplacePath(
+    session.session.activeOrganizationId,
+  );
+  const url = new URL(req.url);
+  const state = url.searchParams.get("state");
+  let trustedPayload = state ? verifyMcpOAuthState(state) : null;
+  if (trustedPayload && trustedPayload.userId !== session.user.id) {
+    trustedPayload = null;
+  }
+
+  let trustedOrgSlug: string | null = null;
+  let trustedServer: Awaited<ReturnType<typeof findMcpServerByIdAndOrg>> | null = null;
+  let errorPath = fallbackMarketplacePath;
+  if (
+    trustedPayload
+    && await hasOrganizationMembership(session.user.id, trustedPayload.orgId)
+  ) {
+    trustedOrgSlug = await getOrgSlugById(trustedPayload.orgId).catch(() => null);
+    if (trustedOrgSlug) {
+      trustedServer = await findMcpServerByIdAndOrg(
+        trustedPayload.serverId,
+        trustedPayload.orgId,
+      );
+      errorPath = getServerPath(trustedOrgSlug, trustedServer);
+    }
+  } else {
+    trustedPayload = null;
+  }
+
   const oauthError = url.searchParams.get("error");
   if (oauthError) {
     const safeMessage =
       ERROR_MESSAGES[oauthError] ?? `OAuth error: ${oauthError}`;
-    return NextResponse.redirect(
-      new URL(
-        `/settings/mcp?error=${encodeURIComponent(safeMessage)}`,
-        req.url,
-      ),
-    );
+    return redirectWithQuery(baseUrl, errorPath, "error", safeMessage);
   }
 
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
   if (!code || !state) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=missing+code+or+state", req.url),
+    return redirectWithQuery(
+      baseUrl,
+      fallbackMarketplacePath,
+      "error",
+      "missing code or state",
     );
   }
 
-  // Verify state
-  const payload = verifyMcpOAuthState(state);
-  if (!payload) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=invalid+state", req.url),
-    );
-  }
-  if (payload.userId !== session.user.id) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=user+mismatch", req.url),
-    );
-  }
-  if (payload.orgId !== orgId) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=org+mismatch", req.url),
+  const payload = trustedPayload;
+  if (!payload || !trustedOrgSlug) {
+    return redirectWithQuery(
+      baseUrl,
+      fallbackMarketplacePath,
+      "error",
+      "invalid state",
     );
   }
 
-  // Load server to get OAuth endpoints
-  const server = await findMcpServerByIdAndOrg(payload.serverId, orgId);
+  const targetPath = getServerPath(trustedOrgSlug, trustedServer);
+
+  if (!(await isOrgAdmin(session.user.id, payload.orgId))) {
+    return redirectWithQuery(baseUrl, targetPath, "error", "unauthorized");
+  }
+
+  const server = trustedServer ?? await findMcpServerByIdAndOrg(
+    payload.serverId,
+    payload.orgId,
+  );
+
   if (!server || !server.oauthTokenEndpoint || !server.oauthClientId) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=server+not+found", req.url),
-    );
+    return redirectWithQuery(baseUrl, targetPath, "error", "server not found");
   }
 
-  // Read PKCE verifier from cookie (no regex — split and match by prefix)
   const cookiePrefix = `mcp_oauth_verifier_${payload.serverId}=`;
   const codeVerifier = (req.headers.get("cookie") ?? "")
     .split("; ")
-    .find((c) => c.startsWith(cookiePrefix))
+    .find((cookie) => cookie.startsWith(cookiePrefix))
     ?.slice(cookiePrefix.length);
   if (!codeVerifier) {
-    return NextResponse.redirect(
-      new URL("/settings/mcp?error=missing+verifier", req.url),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      "missing verifier",
     );
   }
 
-  // Token exchange
   const callbackUrl = `${getAppBaseUrl()}/api/mcp-servers/oauth/callback`;
 
   let tokenRes: Response;
   try {
-    // Use safeFetch to re-validate DNS + block redirect-based SSRF
     tokenRes = await safeFetch(server.oauthTokenEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+      body: createMcpOAuthTokenParams(server.serverUrl, {
         grant_type: "authorization_code",
         code,
         redirect_uri: callbackUrl,
@@ -98,58 +178,49 @@ export const GET = withEvlog(async (req: Request) => {
       signal: AbortSignal.timeout(15_000),
     });
   } catch {
-    return NextResponse.redirect(
-      new URL(
-        "/settings/mcp?error=Token+exchange+request+failed",
-        req.url,
-      ),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      "Token exchange request failed",
     );
   }
 
   if (!tokenRes.ok) {
-    return NextResponse.redirect(
-      new URL(
-        `/settings/mcp?error=${encodeURIComponent(`Token exchange failed: ${tokenRes.status}`)}`,
-        req.url,
-      ),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      `Token exchange failed: ${tokenRes.status}`,
     );
   }
 
   const tokens = await tokenRes.json();
   if (!tokens.access_token) {
-    return NextResponse.redirect(
-      new URL(
-        "/settings/mcp?error=no+access+token+in+response",
-        req.url,
-      ),
+    return redirectWithQuery(
+      baseUrl,
+      targetPath,
+      "error",
+      "no access token in response",
     );
   }
 
-  // Store tokens
   const now = Math.floor(Date.now() / 1000);
-  await updateMcpServerAuth(payload.serverId, orgId, {
+  await updateMcpServerAuth(payload.serverId, payload.orgId, {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token ?? "",
     expiresAt: tokens.expires_in ? now + tokens.expires_in : now + 3600,
   });
 
-  // Clear verifier cookie and redirect
-  let successPath = "/settings/mcp?success=connected";
-  try {
-    const slug = await getOrgSlugById(orgId);
-    successPath = `/${slug}/settings/mcp?success=connected`;
-  } catch {
-    // Fall back to bare path — proxy will handle legacy redirect
-  }
-
-  const headers = new Headers();
-  headers.append(
+  const responseHeaders = new Headers();
+  responseHeaders.append(
     "Set-Cookie",
     `mcp_oauth_verifier_${payload.serverId}=; HttpOnly; Path=/api/mcp-servers/oauth; Max-Age=0`,
   );
-  headers.set(
-    "Location",
-    new URL(successPath, req.url).toString(),
-  );
-  return new Response(null, { status: 302, headers });
+
+  const location = new URL(targetPath, baseUrl);
+  location.searchParams.set("success", "connected");
+  responseHeaders.set("Location", location.toString());
+
+  return new Response(null, { status: 302, headers: responseHeaders });
 });

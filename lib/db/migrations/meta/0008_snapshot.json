@@ -1,6 +1,6 @@
 {
-  "id": "90d543e8-934c-4349-80a5-c36ca6e660e8",
-  "prevId": "f5c1afd4-8fec-41fe-a6df-9527fe5fe3e4",
+  "id": "d360b61a-9536-4adb-a499-3650ef2d1555",
+  "prevId": "678f326d-305e-47c1-b67f-0cf6915e3a9a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3461,6 +3461,36 @@
           "notNull": true,
           "default": true
         },
+        "catalog_slug": {
+          "name": "catalog_slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_test_status": {
+          "name": "last_test_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_test_error": {
+          "name": "last_test_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_tested_at": {
+          "name": "last_tested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_discovered_tools": {
+          "name": "last_discovered_tools",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "oauth_client_id": {
           "name": "oauth_client_id",
           "type": "text",
@@ -3506,19 +3536,55 @@
           "default": "now()"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "mcp_servers_organization_id_name_unique": {
-          "name": "mcp_servers_organization_id_name_unique",
-          "nullsNotDistinct": false,
+      "indexes": {
+        "idx_mcp_servers_custom_name": {
+          "name": "idx_mcp_servers_custom_name",
           "columns": [
-            "organization_id",
-            "name"
-          ]
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"mcp_servers\".\"catalog_slug\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_mcp_servers_catalog_slug": {
+          "name": "idx_mcp_servers_catalog_slug",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "catalog_slug",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"mcp_servers\".\"catalog_slug\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

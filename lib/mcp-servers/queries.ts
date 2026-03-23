@@ -1,17 +1,101 @@
-import { eq, and, sql, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { mcpServers } from "./schema";
 import { decrypt } from "@/lib/credentials/encryption";
-import { updateMcpServerAuth, clearMcpServerAuth, clearMcpServerAuthIfStale } from "./actions";
+import {
+  getCatalogTemplate,
+  getCatalogTemplateAvailability,
+  MCP_CATALOG,
+} from "./catalog";
+import {
+  clearMcpServerAuthIfStale,
+  refreshMcpServerAuth,
+} from "./actions";
+import { mcpServers } from "./schema";
+import { createMcpOAuthTokenParams } from "./oauth-resource";
 import type {
-  StaticAuthConfig,
-  OAuthAuthConfig,
+  CatalogInstallationView,
+  McpDiscoveredTool,
+  McpInstallStatus,
   McpServerEntry,
+  McpServerListItem,
+  OAuthAuthConfig,
+  StaticAuthConfig,
 } from "./types";
 
+type McpRow = typeof mcpServers.$inferSelect;
+type McpServerListRow = {
+  id: string;
+  name: string;
+  serverUrl: string;
+  transport: string;
+  authType: string;
+  enabled: boolean;
+  catalogSlug: string | null;
+  oauthClientId: string | null;
+  oauthAuthorizationEndpoint: string | null;
+  oauthTokenEndpoint: string | null;
+  oauthScopes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  lastTestStatus: string | null;
+  lastTestError: string | null;
+  lastTestedAt: Date | null;
+  lastDiscoveredTools: McpDiscoveredTool[] | null;
+  connected: boolean;
+};
+
+function deriveServerStatus(row: {
+  authType: string;
+  connected: boolean;
+  lastTestStatus: string | null;
+}): McpServerListItem["status"] {
+  if (!row.connected) {
+    return row.authType === "oauth" ? "needs_auth" : "misconfigured";
+  }
+  if (row.lastTestStatus === "error") {
+    return "misconfigured";
+  }
+  return "connected";
+}
+
+function normalizeDiscoveredTools(
+  tools: McpDiscoveredTool[] | null | undefined,
+): McpDiscoveredTool[] | null {
+  return tools?.length ? tools : null;
+}
+
+function toServerListItem(row: McpServerListRow): McpServerListItem {
+  return {
+    id: row.id,
+    name: row.name,
+    serverUrl: row.serverUrl,
+    transport: row.transport,
+    authType: row.authType,
+    enabled: row.enabled,
+    catalogSlug: row.catalogSlug,
+    oauthClientId: row.oauthClientId,
+    oauthAuthorizationEndpoint: row.oauthAuthorizationEndpoint,
+    oauthTokenEndpoint: row.oauthTokenEndpoint,
+    oauthScopes: row.oauthScopes,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastTestStatus:
+      row.lastTestStatus === "ok" || row.lastTestStatus === "error"
+        ? row.lastTestStatus
+        : null,
+    lastTestError: row.lastTestError,
+    lastTestedAt: row.lastTestedAt,
+    lastDiscoveredTools: normalizeDiscoveredTools(row.lastDiscoveredTools),
+    connected: row.connected,
+    status: deriveServerStatus(row),
+  };
+}
+
 /** List all MCP servers for an org (metadata only, no decrypted secrets). */
-export async function findMcpServersByOrg(organizationId: string) {
-  return db
+export async function findMcpServersByOrg(
+  organizationId: string,
+): Promise<McpServerListItem[]> {
+  const rows = await db
     .select({
       id: mcpServers.id,
       name: mcpServers.name,
@@ -19,12 +103,17 @@ export async function findMcpServersByOrg(organizationId: string) {
       transport: mcpServers.transport,
       authType: mcpServers.authType,
       enabled: mcpServers.enabled,
+      catalogSlug: mcpServers.catalogSlug,
       oauthClientId: mcpServers.oauthClientId,
       oauthAuthorizationEndpoint: mcpServers.oauthAuthorizationEndpoint,
       oauthTokenEndpoint: mcpServers.oauthTokenEndpoint,
       oauthScopes: mcpServers.oauthScopes,
       createdAt: mcpServers.createdAt,
       updatedAt: mcpServers.updatedAt,
+      lastTestStatus: mcpServers.lastTestStatus,
+      lastTestError: mcpServers.lastTestError,
+      lastTestedAt: mcpServers.lastTestedAt,
+      lastDiscoveredTools: mcpServers.lastDiscoveredTools,
       connected:
         sql<boolean>`${mcpServers.encryptedAuthConfig} IS NOT NULL`.as(
           "connected",
@@ -32,6 +121,54 @@ export async function findMcpServersByOrg(organizationId: string) {
     })
     .from(mcpServers)
     .where(eq(mcpServers.organizationId, organizationId));
+
+  return rows.map((row) => toServerListItem(row));
+}
+
+export async function findCustomMcpServersByOrg(
+  organizationId: string,
+): Promise<McpServerListItem[]> {
+  const rows = await findMcpServersByOrg(organizationId);
+  return rows.filter((row) => row.catalogSlug == null);
+}
+
+export async function findCatalogInstallationsByOrg(
+  organizationId: string,
+): Promise<CatalogInstallationView[]> {
+  const rows = await findMcpServersByOrg(organizationId);
+  const bySlug = new Map(
+    rows
+      .filter((row) => row.catalogSlug)
+      .map((row) => [row.catalogSlug as string, row]),
+  );
+
+  return MCP_CATALOG.map((template) => {
+    const server = bySlug.get(template.slug) ?? null;
+    const status: McpInstallStatus = server ? server.status : "not_installed";
+    const availability = getCatalogTemplateAvailability(template);
+    return {
+      template,
+      available: availability.available,
+      unavailableReason: availability.unavailableReason,
+      server,
+      status,
+      toolCount: server?.lastDiscoveredTools?.length ?? 0,
+      lastTestedAt: server?.lastTestedAt ?? null,
+      lastTestError: server?.lastTestError ?? null,
+      discoveredTools: server?.lastDiscoveredTools ?? null,
+    };
+  });
+}
+
+export async function findCatalogInstallationBySlugAndOrg(
+  slug: string,
+  organizationId: string,
+): Promise<CatalogInstallationView | null> {
+  const template = getCatalogTemplate(slug);
+  if (!template) return null;
+
+  const installations = await findCatalogInstallationsByOrg(organizationId);
+  return installations.find((entry) => entry.template.slug === slug) ?? null;
 }
 
 /** Load a single MCP server with all columns (including encrypted auth). */
@@ -46,6 +183,15 @@ export async function findMcpServerByIdAndOrg(
       and(eq(mcpServers.id, id), eq(mcpServers.organizationId, organizationId)),
     );
   return row ?? null;
+}
+
+export async function getResolvedMcpServerByIdAndOrg(
+  id: string,
+  organizationId: string,
+): Promise<McpServerEntry | null> {
+  const row = await findMcpServerByIdAndOrg(id, organizationId);
+  if (!row) return null;
+  return resolveServer(row);
 }
 
 /**
@@ -68,9 +214,7 @@ export async function getResolvedMcpServers(
         ),
       );
 
-    const results = await Promise.allSettled(
-      rows.map((row) => resolveServer(row)),
-    );
+    const results = await Promise.allSettled(rows.map((row) => resolveServer(row)));
 
     const entries: McpServerEntry[] = [];
     for (const result of results) {
@@ -86,7 +230,7 @@ export async function getResolvedMcpServers(
 }
 
 function buildEntry(
-  row: typeof mcpServers.$inferSelect,
+  row: McpRow,
   headers: Record<string, string>,
 ): McpServerEntry {
   return {
@@ -97,11 +241,7 @@ function buildEntry(
   };
 }
 
-async function resolveServer(
-  row: typeof mcpServers.$inferSelect,
-): Promise<McpServerEntry | null> {
-  // encryptedAuthConfig is pre-filtered to NOT NULL by the SQL query,
-  // but guard defensively in case resolveServer is called directly.
+async function resolveServer(row: McpRow): Promise<McpServerEntry | null> {
   if (!row.encryptedAuthConfig) return null;
 
   try {
@@ -115,17 +255,17 @@ async function resolveServer(
     if (row.authType === "oauth") {
       const oauthConfig = config as OAuthAuthConfig;
       let accessToken = oauthConfig.accessToken;
-
-      // Preemptive refresh: if token expires within 5 minutes
       const now = Math.floor(Date.now() / 1000);
+
       if (oauthConfig.expiresAt < now + 300) {
-        // Capture the encrypted blob we read — used for atomic compare-and-clear.
-        // If a concurrent dispatch refreshes successfully and writes a new blob,
-        // our clear will be a no-op because the WHERE won't match.
-        const originalEncryptedBlob = row.encryptedAuthConfig!;
+        const originalEncryptedBlob = row.encryptedAuthConfig;
 
         if (!oauthConfig.refreshToken || !row.oauthTokenEndpoint) {
-          await clearMcpServerAuthIfStale(row.id, row.organizationId, originalEncryptedBlob);
+          await clearMcpServerAuthIfStale(
+            row.id,
+            row.organizationId,
+            originalEncryptedBlob,
+          );
           return null;
         }
 
@@ -134,7 +274,7 @@ async function resolveServer(
           const refreshRes = await safeFetch(row.oauthTokenEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
+            body: createMcpOAuthTokenParams(row.serverUrl, {
               grant_type: "refresh_token",
               refresh_token: oauthConfig.refreshToken,
               client_id: row.oauthClientId ?? "",
@@ -144,10 +284,13 @@ async function resolveServer(
 
           if (!refreshRes.ok) {
             if (refreshRes.status === 401 || refreshRes.status === 400) {
-              await clearMcpServerAuthIfStale(row.id, row.organizationId, originalEncryptedBlob);
+              await clearMcpServerAuthIfStale(
+                row.id,
+                row.organizationId,
+                originalEncryptedBlob,
+              );
               return null;
             }
-            // Non-fatal: use cached token if not yet expired
             return oauthConfig.expiresAt > now
               ? buildEntry(row, { Authorization: `Bearer ${accessToken}` })
               : null;
@@ -156,13 +299,12 @@ async function resolveServer(
           const tokens = await refreshRes.json();
           accessToken = tokens.access_token ?? accessToken;
 
-          await updateMcpServerAuth(row.id, row.organizationId, {
+          await refreshMcpServerAuth(row.id, row.organizationId, {
             accessToken,
             refreshToken: tokens.refresh_token ?? oauthConfig.refreshToken,
             expiresAt: tokens.expires_in ? now + tokens.expires_in : now + 3600,
           });
         } catch {
-          // Timeout or network error — use cached token if valid
           return oauthConfig.expiresAt > now
             ? buildEntry(row, { Authorization: `Bearer ${accessToken}` })
             : null;
@@ -181,4 +323,3 @@ async function resolveServer(
     return null;
   }
 }
-
