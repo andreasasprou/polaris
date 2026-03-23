@@ -91,14 +91,18 @@ export function extractFileChanges(items: ChatItem[]): DiffSummary {
     const additions = parsedLines.filter((l) => l.type === "addition").length;
     const deletions = parsedLines.filter((l) => l.type === "deletion").length;
 
-    // Build old/new value pair from the unified diff for this hunk
+    // Build old/new value pair from the unified diff for this hunk.
+    // Only skip ---/+++ as file headers BEFORE the first hunk header;
+    // inside hunks they are real content lines (e.g. deleting "-- comment").
     const oldLines: string[] = [];
     const newLines: string[] = [];
+    let inHunk = false;
     for (const line of diff.split("\n")) {
+      if (line.startsWith("@@ ")) { inHunk = true; continue; }
       if (
         line.startsWith("diff --git") || line.startsWith("index ") ||
-        line.startsWith("--- ") || line.startsWith("+++ ") ||
-        line.startsWith("@@ ") || line.startsWith("\\")
+        line.startsWith("\\") ||
+        (!inHunk && (line.startsWith("--- ") || line.startsWith("+++ ")))
       ) continue;
       if (line.startsWith("+")) { newLines.push(line.slice(1)); }
       else if (line.startsWith("-")) { oldLines.push(line.slice(1)); }

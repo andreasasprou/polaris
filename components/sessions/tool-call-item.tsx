@@ -87,19 +87,21 @@ function FileRefContent({ path, action, diff }: { path: string; action?: string;
 function InlineUnifiedDiff({ diff }: { diff: string }) {
   const { resolvedTheme } = useTheme();
 
-  // Split unified diff into old/new content
+  // Split unified diff into old/new content.
+  // Only skip ---/+++ as file headers before the first hunk; inside hunks
+  // they are real content lines (e.g. deleting "-- comment").
   const lines = diff.split("\n");
   const oldLines: string[] = [];
   const newLines: string[] = [];
+  let inHunk = false;
 
   for (const line of lines) {
+    if (line.startsWith("@@ ")) { inHunk = true; continue; }
     if (
       line.startsWith("diff --git") ||
       line.startsWith("index ") ||
-      line.startsWith("--- ") ||
-      line.startsWith("+++ ") ||
-      line.startsWith("@@ ") ||
-      line.startsWith("\\")
+      line.startsWith("\\") ||
+      (!inHunk && (line.startsWith("--- ") || line.startsWith("+++ ")))
     ) {
       continue;
     }

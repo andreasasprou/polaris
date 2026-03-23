@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useTheme } from "next-themes";
 import { ChevronRightIcon } from "lucide-react";
 import {
@@ -9,8 +10,13 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
+import { DiffMethod } from "react-diff-viewer-continued";
 import type { FileChange } from "@/lib/diff/types";
+
+const ReactDiffViewer = dynamic(
+  () => import("react-diff-viewer-continued"),
+  { ssr: false, loading: () => <div className="py-2 text-xs text-muted-foreground">Loading diff...</div> },
+);
 
 const MAX_DISPLAY_LINES = 5000;
 
