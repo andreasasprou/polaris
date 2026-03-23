@@ -80,9 +80,16 @@ Production logs go to **Axiom** via evlog. Use Axiom MCP tools to debug.
 3. **Get schema first** — run `['vercel'] | take 1` to see available fields before writing complex queries.
 4. **Key fields**: `request.path`, `request.statusCode`, `level`, `message` (JSON string with evlog wide event data).
 
+## Local Development
+
+- **Setup guide**: See [`docs/guides/local-dev-e2e-testing.md`](docs/guides/local-dev-e2e-testing.md) for full setup including GitHub App creation, test user seeding, and E2E testing with `agent-browser`.
+- **GitHub App setup**: `pnpm tsx scripts/setup-github-app.ts` — interactive script that creates a test GitHub App via the manifest flow, exchanges credentials, and writes them to `.env`.
+- **DB migrations**: `pnpm drizzle-kit push` to sync local schema with code.
+
 ## Key Commands
 
 - `pnpm typecheck` — must pass before considering work complete
 - `pnpm test` — all tests (unit + integration)
 - `pnpm test:unit` — fast unit tests only (no DB)
 - `pnpm dev` — local dev server on port 3001
+- `pnpm tsx scripts/setup-github-app.ts` — create test GitHub App
