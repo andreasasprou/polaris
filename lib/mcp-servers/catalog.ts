@@ -39,6 +39,11 @@ export type McpIntegrationTemplate =
   | McpOAuthDiscoveryTemplate
   | McpStaticHeadersTemplate;
 
+export type CatalogAvailability = {
+  available: boolean;
+  unavailableReason: string | null;
+};
+
 export const MCP_CATALOG: McpIntegrationTemplate[] = [
   {
     slug: "sentry",
@@ -98,6 +103,22 @@ export function getCatalogTemplate(
   slug: string,
 ): McpIntegrationTemplate | undefined {
   return MCP_CATALOG.find((template) => template.slug === slug);
+}
+
+export function getCatalogTemplateAvailability(
+  template: McpIntegrationTemplate,
+): CatalogAvailability {
+  if (template.authType === "oauth-discovery" && !template.oauthClientId) {
+    return {
+      available: false,
+      unavailableReason: `${template.name} OAuth is not configured in this environment.`,
+    };
+  }
+
+  return {
+    available: true,
+    unavailableReason: null,
+  };
 }
 
 export function resolveCatalogServerUrl(

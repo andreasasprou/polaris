@@ -62,6 +62,8 @@ export type McpServerListItem = {
 
 export type CatalogInstallationView = {
   template: McpIntegrationTemplate;
+  available: boolean;
+  unavailableReason: string | null;
   server: McpServerListItem | null;
   status: McpInstallStatus;
   toolCount: number;

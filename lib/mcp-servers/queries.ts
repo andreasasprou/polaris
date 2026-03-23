@@ -1,7 +1,11 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/credentials/encryption";
-import { getCatalogTemplate, MCP_CATALOG } from "./catalog";
+import {
+  getCatalogTemplate,
+  getCatalogTemplateAvailability,
+  MCP_CATALOG,
+} from "./catalog";
 import {
   clearMcpServerAuthIfStale,
   refreshMcpServerAuth,
@@ -141,8 +145,11 @@ export async function findCatalogInstallationsByOrg(
   return MCP_CATALOG.map((template) => {
     const server = bySlug.get(template.slug) ?? null;
     const status: McpInstallStatus = server ? server.status : "not_installed";
+    const availability = getCatalogTemplateAvailability(template);
     return {
       template,
+      available: availability.available,
+      unavailableReason: availability.unavailableReason,
       server,
       status,
       toolCount: server?.lastDiscoveredTools?.length ?? 0,

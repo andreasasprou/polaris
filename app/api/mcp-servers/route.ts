@@ -7,6 +7,7 @@ import { findMcpServersByOrg } from "@/lib/mcp-servers/queries";
 import { createMcpServer } from "@/lib/mcp-servers/actions";
 import {
   getCatalogTemplate,
+  getCatalogTemplateAvailability,
   resolveCatalogServerUrl,
 } from "@/lib/mcp-servers/catalog";
 import {
@@ -113,6 +114,14 @@ export const POST = withEvlog(async (req: Request) => {
         );
       }
 
+      const availability = getCatalogTemplateAvailability(template);
+      if (!availability.available) {
+        return NextResponse.json(
+          { error: availability.unavailableReason ?? "This integration is unavailable" },
+          { status: 400 },
+        );
+      }
+
       let serverUrl: string;
       try {
         serverUrl = resolveCatalogServerUrl(
@@ -146,13 +155,6 @@ export const POST = withEvlog(async (req: Request) => {
           );
         }
         authConfig = { headers };
-      } else if (!template.oauthClientId) {
-        return NextResponse.json(
-          {
-            error: `${template.name} OAuth is not configured in this environment`,
-          },
-          { status: 500 },
-        );
       }
 
       const server = await createMcpServer({

@@ -85,6 +85,11 @@ export default async function McpMarketplacePage({
                   <p>Category: {installation.template.category}</p>
                   <p>Discovered tools: {installation.toolCount}</p>
                 </div>
+                {!installation.available && installation.unavailableReason ? (
+                  <p className="text-sm text-amber-700 dark:text-amber-400">
+                    {installation.unavailableReason}
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           </Link>

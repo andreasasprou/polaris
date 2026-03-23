@@ -50,6 +50,8 @@ export default async function CatalogIntegrationPage({
       <CatalogInstallPanel
         orgSlug={orgSlug}
         template={installation.template}
+        available={installation.available}
+        unavailableReason={installation.unavailableReason}
         status={installation.status}
         server={
           installation.server

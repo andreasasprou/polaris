@@ -3,9 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   getSessionWithOrgAdminBySlugMock,
   getSessionWithOrgMock,
+  getCatalogTemplateMock,
+  getCatalogTemplateAvailabilityMock,
 } = vi.hoisted(() => ({
   getSessionWithOrgAdminBySlugMock: vi.fn(),
   getSessionWithOrgMock: vi.fn(),
+  getCatalogTemplateMock: vi.fn(),
+  getCatalogTemplateAvailabilityMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -23,7 +27,8 @@ vi.mock("@/lib/mcp-servers/actions", () => ({
 }));
 
 vi.mock("@/lib/mcp-servers/catalog", () => ({
-  getCatalogTemplate: vi.fn(),
+  getCatalogTemplate: getCatalogTemplateMock,
+  getCatalogTemplateAvailability: getCatalogTemplateAvailabilityMock,
   resolveCatalogServerUrl: vi.fn(),
 }));
 
@@ -41,6 +46,10 @@ describe("POST /api/mcp-servers", () => {
     getSessionWithOrgAdminBySlugMock.mockResolvedValue({
       orgId: "org-1",
       session: { user: { id: "user-1" } },
+    });
+    getCatalogTemplateAvailabilityMock.mockReturnValue({
+      available: true,
+      unavailableReason: null,
     });
   });
 
@@ -88,5 +97,30 @@ describe("POST /api/mcp-servers", () => {
       error: "orgSlug is required",
     });
     expect(getSessionWithOrgAdminBySlugMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unavailable catalog integrations before install", async () => {
+    getCatalogTemplateMock.mockReturnValue({
+      slug: "sentry",
+      name: "Sentry",
+      authType: "oauth-discovery",
+    });
+    getCatalogTemplateAvailabilityMock.mockReturnValue({
+      available: false,
+      unavailableReason: "Sentry OAuth is not configured in this environment.",
+    });
+
+    const response = await POST(
+      new Request("https://polaris.example.com/api/mcp-servers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgSlug: "acme", catalogSlug: "sentry" }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Sentry OAuth is not configured in this environment.",
+    });
   });
 });

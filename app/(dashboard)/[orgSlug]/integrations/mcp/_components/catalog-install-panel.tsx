@@ -114,6 +114,8 @@ async function readApiError(response: Response) {
 export function CatalogInstallPanel({
   orgSlug,
   template,
+  available,
+  unavailableReason,
   server,
   status,
   initialError,
@@ -121,6 +123,8 @@ export function CatalogInstallPanel({
 }: {
   orgSlug: string;
   template: CatalogTemplate;
+  available: boolean;
+  unavailableReason: string | null;
   server: InstalledServer | null;
   status: "not_installed" | "needs_auth" | "misconfigured" | "connected";
   initialError: string | null;
@@ -480,6 +484,13 @@ export function CatalogInstallPanel({
             </Alert>
           ) : null}
 
+          {!available && unavailableReason ? (
+            <Alert>
+              <AlertCircleIcon />
+              <AlertDescription>{unavailableReason}</AlertDescription>
+            </Alert>
+          ) : null}
+
           <div className="grid gap-4 rounded-lg border bg-muted/20 p-4 sm:grid-cols-2">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -500,13 +511,20 @@ export function CatalogInstallPanel({
               {!server ? (
                 <Button
                   onClick={() => openAcknowledgement("oauth-install")}
-                  disabled={isInstalling}
+                  disabled={isInstalling || !available}
                 >
-                  {isInstalling ? "Starting OAuth..." : "Enable and connect"}
+                  {!available
+                    ? "Unavailable in this environment"
+                    : isInstalling
+                      ? "Starting OAuth..."
+                      : "Enable and connect"}
                 </Button>
               ) : (
                 <>
-                  <Button onClick={() => openAcknowledgement("oauth-connect")}>
+                  <Button
+                    onClick={() => openAcknowledgement("oauth-connect")}
+                    disabled={!available}
+                  >
                     {status === "needs_auth" ? "Connect" : "Reconnect"}
                   </Button>
                   <Button
