@@ -19,7 +19,37 @@ The marketplace currently ships with:
 
 Each marketplace integration has its own detail page with status, connection actions, and cached tool discovery results.
 
-Operator note: the built-in Sentry marketplace install requires `SENTRY_MCP_CLIENT_ID` to be configured in the Polaris environment. `NEXT_PUBLIC_SENTRY_MCP_CLIENT_ID` is also supported as a local-development fallback, but production deployments should prefer the server-side variable.
+### Operator setup: Sentry OAuth client
+
+The Sentry marketplace integration requires a `SENTRY_MCP_CLIENT_ID` environment variable. Without it, the integration page shows "Sentry OAuth is not configured in this environment."
+
+**Registering a new client** — Sentry's MCP server supports [RFC 7591 dynamic client registration](https://datatracker.ietf.org/doc/html/rfc7591):
+
+```bash
+curl -X POST https://mcp.sentry.dev/oauth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_name": "Polaris",
+    "redirect_uris": ["https://<YOUR_PRODUCTION_URL>/api/mcp-servers/oauth/callback"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none",
+    "scope": "org:read project:write team:write event:write"
+  }'
+```
+
+The response contains the `client_id`. Set it in your deployment:
+
+```
+SENTRY_MCP_CLIENT_ID=<client_id from response>
+```
+
+`NEXT_PUBLIC_SENTRY_MCP_CLIENT_ID` is also supported as a local-development fallback, but production deployments should prefer the server-side variable.
+
+**Notes:**
+- The `redirect_uris` must match your `NEXT_PUBLIC_APP_URL` (or `VERCEL_URL`) exactly — the callback path is always `/api/mcp-servers/oauth/callback`.
+- Each environment (production, preview, local) needs its own registered client with the correct redirect URI.
+- The client is public (no `client_secret`) — PKCE (S256) secures the flow.
 
 ## Adding a custom static-header server
 
