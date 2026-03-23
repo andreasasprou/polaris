@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertSupportedAgentType,
   assertProviderCompatibleWithAgent,
   isProviderCompatibleWithAgent,
 } from "@/lib/key-pools/validate";
@@ -19,5 +20,12 @@ describe("credential provider compatibility", () => {
     expect(() =>
       assertProviderCompatibleWithAgent("anthropic", "codex"),
     ).toThrow(/not compatible/);
+  });
+
+  it("throws a request error for unsupported agents", () => {
+    expect(() => assertSupportedAgentType("foo")).toThrow(/Unsupported agent/);
+    expect(() =>
+      assertProviderCompatibleWithAgent("openai", "foo"),
+    ).toThrow(/Unsupported agent/);
   });
 });

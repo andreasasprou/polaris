@@ -1,12 +1,14 @@
 import { RequestError } from "@/lib/errors/request-error";
 import { findRepositoryByIdAndOrg } from "@/lib/integrations/queries";
-import { validateCredentialRefForAgent } from "@/lib/key-pools/validate";
+import {
+  assertSupportedAgentType,
+  validateCredentialRefForAgent,
+} from "@/lib/key-pools/validate";
 import { credentialRefFromRow } from "@/lib/key-pools/types";
-import type { AgentType } from "@/lib/sandbox-agent/types";
 
 export async function validateAutomationRelationsForOrg(input: {
   organizationId: string;
-  agentType?: AgentType | null;
+  agentType?: string | null;
   repositoryId?: string | null;
   agentSecretId?: string | null;
   keyPoolId?: string | null;
@@ -24,7 +26,7 @@ export async function validateAutomationRelationsForOrg(input: {
 
   const agentSecretId = input.agentSecretId ?? null;
   const keyPoolId = input.keyPoolId ?? null;
-  const agentType = input.agentType ?? "claude";
+  const agentType = assertSupportedAgentType(input.agentType ?? "claude");
 
   // Mutual exclusivity
   if (agentSecretId && keyPoolId) {

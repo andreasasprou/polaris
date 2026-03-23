@@ -7,9 +7,13 @@ vi.mock("@/lib/integrations/queries", () => ({
   findRepositoryByIdAndOrg: vi.fn(),
 }));
 
-vi.mock("@/lib/key-pools/validate", () => ({
-  validateCredentialRefForAgent: vi.fn(),
-}));
+vi.mock("@/lib/key-pools/validate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/key-pools/validate")>();
+  return {
+    ...actual,
+    validateCredentialRefForAgent: vi.fn(),
+  };
+});
 
 describe("validateAutomationRelationsForOrg", () => {
   beforeEach(() => {
@@ -38,6 +42,20 @@ describe("validateAutomationRelationsForOrg", () => {
       "org-1",
       "claude",
     );
+  });
+
+  it("rejects unsupported agent types with a controlled validation error", async () => {
+    await expect(
+      validateAutomationRelationsForOrg({
+        organizationId: "org-1",
+        agentType: "foo",
+        agentSecretId: "secret-1",
+      }),
+    ).rejects.toMatchObject({
+      message: 'Unsupported agent "foo"',
+      status: 400,
+    });
+    expect(validateCredentialRefForAgent).not.toHaveBeenCalled();
   });
 
   it("validates repository ownership when a repository is provided", async () => {

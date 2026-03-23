@@ -5,8 +5,8 @@ import {
 } from "@/lib/integrations/queries";
 import { credentialRefFromRow } from "@/lib/key-pools/types";
 import { allocateKeyFromPool, resolveSecretKey } from "@/lib/key-pools/resolve";
-import { assertProviderCompatibleWithAgent } from "@/lib/key-pools/validate";
-import type { AgentType, ModelParams } from "@/lib/sandbox-agent/types";
+import { validateCredentialRefForAgent } from "@/lib/key-pools/validate";
+import type { ModelParams } from "@/lib/sandbox-agent/types";
 
 export type ResolvedCredentials = {
   agentApiKey: string;
@@ -53,6 +53,8 @@ export async function resolveCredentials(
   });
   if (!credRef) return null;
 
+  await validateCredentialRefForAgent(credRef, orgId, automation.agentType);
+
   let agentApiKey: string;
   let provider: string;
   let resolvedSecretId: string;
@@ -73,11 +75,6 @@ export async function resolveCredentials(
       break;
     }
   }
-
-  assertProviderCompatibleWithAgent(
-    provider,
-    automation.agentType as AgentType,
-  );
 
   // Resolve repository — verify org ownership
   if (!automation.repositoryId) return null;

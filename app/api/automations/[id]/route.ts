@@ -5,7 +5,6 @@ import { updateAutomation, deleteAutomation } from "@/lib/automations/actions";
 import { validateAutomationRelationsForOrg } from "@/lib/automations/validation";
 import { RequestError } from "@/lib/errors/request-error";
 import { withEvlog } from "@/lib/evlog";
-import type { AgentType } from "@/lib/sandbox-agent/types";
 
 export const GET = withEvlog(async (
   _req: Request,
@@ -64,7 +63,7 @@ export const PUT = withEvlog(async (
   try {
     const validated = await validateAutomationRelationsForOrg({
       organizationId: orgId,
-      agentType: (body.agentType ?? existing.agentType) as AgentType,
+      agentType: body.agentType ?? existing.agentType,
       repositoryId,
       agentSecretId,
       keyPoolId,

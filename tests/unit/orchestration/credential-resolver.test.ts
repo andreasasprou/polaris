@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { RequestError } from "@/lib/errors/request-error";
 import { resolveCredentials } from "@/lib/orchestration/credential-resolver";
 import { findAutomationById } from "@/lib/automations/queries";
 import { findGithubInstallationByIdAndOrg, findRepositoryByIdAndOrg } from "@/lib/integrations/queries";
 import { allocateKeyFromPool, resolveSecretKey } from "@/lib/key-pools/resolve";
+import { validateCredentialRefForAgent } from "@/lib/key-pools/validate";
 
 vi.mock("@/lib/automations/queries", () => ({
   findAutomationById: vi.fn(),
@@ -16,6 +18,10 @@ vi.mock("@/lib/integrations/queries", () => ({
 vi.mock("@/lib/key-pools/resolve", () => ({
   allocateKeyFromPool: vi.fn(),
   resolveSecretKey: vi.fn(),
+}));
+
+vi.mock("@/lib/key-pools/validate", () => ({
+  validateCredentialRefForAgent: vi.fn(),
 }));
 
 describe("resolveCredentials", () => {
@@ -39,18 +45,50 @@ describe("resolveCredentials", () => {
       allowPush: false,
       allowPrCreate: false,
     } as Awaited<ReturnType<typeof findAutomationById>>);
-    vi.mocked(resolveSecretKey).mockResolvedValue({
-      secretId: "secret-1",
-      decryptedKey: "sk-test",
-      provider: "anthropic",
-    });
+    vi.mocked(validateCredentialRefForAgent).mockRejectedValue(
+      new RequestError(
+        'Selected API key provider "anthropic" is not compatible with agent "codex"',
+        400,
+      ),
+    );
 
     await expect(resolveCredentials("auto-1")).rejects.toMatchObject({
       message: expect.stringContaining('not compatible with agent "codex"'),
       status: 400,
     });
+    expect(resolveSecretKey).not.toHaveBeenCalled();
     expect(findRepositoryByIdAndOrg).not.toHaveBeenCalled();
     expect(findGithubInstallationByIdAndOrg).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched pools before allocating a key", async () => {
+    vi.mocked(findAutomationById).mockResolvedValue({
+      id: "auto-legacy-pool",
+      organizationId: "org-1",
+      repositoryId: "repo-1",
+      agentSecretId: null,
+      keyPoolId: "pool-1",
+      prompt: "Fix it",
+      agentType: "codex",
+      model: null,
+      agentMode: null,
+      modelParams: {},
+      maxDurationSeconds: 600,
+      allowPush: false,
+      allowPrCreate: false,
+    } as Awaited<ReturnType<typeof findAutomationById>>);
+    vi.mocked(validateCredentialRefForAgent).mockRejectedValue(
+      new RequestError(
+        'Selected API key provider "anthropic" is not compatible with agent "codex"',
+        400,
+      ),
+    );
+
+    await expect(resolveCredentials("auto-legacy-pool")).rejects.toMatchObject({
+      message: expect.stringContaining('not compatible with agent "codex"'),
+      status: 400,
+    });
+    expect(allocateKeyFromPool).not.toHaveBeenCalled();
   });
 
   it("returns resolved credentials when the provider matches the agent", async () => {
@@ -69,6 +107,9 @@ describe("resolveCredentials", () => {
       allowPush: true,
       allowPrCreate: true,
     } as Awaited<ReturnType<typeof findAutomationById>>);
+    vi.mocked(validateCredentialRefForAgent).mockResolvedValue({
+      provider: "openai",
+    });
     vi.mocked(allocateKeyFromPool).mockResolvedValue({
       secretId: "secret-2",
       decryptedKey: "sk-live",

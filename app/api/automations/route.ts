@@ -5,7 +5,6 @@ import { createAutomation } from "@/lib/automations/actions";
 import { validateAutomationRelationsForOrg } from "@/lib/automations/validation";
 import { RequestError } from "@/lib/errors/request-error";
 import { withEvlog } from "@/lib/evlog";
-import type { AgentType } from "@/lib/sandbox-agent/types";
 
 export const GET = withEvlog(async () => {
   const { orgId } = await getSessionWithOrg();
@@ -18,7 +17,7 @@ export const POST = withEvlog(async (req: Request) => {
   const { session, orgId } = await getSessionWithOrg();
 
   const body = await req.json();
-  const agentType = (body.agentType ?? "claude") as AgentType;
+  const agentType = body.agentType ?? "claude";
 
   try {
     const { repositoryId, agentSecretId, keyPoolId } = await validateAutomationRelationsForOrg({
